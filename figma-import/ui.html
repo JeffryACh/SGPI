@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}body{font:14px/1.5 system-ui,sans-serif;margin:0;padding:24px;color:#002855;background:#fff}h1{font-size:21px;line-height:1.2;margin:0 0 12px}p{margin:10px 0}.note{font-size:12px;line-height:1.45}button{font:600 14px system-ui;padding:11px 16px;border:1px solid #002855;border-radius:6px;background:#002855;color:#fff;cursor:pointer}button.secondary{background:#fff;color:#002855;margin-left:8px}button:disabled{opacity:.4;cursor:default}#status{min-height:55px;padding:12px 0;white-space:pre-wrap}#status.error{color:#EF3340}#details{font-size:12px;max-height:80px;overflow:auto}.actions{margin-top:14px}
+</style></head><body>
+<h1>Importar SGPI a Figma</h1>
+<p>Crea pantallas editables, componentes locales y navegación nativa en «02 · Prototipo interactivo».</p>
+<p class="note">La importación añade una nueva composición. Conserva el contenido existente. Usa Roboto y funciona sin conexión a servicios externos.</p>
+<div id="status" role="status">Comprobando capturas…</div><div id="details"></div>
+<div class="actions"><button id="import" disabled>Importar prototipo</button><button id="close" class="secondary">Cerrar</button></div>
+<script>
+const button=document.getElementById('import');const status=document.getElementById('status');const details=document.getElementById('details');
+const send=type=>parent.postMessage({pluginMessage:{type}},'*');
+button.onclick=()=>{button.disabled=true;status.className='';status.textContent='Preparando fuentes y variables…';send('import');};
+document.getElementById('close').onclick=()=>send('close');
+onmessage=event=>{const m=event.data.pluginMessage;if(!m)return;if(m.type==='ready'){status.textContent=m.summary.screens+' pantallas y escenarios · '+m.summary.elements+' elementos';button.disabled=false;}if(m.type==='progress'){status.textContent=m.text;}if(m.type==='error'){status.className='error';status.textContent=m.text;button.disabled=true;}if(m.type==='done'){status.textContent='Importación completada: '+m.stats.frames+' pantallas, '+m.stats.components+' componentes, '+m.stats.links+' enlaces.';details.textContent=m.stats.warnings.length?'Revisar visualmente: '+m.stats.warnings.slice(0,8).join(' · '):'Seleccione Presentar para revisar el recorrido. Revise legibilidad, overlays y destinos antes de entregar.';button.disabled=true;}};
+send('inspect');
+</script></body></html>
