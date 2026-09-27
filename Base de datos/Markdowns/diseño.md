@@ -1,0 +1,503 @@
+- Motor de base de datos: PostgreSQL 18
+- Nombre de la base de datos: SGPI
+- Contexto: Sistema para la Gestión de Propuestas de Investigación (SGPI) — digitaliza el ciclo de vida completo de las iniciativas de investigación del TEC bajo la convocatoria de Fondos VIE, desde la formulación de la propuesta hasta su evaluación, resolución, ejecución y cierre, con trazabilidad completa del expediente.
+
+# Tables
+
+## Catálogos
+
+### Schools
+Almacena las diferentes escuelas y departamentos del Instituto Tecnológico.
+
+- id_escuela:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico de la escuela
+
+- nombre:
+    - tipo: varchar(100)
+    - nullable: no
+    - descripcion: nombre oficial completo de la escuela
+
+- siglas:
+    - tipo: varchar(10)
+    - nullable: si
+    - descripcion: acronimo representativo
+
+### Roles
+Catálogo de roles institucionales.
+
+- id_rol:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico del rol
+
+- nombre_rol:
+    - tipo: varchar(50)
+    - nullable: no
+    - descripcion: nombre descriptivo del rol
+
+### States
+Catálogo cerrado de los estados posibles de una propuesta en su flujo de vida.
+
+- id_estado:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico del estado
+
+- nombre_estado:
+    - tipo: varchar(30)
+    - nullable: no
+    - unique: si
+    - descripcion: nombre normalizado del estado
+
+### Modalities
+Catálogo de modalidades de la convocatoria Fondos VIE.
+
+- id_modalidad:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico de la modalidad
+
+- nombre_modalidad:
+    - tipo: varchar(50)
+    - nullable: no
+    - descripcion: nombre de la modalidad de la convocatoria
+
+### ResearchLines
+Catálogo de líneas de investigación institucionales.
+
+- id_linea_investigacion:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico de la linea de investigacion
+
+- nombre_linea:
+    - tipo: varchar(100)
+    - nullable: no
+    - descripcion: nombre de la linea de investigacion
+
+### HourTypes
+Catálogo de tipos de hora con que se financia el tiempo asignado a un investigador dentro del equipo.
+
+- id_tipo_hora:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico del tipo de hora
+
+- nombre_tipo_hora:
+    - tipo: varchar(20)
+    - nullable: no
+    - descripcion: codigo o nombre del tipo de hora
+
+### BudgetCategories
+Catálogo de rubros presupuestarios institucionales (viáticos, equipo, materiales, servicios, etc.), usado para desglosar el presupuesto de una propuesta.
+
+- id_rubro:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico del rubro presupuestario
+
+- nombre_rubro:
+    - tipo: varchar(50)
+    - nullable: no
+    - descripcion: nombre del rubro presupuestario
+
+### RiskLevels
+Catálogo de niveles reutilizado tanto para la probabilidad como para el impacto de un riesgo.
+
+- id_nivel_riesgo:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico del nivel
+
+- nombre_nivel:
+    - tipo: varchar(20)
+    - nullable: no
+    - descripcion: nombre del nivel
+
+### VIECriteria
+Catálogo de los criterios booleanos que conforman el dictamen de admisibilidad de la VIE.
+
+- id_criterio:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico del criterio
+
+- descripcion_criterio:
+    - tipo: varchar(150)
+    - nullable: no
+    - descripcion: texto del criterio de verificacion evaluado
+
+### CIEResolutions
+Catálogo de las resoluciones posibles del Comité de Ética Institucional.
+
+- id_resolucion:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico de la resolucion
+
+- nombre_resolucion:
+    - tipo: varchar(20)
+    - nullable: no
+    - descripcion: nombre de la resolucion (aprobada, rechazada, observada)
+
+### Users
+Registra a investigadores y personal administrativo.
+
+- id_usuario:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico del usuario
+
+- id_escuela:
+    - tipo: integer
+    - fk: si (referencia a escuelas.id_escuela)
+    - nullable: si
+    - descripcion: referencia a la escuela base del usuario
+
+- nombre:
+    - tipo: varchar(50)
+    - nullable: no
+    - descripcion: nombre de pila
+
+- apellidos:
+    - tipo: varchar(100)
+    - nullable: no
+    - descripcion: apellidos completos
+
+- correo:
+    - tipo: varchar(100)
+    - nullable: no
+    - unique: si
+    - descripcion: correo electronico institucional
+
+- estado_activo:
+    - tipo: boolean
+    - nullable: no
+    - descripcion: indica si el usuario tiene acceso al sistema
+
+### UserRoles
+Tabla intermedia para la relación de múltiples usuarios con múltiples roles.
+
+- id_usuario:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a usuarios.id_usuario)
+    - nullable: no
+    - descripcion: referencia al usuario
+
+- id_rol:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a roles.id_rol)
+    - nullable: no
+    - descripcion: referencia al rol asignado
+
+### Proposals
+El núcleo del módulo de formulación e histórico.
+
+- id_propuesta:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico de la propuesta
+
+- id_usuario_lider:
+    - tipo: integer
+    - fk: si (referencia a usuarios.id_usuario)
+    - nullable: no
+    - descripcion: identificador del investigador principal creador
+
+- id_escuela:
+    - tipo: integer
+    - fk: si (referencia a escuelas.id_escuela)
+    - nullable: no
+    - descripcion: escuela bajo la cual se presenta la propuesta (no necesariamente la misma escuela del lider)
+
+- id_modalidad:
+    - tipo: integer
+    - fk: si (referencia a modalidades.id_modalidad)
+    - nullable: no
+    - descripcion: modalidad de la convocatoria bajo la que se presenta
+
+- id_linea_investigacion:
+    - tipo: integer
+    - fk: si (referencia a lineas_investigacion.id_linea_investigacion)
+    - nullable: no
+    - descripcion: linea de investigacion institucional a la que pertenece
+
+- titulo:
+    - tipo: varchar(250)
+    - nullable: no
+    - descripcion: titulo oficial de la investigacion
+
+- resumen:
+    - tipo: text
+    - nullable: si
+    - descripcion: resumen general del proyecto
+
+- estado_actual:
+    - tipo: integer
+    - fk: si (referencia a estados.id_estado)
+    - nullable: no
+    - descripcion: estado actual de la propuesta en el flujo de evaluacion
+
+- fecha_creacion:
+    - tipo: timestamp
+    - nullable: no
+    - descripcion: fecha de inicio de redaccion
+
+### ResearchTeam
+Equipo de investigadores asociado a una propuesta, con las horas y el tipo de hora asignadas a cada persona.
+
+- id_propuesta:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a propuestas.id_propuesta)
+    - nullable: no
+    - descripcion: propuesta a la que pertenece la asignacion
+
+- id_usuario:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a usuarios.id_usuario)
+    - nullable: no
+    - descripcion: investigador asignado
+
+- id_tipo_hora:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a tipos_hora.id_tipo_hora)
+    - nullable: no
+    - descripcion: tipo de hora bajo la cual se financia esta asignacion
+
+- horas_asignadas:
+    - tipo: integer
+    - nullable: no
+    - descripcion: cantidad de horas asignadas a este investigador bajo este tipo de hora
+
+Nota: PK compuesta (id_propuesta, id_usuario, id_tipo_hora) porque un mismo investigador puede tener horas, de más de un tipo dentro de la misma propuesta.
+
+### ProposalBudget
+Desglose del presupuesto solicitado por rubro.
+
+- id_propuesta:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a propuestas.id_propuesta)
+    - nullable: no
+    - descripcion: propuesta a la que pertenece este rubro
+
+- id_rubro:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a rubros_presupuesto.id_rubro)
+    - nullable: no
+    - descripcion: rubro presupuestario
+
+- monto:
+    - tipo: decimal(12,2)
+    - nullable: no
+    - descripcion: monto solicitado para este rubro, anualizado en colones
+
+### ActionPlans
+Plan de acción de la propuesta, obligatorio por normativa VIE.
+
+- id_plan_accion:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico de la actividad del plan de accion
+
+- id_propuesta:
+    - tipo: integer
+    - fk: si (referencia a propuestas.id_propuesta)
+    - nullable: no
+    - descripcion: propuesta a la que pertenece esta actividad
+
+- descripcion_actividad:
+    - tipo: text
+    - nullable: no
+    - descripcion: descripcion de la actividad planificada
+
+- fecha_inicio:
+    - tipo: date
+    - nullable: no
+    - descripcion: fecha estimada de inicio de la actividad
+
+- fecha_fin:
+    - tipo: date
+    - nullable: si
+    - descripcion: fecha estimada de finalizacion de la actividad
+
+- id_usuario_responsable:
+    - tipo: integer
+    - fk: si (referencia a usuarios.id_usuario)
+    - nullable: si
+    - descripcion: investigador responsable de ejecutar la actividad
+
+### Risks
+Gestión de riesgos de la propuesta, obligatoria por normativa VIE.
+
+- id_riesgo:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico del riesgo
+
+- id_propuesta:
+    - tipo: integer
+    - fk: si (referencia a propuestas.id_propuesta)
+    - nullable: no
+    - descripcion: propuesta a la que pertenece este riesgo
+
+- descripcion_riesgo:
+    - tipo: text
+    - nullable: no
+    - descripcion: descripcion del riesgo identificado
+
+- id_nivel_probabilidad:
+    - tipo: integer
+    - fk: si (referencia a niveles_riesgo.id_nivel_riesgo)
+    - nullable: no
+    - descripcion: nivel de probabilidad de ocurrencia del riesgo
+
+- id_nivel_impacto:
+    - tipo: integer
+    - fk: si (referencia a niveles_riesgo.id_nivel_riesgo)
+    - nullable: no
+    - descripcion: nivel de impacto del riesgo sobre la propuesta
+
+- medida_mitigacion:
+    - tipo: text
+    - nullable: si
+    - descripcion: accion planteada para mitigar el riesgo
+
+### ProposalStateHistory
+Registra cada transición de estado de una propuesta, preservando la trazabilidad completa del expediente.
+
+- id_historial:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico del registro de historial
+
+- id_propuesta:
+    - tipo: integer
+    - fk: si (referencia a propuestas.id_propuesta)
+    - nullable: no
+    - descripcion: propuesta a la que pertenece esta transicion
+
+- id_estado_anterior:
+    - tipo: integer
+    - fk: si (referencia a estados.id_estado)
+    - nullable: si
+    - descripcion: estado previo (nulo si es el registro inicial de creacion)
+
+- id_estado_nuevo:
+    - tipo: integer
+    - fk: si (referencia a estados.id_estado)
+    - nullable: no
+    - descripcion: estado al que transiciona la propuesta
+
+- id_usuario_responsable:
+    - tipo: integer
+    - fk: si (referencia a usuarios.id_usuario)
+    - nullable: si
+    - descripcion: usuario que ejecuto o disparo el cambio de estado
+
+- fecha_cambio:
+    - tipo: timestamp
+    - nullable: no
+    - descripcion: momento en que ocurrio la transicion
+
+- observaciones:
+    - tipo: text
+    - nullable: si
+    - descripcion: justificacion o comentario asociado al cambio
+
+### Evaluations
+Tabla base con los datos comunes a toda evaluación, sin importar quién evalúa. El dato evaluado en sí (rúbrica numérica, checklist booleano o resolución categórica).
+
+- id_evaluacion:
+    - tipo: serial
+    - pk: si
+    - descripcion: identificador unico de la evaluacion
+
+- id_propuesta:
+    - tipo: integer
+    - fk: si (referencia a propuestas.id_propuesta)
+    - nullable: no
+    - descripcion: propuesta que esta siendo evaluada
+
+- id_usuario_eval:
+    - tipo: integer
+    - fk: si (referencia a usuarios.id_usuario)
+    - nullable: no
+    - descripcion: identificador del evaluador asignado
+
+- id_rol_evaluador:
+    - tipo: integer
+    - fk: si (referencia a roles.id_rol)
+    - nullable: no
+    - descripcion: rol bajo el cual se realiza la evaluacion
+
+- fecha_evaluacion:
+    - tipo: timestamp
+    - nullable: no
+    - descripcion: fecha de emision del dictamen
+
+- observaciones:
+    - tipo: text
+    - nullable: si
+    - descripcion: retroalimentacion cualitativa general
+
+### TechnicalCommitteeEvaluations
+Detalle de la evaluación cuando el evaluador es el Comité Técnico: rúbrica numérica de 0 a 100.
+
+- id_evaluacion:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a evaluaciones.id_evaluacion)
+    - nullable: no
+    - descripcion: evaluacion base a la que pertenece este detalle
+
+- puntaje:
+    - tipo: integer
+    - nullable: no
+    - descripcion: rubrica oficial con valores de cero a cien
+
+### VIEDictamenVerifications
+Detalle del dictamen de admisibilidad de la VIE: una fila por criterio verificado, no una fila por evaluación.
+
+- id_evaluacion:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a evaluaciones.id_evaluacion)
+    - nullable: no
+    - descripcion: evaluacion base a la que pertenece esta verificacion
+
+- id_criterio:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a criterios_verificacion_vie.id_criterio)
+    - nullable: no
+    - descripcion: criterio de verificacion evaluado
+
+- cumple:
+    - tipo: boolean
+    - nullable: no
+    - descripcion: indica si la propuesta cumple con este criterio
+
+### CIEResolutionEvaluations
+Detalle de la evaluación cuando el evaluador es el Comité de Ética Institucional: resolución categórica.
+
+- id_evaluacion:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a evaluaciones.id_evaluacion)
+    - nullable: no
+    - descripcion: evaluacion base a la que pertenece este detalle
+
+- id_resolucion:
+    - tipo: integer
+    - fk: si (referencia a resoluciones_cie.id_resolucion)
+    - nullable: no
+    - descripcion: resolucion emitida por el CIE
