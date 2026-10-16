@@ -1,247 +1,178 @@
--- Creación de la base de datos
--- CREATE DATABASE SGPI;
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
 
--- ==========================================
--- 1. CATÁLOGOS
--- ==========================================
-
--- Tabla: Escuelas
-CREATE TABLE escuelas (
-    id_escuela SERIAL PRIMARY KEY,
-    nombre VARCHAR(100) NOT NULL,
-    siglas VARCHAR(10)
+CREATE TABLE public.escuelas (
+  id_escuela integer NOT NULL DEFAULT nextval('escuelas_id_escuela_seq'::regclass),
+  nombre character varying NOT NULL,
+  siglas character varying,
+  CONSTRAINT escuelas_pkey PRIMARY KEY (id_escuela)
 );
-
--- Tabla: Roles
-CREATE TABLE roles (
-    id_rol SERIAL PRIMARY KEY,
-    nombre_rol VARCHAR(50) NOT NULL
+CREATE TABLE public.roles (
+  id_rol integer NOT NULL DEFAULT nextval('roles_id_rol_seq'::regclass),
+  nombre_rol character varying NOT NULL,
+  CONSTRAINT roles_pkey PRIMARY KEY (id_rol)
 );
-
--- Tabla: States (Estados de la propuesta)
-CREATE TABLE estados (
-    id_estado SERIAL PRIMARY KEY,
-    nombre_estado VARCHAR(30) NOT NULL UNIQUE
+CREATE TABLE public.estados (
+  id_estado integer NOT NULL DEFAULT nextval('estados_id_estado_seq'::regclass),
+  nombre_estado character varying NOT NULL UNIQUE,
+  CONSTRAINT estados_pkey PRIMARY KEY (id_estado)
 );
-
--- Tabla: Modalities (Modalidades de la convocatoria)
-CREATE TABLE modalidades (
-    id_modalidad SERIAL PRIMARY KEY,
-    nombre_modalidad VARCHAR(50) NOT NULL
+CREATE TABLE public.modalidades (
+  id_modalidad integer NOT NULL DEFAULT nextval('modalidades_id_modalidad_seq'::regclass),
+  nombre_modalidad character varying NOT NULL,
+  CONSTRAINT modalidades_pkey PRIMARY KEY (id_modalidad)
 );
-
--- Tabla: ResearchLines (Líneas de investigación)
-CREATE TABLE lineas_investigacion (
-    id_linea_investigacion SERIAL PRIMARY KEY,
-    nombre_linea VARCHAR(100) NOT NULL
+CREATE TABLE public.lineas_investigacion (
+  id_linea_investigacion integer NOT NULL DEFAULT nextval('lineas_investigacion_id_linea_investigacion_seq'::regclass),
+  nombre_linea character varying NOT NULL,
+  CONSTRAINT lineas_investigacion_pkey PRIMARY KEY (id_linea_investigacion)
 );
-
--- Tabla: HourTypes (Tipos de hora)
-CREATE TABLE tipos_hora (
-    id_tipo_hora SERIAL PRIMARY KEY,
-    nombre_tipo_hora VARCHAR(20) NOT NULL
+CREATE TABLE public.tipos_hora (
+  id_tipo_hora integer NOT NULL DEFAULT nextval('tipos_hora_id_tipo_hora_seq'::regclass),
+  nombre_tipo_hora character varying NOT NULL,
+  CONSTRAINT tipos_hora_pkey PRIMARY KEY (id_tipo_hora)
 );
-
--- Tabla: BudgetCategories (Rubros presupuestarios)
-CREATE TABLE rubros_presupuesto (
-    id_rubro SERIAL PRIMARY KEY,
-    nombre_rubro VARCHAR(50) NOT NULL
+CREATE TABLE public.rubros_presupuesto (
+  id_rubro integer NOT NULL DEFAULT nextval('rubros_presupuesto_id_rubro_seq'::regclass),
+  nombre_rubro character varying NOT NULL,
+  CONSTRAINT rubros_presupuesto_pkey PRIMARY KEY (id_rubro)
 );
-
--- Tabla: RiskLevels (Niveles de riesgo: probabilidad e impacto)
-CREATE TABLE niveles_riesgo (
-    id_nivel_riesgo SERIAL PRIMARY KEY,
-    nombre_nivel VARCHAR(20) NOT NULL
+CREATE TABLE public.niveles_riesgo (
+  id_nivel_riesgo integer NOT NULL DEFAULT nextval('niveles_riesgo_id_nivel_riesgo_seq'::regclass),
+  nombre_nivel character varying NOT NULL,
+  CONSTRAINT niveles_riesgo_pkey PRIMARY KEY (id_nivel_riesgo)
 );
-
--- Tabla: VIECriteria (Criterios de admisibilidad de la VIE)
-CREATE TABLE criterios_verificacion_vie (
-    id_criterio SERIAL PRIMARY KEY,
-    descripcion_criterio VARCHAR(150) NOT NULL
+CREATE TABLE public.criterios_verificacion_vie (
+  id_criterio integer NOT NULL DEFAULT nextval('criterios_verificacion_vie_id_criterio_seq'::regclass),
+  descripcion_criterio character varying NOT NULL,
+  CONSTRAINT criterios_verificacion_vie_pkey PRIMARY KEY (id_criterio)
 );
-
--- Tabla: CIEResolutions (Resoluciones del Comité de Ética Institucional)
-CREATE TABLE resoluciones_cie (
-    id_resolucion SERIAL PRIMARY KEY,
-    nombre_resolucion VARCHAR(20) NOT NULL
+CREATE TABLE public.resoluciones_cie (
+  id_resolucion integer NOT NULL DEFAULT nextval('resoluciones_cie_id_resolucion_seq'::regclass),
+  nombre_resolucion character varying NOT NULL,
+  CONSTRAINT resoluciones_cie_pkey PRIMARY KEY (id_resolucion)
 );
-
--- ==========================================
--- 2. USUARIOS Y PERMISOS
--- ==========================================
-
--- Tabla: Users
-CREATE TABLE usuarios (
-    id_usuario SERIAL PRIMARY KEY,
-    id_escuela INTEGER,
-    nombre VARCHAR(50) NOT NULL,
-    apellidos VARCHAR(100) NOT NULL,
-    correo VARCHAR(100) NOT NULL UNIQUE,
-    estado_activo BOOLEAN NOT NULL,
-    CONSTRAINT fk_usuarios_escuela FOREIGN KEY (id_escuela) 
-        REFERENCES escuelas(id_escuela)
+CREATE TABLE public.usuarios (
+  id_usuario integer NOT NULL DEFAULT nextval('usuarios_id_usuario_seq'::regclass),
+  id_escuela integer,
+  nombre character varying NOT NULL,
+  lastname character varying NOT NULL,
+  second_lastname character varying NOT NULL,
+  correo character varying NOT NULL UNIQUE,
+  password_hash character varying NOT NULL,
+  estado_activo boolean NOT NULL,
+  CONSTRAINT usuarios_pkey PRIMARY KEY (id_usuario),
+  CONSTRAINT fk_usuarios_escuela FOREIGN KEY (id_escuela) REFERENCES public.escuelas(id_escuela)
 );
-
--- Tabla: UserRoles (Tabla intermedia)
-CREATE TABLE user_roles (
-    id_usuario INTEGER NOT NULL,
-    id_rol INTEGER NOT NULL,
-    PRIMARY KEY (id_usuario, id_rol),
-    CONSTRAINT fk_userroles_usuario FOREIGN KEY (id_usuario) 
-        REFERENCES usuarios(id_usuario),
-    CONSTRAINT fk_userroles_rol FOREIGN KEY (id_rol) 
-        REFERENCES roles(id_rol)
+CREATE TABLE public.user_roles (
+  id_usuario integer NOT NULL,
+  id_rol integer NOT NULL,
+  CONSTRAINT user_roles_pkey PRIMARY KEY (id_usuario, id_rol),
+  CONSTRAINT fk_userroles_usuario FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id_usuario),
+  CONSTRAINT fk_userroles_rol FOREIGN KEY (id_rol) REFERENCES public.roles(id_rol)
 );
-
--- ==========================================
--- 3. NÚCLEO DE PROPUESTAS Y COMPONENTES
--- ==========================================
-
--- Tabla: Proposals
-CREATE TABLE propuestas (
-    id_propuesta SERIAL PRIMARY KEY,
-    id_usuario_lider INTEGER NOT NULL,
-    id_escuela INTEGER NOT NULL,
-    id_modalidad INTEGER NOT NULL,
-    id_linea_investigacion INTEGER NOT NULL,
-    titulo VARCHAR(250) NOT NULL,
-    resumen TEXT,
-    estado_actual INTEGER NOT NULL,
-    fecha_creacion TIMESTAMP NOT NULL,
-    CONSTRAINT fk_propuestas_lider FOREIGN KEY (id_usuario_lider) 
-        REFERENCES usuarios(id_usuario),
-    CONSTRAINT fk_propuestas_escuela FOREIGN KEY (id_escuela) 
-        REFERENCES escuelas(id_escuela),
-    CONSTRAINT fk_propuestas_modalidad FOREIGN KEY (id_modalidad) 
-        REFERENCES modalidades(id_modalidad),
-    CONSTRAINT fk_propuestas_linea FOREIGN KEY (id_linea_investigacion) 
-        REFERENCES lineas_investigacion(id_linea_investigacion),
-    CONSTRAINT fk_propuestas_estado FOREIGN KEY (estado_actual) 
-        REFERENCES estados(id_estado)
+CREATE TABLE public.propuestas (
+  id_propuesta integer NOT NULL DEFAULT nextval('propuestas_id_propuesta_seq'::regclass),
+  id_usuario_lider integer NOT NULL,
+  id_escuela integer NOT NULL,
+  id_modalidad integer NOT NULL,
+  id_linea_investigacion integer NOT NULL,
+  titulo character varying NOT NULL,
+  resumen character varying,
+  estado_actual integer NOT NULL,
+  fecha_creacion timestamp without time zone NOT NULL,
+  CONSTRAINT propuestas_pkey PRIMARY KEY (id_propuesta),
+  CONSTRAINT fk_propuestas_lider FOREIGN KEY (id_usuario_lider) REFERENCES public.usuarios(id_usuario),
+  CONSTRAINT fk_propuestas_escuela FOREIGN KEY (id_escuela) REFERENCES public.escuelas(id_escuela),
+  CONSTRAINT fk_propuestas_modalidad FOREIGN KEY (id_modalidad) REFERENCES public.modalidades(id_modalidad),
+  CONSTRAINT fk_propuestas_linea FOREIGN KEY (id_linea_investigacion) REFERENCES public.lineas_investigacion(id_linea_investigacion),
+  CONSTRAINT fk_propuestas_estado FOREIGN KEY (estado_actual) REFERENCES public.estados(id_estado)
 );
-
--- Tabla: ResearchTeam (Equipo de investigación)
-CREATE TABLE research_team (
-    id_propuesta INTEGER NOT NULL,
-    id_usuario INTEGER NOT NULL,
-    id_tipo_hora INTEGER NOT NULL,
-    horas_asignadas INTEGER NOT NULL,
-    PRIMARY KEY (id_propuesta, id_usuario, id_tipo_hora),
-    CONSTRAINT fk_team_propuesta FOREIGN KEY (id_propuesta) 
-        REFERENCES propuestas(id_propuesta),
-    CONSTRAINT fk_team_usuario FOREIGN KEY (id_usuario) 
-        REFERENCES usuarios(id_usuario),
-    CONSTRAINT fk_team_tipohora FOREIGN KEY (id_tipo_hora) 
-        REFERENCES tipos_hora(id_tipo_hora)
+CREATE TABLE public.research_team (
+  id_propuesta integer NOT NULL,
+  id_usuario integer NOT NULL,
+  id_tipo_hora integer NOT NULL,
+  horas_asignadas integer NOT NULL,
+  CONSTRAINT research_team_pkey PRIMARY KEY (id_propuesta, id_usuario, id_tipo_hora),
+  CONSTRAINT fk_team_propuesta FOREIGN KEY (id_propuesta) REFERENCES public.propuestas(id_propuesta),
+  CONSTRAINT fk_team_usuario FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id_usuario),
+  CONSTRAINT fk_team_tipohora FOREIGN KEY (id_tipo_hora) REFERENCES public.tipos_hora(id_tipo_hora)
 );
-
--- Tabla: ProposalBudget (Desglose presupuestario)
-CREATE TABLE proposal_budget (
-    id_propuesta INTEGER NOT NULL,
-    id_rubro INTEGER NOT NULL,
-    monto DECIMAL(12,2) NOT NULL,
-    PRIMARY KEY (id_propuesta, id_rubro),
-    CONSTRAINT fk_budget_propuesta FOREIGN KEY (id_propuesta) 
-        REFERENCES propuestas(id_propuesta),
-    CONSTRAINT fk_budget_rubro FOREIGN KEY (id_rubro) 
-        REFERENCES rubros_presupuesto(id_rubro)
+CREATE TABLE public.proposal_budget (
+  id_propuesta integer NOT NULL,
+  id_rubro integer NOT NULL,
+  monto numeric NOT NULL,
+  CONSTRAINT proposal_budget_pkey PRIMARY KEY (id_propuesta, id_rubro),
+  CONSTRAINT fk_budget_propuesta FOREIGN KEY (id_propuesta) REFERENCES public.propuestas(id_propuesta),
+  CONSTRAINT fk_budget_rubro FOREIGN KEY (id_rubro) REFERENCES public.rubros_presupuesto(id_rubro)
 );
-
--- Tabla: ActionPlans (Plan de acción)
-CREATE TABLE action_plans (
-    id_plan_accion SERIAL PRIMARY KEY,
-    id_propuesta INTEGER NOT NULL,
-    descripcion_actividad TEXT NOT NULL,
-    fecha_inicio DATE NOT NULL,
-    fecha_fin DATE,
-    id_usuario_responsable INTEGER,
-    CONSTRAINT fk_action_propuesta FOREIGN KEY (id_propuesta) 
-        REFERENCES propuestas(id_propuesta),
-    CONSTRAINT fk_action_responsable FOREIGN KEY (id_usuario_responsable) 
-        REFERENCES usuarios(id_usuario)
+CREATE TABLE public.action_plans (
+  id_plan_accion integer NOT NULL DEFAULT nextval('action_plans_id_plan_accion_seq'::regclass),
+  id_propuesta integer NOT NULL,
+  descripcion_actividad character varying NOT NULL,
+  fecha_inicio date NOT NULL,
+  fecha_fin date,
+  id_usuario_responsable integer,
+  CONSTRAINT action_plans_pkey PRIMARY KEY (id_plan_accion),
+  CONSTRAINT fk_action_propuesta FOREIGN KEY (id_propuesta) REFERENCES public.propuestas(id_propuesta),
+  CONSTRAINT fk_action_responsable FOREIGN KEY (id_usuario_responsable) REFERENCES public.usuarios(id_usuario)
 );
-
--- Tabla: Risks (Gestión de riesgos)
-CREATE TABLE risks (
-    id_riesgo SERIAL PRIMARY KEY,
-    id_propuesta INTEGER NOT NULL,
-    descripcion_riesgo TEXT NOT NULL,
-    id_nivel_probabilidad INTEGER NOT NULL,
-    id_nivel_impacto INTEGER NOT NULL,
-    medida_mitigacion TEXT,
-    CONSTRAINT fk_risk_propuesta FOREIGN KEY (id_propuesta) 
-        REFERENCES propuestas(id_propuesta),
-    CONSTRAINT fk_risk_probabilidad FOREIGN KEY (id_nivel_probabilidad) 
-        REFERENCES niveles_riesgo(id_nivel_riesgo),
-    CONSTRAINT fk_risk_impacto FOREIGN KEY (id_nivel_impacto) 
-        REFERENCES niveles_riesgo(id_nivel_riesgo)
+CREATE TABLE public.risks (
+  id_riesgo integer NOT NULL DEFAULT nextval('risks_id_riesgo_seq'::regclass),
+  id_propuesta integer NOT NULL,
+  descripcion_riesgo character varying NOT NULL,
+  id_nivel_probabilidad integer NOT NULL,
+  id_nivel_impacto integer NOT NULL,
+  medida_mitigacion character varying,
+  CONSTRAINT risks_pkey PRIMARY KEY (id_riesgo),
+  CONSTRAINT fk_risk_propuesta FOREIGN KEY (id_propuesta) REFERENCES public.propuestas(id_propuesta),
+  CONSTRAINT fk_risk_probabilidad FOREIGN KEY (id_nivel_probabilidad) REFERENCES public.niveles_riesgo(id_nivel_riesgo),
+  CONSTRAINT fk_risk_impacto FOREIGN KEY (id_nivel_impacto) REFERENCES public.niveles_riesgo(id_nivel_riesgo)
 );
-
--- Tabla: ProposalStateHistory (Historial de estados de una propuesta)
-CREATE TABLE proposal_state_history (
-    id_historial SERIAL PRIMARY KEY,
-    id_propuesta INTEGER NOT NULL,
-    id_estado_anterior INTEGER,
-    id_estado_nuevo INTEGER NOT NULL,
-    id_usuario_responsable INTEGER,
-    fecha_cambio TIMESTAMP NOT NULL,
-    observaciones TEXT,
-    CONSTRAINT fk_history_propuesta FOREIGN KEY (id_propuesta) 
-        REFERENCES propuestas(id_propuesta),
-    CONSTRAINT fk_history_estado_anterior FOREIGN KEY (id_estado_anterior) 
-        REFERENCES estados(id_estado),
-    CONSTRAINT fk_history_estado_nuevo FOREIGN KEY (id_estado_nuevo) 
-        REFERENCES estados(id_estado),
-    CONSTRAINT fk_history_responsable FOREIGN KEY (id_usuario_responsable) 
-        REFERENCES usuarios(id_usuario)
+CREATE TABLE public.proposal_state_history (
+  id_historial integer NOT NULL DEFAULT nextval('proposal_state_history_id_historial_seq'::regclass),
+  id_propuesta integer NOT NULL,
+  id_estado_anterior integer,
+  id_estado_nuevo integer NOT NULL,
+  id_usuario_responsable integer,
+  fecha_cambio timestamp without time zone NOT NULL,
+  observaciones character varying,
+  CONSTRAINT proposal_state_history_pkey PRIMARY KEY (id_historial),
+  CONSTRAINT fk_history_propuesta FOREIGN KEY (id_propuesta) REFERENCES public.propuestas(id_propuesta),
+  CONSTRAINT fk_history_estado_anterior FOREIGN KEY (id_estado_anterior) REFERENCES public.estados(id_estado),
+  CONSTRAINT fk_history_estado_nuevo FOREIGN KEY (id_estado_nuevo) REFERENCES public.estados(id_estado),
+  CONSTRAINT fk_history_responsable FOREIGN KEY (id_usuario_responsable) REFERENCES public.usuarios(id_usuario)
 );
-
--- ==========================================
--- 4. EVALUACIONES Y DICTÁMENES
--- ==========================================
-
--- Tabla: Evaluations (Base común de evaluaciones)
-CREATE TABLE evaluations (
-    id_evaluacion SERIAL PRIMARY KEY,
-    id_propuesta INTEGER NOT NULL,
-    id_usuario_eval INTEGER NOT NULL,
-    id_rol_evaluador INTEGER NOT NULL,
-    fecha_evaluacion TIMESTAMP NOT NULL,
-    observaciones TEXT,
-    CONSTRAINT fk_evaluaciones_propuesta FOREIGN KEY (id_propuesta) 
-        REFERENCES propuestas(id_propuesta),
-    CONSTRAINT fk_evaluaciones_usuario FOREIGN KEY (id_usuario_eval) 
-        REFERENCES usuarios(id_usuario),
-    CONSTRAINT fk_evaluaciones_rol FOREIGN KEY (id_rol_evaluador) 
-        REFERENCES roles(id_rol)
+CREATE TABLE public.evaluations (
+  id_evaluacion integer NOT NULL DEFAULT nextval('evaluations_id_evaluacion_seq'::regclass),
+  id_propuesta integer NOT NULL,
+  id_usuario_eval integer NOT NULL,
+  id_rol_evaluador integer NOT NULL,
+  fecha_evaluacion timestamp without time zone NOT NULL,
+  observaciones character varying,
+  CONSTRAINT evaluations_pkey PRIMARY KEY (id_evaluacion),
+  CONSTRAINT fk_evaluaciones_propuesta FOREIGN KEY (id_propuesta) REFERENCES public.propuestas(id_propuesta),
+  CONSTRAINT fk_evaluaciones_usuario FOREIGN KEY (id_usuario_eval) REFERENCES public.usuarios(id_usuario),
+  CONSTRAINT fk_evaluaciones_rol FOREIGN KEY (id_rol_evaluador) REFERENCES public.roles(id_rol)
 );
-
--- Tabla: TechnicalCommitteeEvaluations (Detalle comité técnico: rúbrica numérica)
-CREATE TABLE technical_committee_evaluations (
-    id_evaluacion INTEGER PRIMARY KEY,
-    puntaje INTEGER NOT NULL,
-    CONSTRAINT fk_tech_evaluacion FOREIGN KEY (id_evaluacion) 
-        REFERENCES evaluations(id_evaluacion)
+CREATE TABLE public.technical_committee_evaluations (
+  id_evaluacion integer NOT NULL,
+  puntaje integer NOT NULL,
+  CONSTRAINT technical_committee_evaluations_pkey PRIMARY KEY (id_evaluacion),
+  CONSTRAINT fk_tech_evaluacion FOREIGN KEY (id_evaluacion) REFERENCES public.evaluations(id_evaluacion)
 );
-
--- Tabla: VIEDictamenVerifications (Detalle dictamen de admisibilidad VIE: criterios booleanos)
-CREATE TABLE vie_dictamen_verifications (
-    id_evaluacion INTEGER NOT NULL,
-    id_criterio INTEGER NOT NULL,
-    cumple BOOLEAN NOT NULL,
-    PRIMARY KEY (id_evaluacion, id_criterio),
-    CONSTRAINT fk_viedictamen_evaluacion FOREIGN KEY (id_evaluacion) 
-        REFERENCES evaluations(id_evaluacion),
-    CONSTRAINT fk_viedictamen_criterio FOREIGN KEY (id_criterio) 
-        REFERENCES criterios_verificacion_vie(id_criterio)
+CREATE TABLE public.vie_dictamen_verifications (
+  id_evaluacion integer NOT NULL,
+  id_criterio integer NOT NULL,
+  cumple boolean NOT NULL,
+  CONSTRAINT vie_dictamen_verifications_pkey PRIMARY KEY (id_evaluacion, id_criterio),
+  CONSTRAINT fk_viedictamen_evaluacion FOREIGN KEY (id_evaluacion) REFERENCES public.evaluations(id_evaluacion),
+  CONSTRAINT fk_viedictamen_criterio FOREIGN KEY (id_criterio) REFERENCES public.criterios_verificacion_vie(id_criterio)
 );
-
--- Tabla: CIEResolutionEvaluations (Detalle Comité de Ética Institucional: resolución categórica)
-CREATE TABLE cie_resolution_evaluations (
-    id_evaluacion INTEGER PRIMARY KEY,
-    id_resolucion INTEGER NOT NULL,
-    CONSTRAINT fk_cie_evaluacion FOREIGN KEY (id_evaluacion) 
-        REFERENCES evaluations(id_evaluacion),
-    CONSTRAINT fk_cie_resolucion FOREIGN KEY (id_resolucion) 
-        REFERENCES resoluciones_cie(id_resolucion)
+CREATE TABLE public.cie_resolution_evaluations (
+  id_evaluacion integer NOT NULL,
+  id_resolucion integer NOT NULL,
+  CONSTRAINT cie_resolution_evaluations_pkey PRIMARY KEY (id_evaluacion),
+  CONSTRAINT fk_cie_evaluacion FOREIGN KEY (id_evaluacion) REFERENCES public.evaluations(id_evaluacion),
+  CONSTRAINT fk_cie_resolucion FOREIGN KEY (id_resolucion) REFERENCES public.resoluciones_cie(id_resolucion)
 );

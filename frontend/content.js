@@ -1,0 +1,87 @@
+window.SGPI_CONTENT = {
+  "screens": [
+    { "id": "01", "title": "Acceso al SGPI", "description": "Tus propuestas, desde la idea hasta la resolución.", "module": "Acceso" },
+    { "id": "02", "title": "Hola, Laura", "description": "Retoma tu propuesta y revisa los próximos pasos.", "module": "Inicio" },
+    { "id": "03", "title": "Notificaciones", "description": "Novedades y acciones pendientes de tus expedientes.", "module": "Inicio" },
+    { "id": "04", "title": "Convocatorias", "description": "Consulta modalidades, requisitos y fechas de presentación.", "module": "Formulación" },
+    { "id": "05", "title": "Fondos VIE 2027", "description": "Revisa las disposiciones y los instrumentos antes de preparar tu propuesta.", "module": "Formulación" },
+    { "id": "06", "title": "Mis propuestas", "description": "Gestiona tus borradores y consulta el avance de tus proyectos.", "module": "Formulación" },
+    { "id": "07", "title": "Nueva propuesta", "description": "Elige la modalidad para preparar los instrumentos correspondientes.", "module": "Formulación" },
+    { 
+      "id": "08", 
+      "title": "Datos generales", 
+      "description": "Define la información que identificará tu propuesta.", 
+      "module": "Formulación", 
+      "fields": [
+        { "label": "Título de la propuesta", "value": "Agua Inteligente: monitoreo de cuencas", "kind": "text", "required": true }, 
+        { "label": "Modalidad", "value": "Desarrollo tecnológico", "kind": "readonly", "required": true }, 
+        { "label": "Instancia coordinadora", "value": "Escuela de Ingeniería Ambiental", "kind": "select", "required": true }, 
+        { "label": "Línea de investigación", "value": "Gestión integrada del recurso hídrico", "kind": "select", "required": true }, 
+        { "label": "Fecha de inicio", "value": "01/01/2027", "kind": "date", "required": true }, 
+        { "label": "Fecha de finalización", "value": "31/12/2028", "kind": "date", "required": true }, 
+        { "label": "Resumen", "value": "Desarrollo y validación de un sistema de monitoreo que integra mediciones de calidad del agua para apoyar decisiones en dos microcuencas piloto.", "kind": "textarea", "required": true }, 
+        { "label": "Palabras clave", "value": "Calidad del agua; monitoreo; cuencas; sensores", "kind": "tags", "required": true }
+      ] 
+    },
+    { "id": "09", "title": "Equipo investigador", "description": "Registra responsabilidades, dedicación y participación estudiantil.", "module": "Formulación" },
+    { 
+      "id": "10", 
+      "title": "Descripción y fundamentación", 
+      "description": "Explica el problema y el aporte esperado de la propuesta.", 
+      "module": "Formulación", 
+      "fields": [
+        { "label": "Problema de investigación", "value": "La información sobre calidad del agua en las microcuencas piloto se obtiene mediante mediciones aisladas. Esta discontinuidad limita la identificación oportuna de variaciones y dificulta comparar condiciones entre sitios.", "kind": "textarea", "required": true }, 
+        { "label": "Justificación", "value": "Un sistema de monitoreo continuo y validado permitirá reconocer variaciones en la calidad del agua y brindar evidencia útil a las personas responsables de su gestión.", "kind": "textarea", "required": true }, 
+        { "label": "Antecedentes", "value": "El equipo dispone de una prueba de concepto en laboratorio. La propuesta integra medición, registro y visualización para avanzar hacia su validación en condiciones relevantes.", "kind": "textarea", "required": true }, 
+        { "label": "Referencias", "value": "Las referencias documentales del caso se incorporan en el anexo de fundamentación.", "kind": "textarea", "required": true }
+      ] 
+    },
+    { 
+      "id": "11", 
+      "title": "Objetivos", 
+      "description": "Relaciona cada objetivo específico con actividades y productos verificables.", 
+      "module": "Formulación", 
+      "fields": [
+        { "label": "Objetivo general", "value": "Desarrollar y validar un sistema de monitoreo de calidad del agua que apoye la toma de decisiones en dos microcuencas piloto.", "kind": "textarea", "required": true }
+      ], 
+      "rows": [
+        { "code": "OE1", "text": "Definir los requerimientos de medición y gestión de datos en las microcuencas piloto." }, 
+        { "code": "OE2", "text": "Integrar y validar un prototipo de monitoreo en condiciones de laboratorio y campo." }, 
+        { "code": "OE3", "text": "Evaluar la calidad de las mediciones y documentar las condiciones de uso del sistema." }
+      ] 
+    },
+    { 
+      "id": "12", 
+      "title": "Metodología", 
+      "description": "Describe cómo alcanzarás los objetivos y validarás los resultados.", 
+      "module": "Formulación", 
+      "fields": [
+        { "label": "Diseño metodológico", "value": "Desarrollo experimental en tres fases: definición de requerimientos, integración del prototipo y validación comparativa en campo.", "kind": "textarea", "required": true }, 
+        { "label": "Procedimiento", "value": "Se definirán puntos de medición en dos microcuencas; se calibrarán los instrumentos; se compararán registros del prototipo con mediciones de referencia; y se documentarán desempeño y limitaciones.", "kind": "textarea", "required": true }, 
+        { "label": "Análisis de resultados", "value": "Se evaluarán integridad de registros, concordancia de las mediciones y disponibilidad del sistema durante el período piloto.", "kind": "textarea", "required": true }, 
+        { "label": "Resultados y productos", "value": "Prototipo validado; conjunto de datos documentado; informe de desempeño; manual de uso y mantenimiento.", "kind": "textarea", "required": true }
+      ] 
+    },
+    { "id": "13", "title": "Plan de acción", "description": "Organiza actividades, productos, responsables y fechas.", "module": "Formulación" },
+    { "id": "14", "title": "Gestión de riesgos", "description": "Anticipa eventos que puedan afectar las actividades y define su tratamiento.", "module": "Formulación" },
+    { "id": "15", "title": "Presupuesto", "description": "Distribuye los recursos por año y justifica cada gasto.", "module": "Formulación" },
+    { "id": "16", "title": "Información complementaria", "description": "Completa la madurez tecnológica, el potencial de PI y los aspectos éticos.", "module": "Formulación" },
+    { "id": "17", "title": "Documentos y anexos", "description": "Reúne los documentos de esta etapa y conserva su versión.", "module": "Formulación" },
+    { "id": "18", "title": "Revisión de propuesta", "description": "Verifica la información antes de enviar a revisión y evaluación.", "module": "Formulación" },
+    { "id": "19", "title": "Propuesta enviada a revisión", "description": "La versión 1.0 quedó registrada para revisión del Centro de Vinculación.", "module": "Formulación" },
+    { "id": "20", "title": "Seguimiento de propuesta", "description": "Consulta el estado, la persona responsable y la próxima acción.", "module": "Formulación" },
+    { "id": "21", "title": "Bandeja de trabajo", "description": "Expedientes asignados a tu rol y pendientes de atención.", "module": "Evaluación" },
+    { "id": "22", "title": "Expediente de propuesta", "description": "Información, evidencias y decisiones reunidas en un solo lugar.", "module": "Expediente" },
+    { "id": "23", "title": "Revisión de Vinculación", "description": "Registra el análisis de innovación y potencial de propiedad intelectual.", "module": "Evaluación" },
+    { "id": "24", "title": "Evaluación del Comité Técnico", "description": "Aplica la rúbrica vigente y fundamenta la evaluación de esta versión.", "module": "Evaluación" },
+    { "id": "25", "title": "Aval del Consejo de Escuela", "description": "Registra el acuerdo de la instancia coordinadora y su evidencia.", "module": "Evaluación" },
+    { "id": "26", "title": "Dictamen de Dirección de Investigación", "description": "Verifica el expediente sometido y registra el dictamen institucional.", "module": "Evaluación" },
+    { "id": "27", "title": "Resolución del CIE", "description": "Registra la decisión y vincúlala con la versión evaluada.", "module": "Evaluación" },
+    { "id": "28", "title": "Historial del expediente", "description": "Cada actuación conserva fecha, responsable, versión y documento asociado.", "module": "Expediente" },
+    { "id": "29", "title": "Consulta histórica", "description": "Localiza expedientes resueltos y cerrados con filtros institucionales.", "module": "Consulta histórica" },
+    { "id": "30", "title": "Resultados de consulta", "description": "1 expediente coincide con los filtros seleccionados.", "module": "Consulta histórica" },
+    { "id": "31", "title": "Administración de convocatorias", "description": "Gestiona fechas, modalidades e instrumentos de cada convocatoria.", "module": "Administración de soporte" },
+    { "id": "32", "title": "Rúbricas y catálogos", "description": "Mantén instrumentos y clasificaciones para nuevas propuestas.", "module": "Administración de soporte" },
+    { "id": "33", "title": "Perfil y rol activo", "description": "Consulta tu cuenta y las opciones disponibles según el rol.", "module": "Cuenta" }
+  ]
+}
