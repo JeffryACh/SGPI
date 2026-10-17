@@ -6,7 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .db import pool
-from .routers import catalogos, propuestas
+# catalogos y propuestas están vacíos por ahora: se activan cuando tengan su `router`.
+# from .routers import catalogos, propuestas
+from .routers import auth
 
 
 @asynccontextmanager
@@ -19,8 +21,9 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="SGPI API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-app.include_router(catalogos.router)
-app.include_router(propuestas.router)
+app.include_router(auth.router)
+# app.include_router(catalogos.router)
+# app.include_router(propuestas.router)
 
 
 @app.get("/health")
