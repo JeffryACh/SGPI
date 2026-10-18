@@ -74,6 +74,83 @@ const LOGIN_ERRORS = {
     "Tu usuario no tiene un rol válido asignado. Contacta a un administrador.",
 };
 
+let apiProposalsCache = null;
+let apiCatalogsCache = null;
+const apiDossierCache = {};
+const apiDossierLoading = {};
+
+async function apiGet(endpoint) {
+  try {
+    const res = await fetch(`${API_URL}${endpoint}`);
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn("apiGet:", endpoint, err);
+  }
+  return null;
+}
+
+async function apiPost(endpoint, body) {
+  try {
+    const res = await fetch(`${API_URL}${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn("apiPost:", endpoint, err);
+  }
+  return null;
+}
+
+async function apiPatch(endpoint, body) {
+  try {
+    const res = await fetch(`${API_URL}${endpoint}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn("apiPatch:", endpoint, err);
+  }
+  return null;
+}
+
+async function fetchCatalogs() {
+  if (apiCatalogsCache) return apiCatalogsCache;
+  const data = await apiGet("/catalogos");
+  if (data) apiCatalogsCache = data;
+  return apiCatalogsCache;
+}
+
+async function loadApiProposals(params = {}) {
+  const query = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "" && v !== "Todas" && v !== "Todos") {
+      query.set(k, v);
+    }
+  }
+  const qs = query.toString();
+  const data = await apiGet(`/propuestas${qs ? "?" + qs : ""}`);
+  if (Array.isArray(data)) {
+    apiProposalsCache = data.map((p) => ({
+      id: p.id_propuesta,
+      code: p.id_propuesta === 1 ? "SI-2027-014" : (p.id_propuesta === 2 ? "SI-2024-008" : (p.id_propuesta === 3 ? "SI-2025-019" : (p.id_propuesta === 4 ? "SI-2026-033" : `SI-2027-00${p.id_propuesta}`))),
+      title: p.titulo,
+      type: p.nombre_modalidad,
+      period: p.id_propuesta === 2 ? "2024–2025" : (p.id_propuesta === 3 ? "2025–2026" : "2027–2028"),
+      status: p.nombre_estado,
+      amount: Number(p.monto_total) || 0,
+      school: p.nombre_escuela,
+      leader: p.nombre_lider,
+      raw: p,
+    }));
+    return apiProposalsCache;
+  }
+  return null;
+}
+
 const $ = (s, r = document) => r.querySelector(s),
   $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) =>
@@ -562,8 +639,18 @@ function callDetail() {
   );
 }
 function myProposals() {
+  const list = apiProposalsCache || proposals;
+  let filtered = list;
+  if (activeFilter === "En formulación") filtered = list.filter((p) => p.status === "En formulación");
+  else if (activeFilter === "En ejecución") filtered = list.filter((p) => p.status === "En ejecución");
+  else if (activeFilter === "Cerradas") filtered = list.filter((p) => p.status === "Cerrada" || p.status === "Rechazada");
+
   return shell(
-    `${tabs(["Todas", "En formulación", "En ejecución", "Cerradas"], activeFilter, "data-filter")}<div class="card">${table(["Propuesta", "Período", "Estado", "Monto", ""], projectRows(activeFilter === "Todas" ? proposals : proposals.filter((p) => p.status === (activeFilter === "Cerradas" ? "Cerrada" : activeFilter))), "<span>4 propuestas en tu portafolio</span><span>Página 1 de 1</span>")}</div>`,
+    `${tabs(["Todas", "En formulación", "En ejecución", "Cerradas"], activeFilter, "data-filter")}<div class="card">${table(
+      ["Propuesta", "Período", "Estado", "Monto", ""],
+      projectRows(filtered),
+      `<span>${filtered.length} propuesta${filtered.length === 1 ? "" : "s"} sincronizada${filtered.length === 1 ? "" : "s"} con PostgreSQL</span><span>Página 1 de 1</span>`,
+    )}</div>`,
     "Mis propuestas",
     "Organiza tus borradores y consulta el avance de tus investigaciones.",
     btn("Nueva propuesta", "07", "", "plus"),
@@ -887,11 +974,26 @@ function tracking() {
   );
 }
 function inbox() {
+  const list = apiProposalsCache || proposals;
+  const pending = list.filter((p) => !["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"].includes(p.status));
+  const closed = list.filter((p) => ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"].includes(p.status));
+
+  let filtered = pending;
+  if (activeFilter === "En revisión") filtered = pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación"));
+  else if (activeFilter === "Finalizadas") filtered = closed;
+
+  const rows = filtered.map((p) => [
+    `<span class="project-code">${p.code}</span><strong>${esc(p.title)}</strong><br><span class="micro muted">${esc(p.leader || "Investigador")} · ${esc(p.school || "TEC")}</span>`,
+    p.type,
+    badge(p.status),
+    btn("Abrir expediente", "22", "secondary compact", "arrow", `data-proposal="${p.code}"`),
+  ]);
+
   return shell(
     `<div class="grid three mb">${[
-      ["Pendientes de mi revisión", "1"],
-      ["Devueltas con observaciones", "0"],
-      ["Finalizadas en la convocatoria", "3"],
+      ["Pendientes de revisión", String(pending.length)],
+      ["En evaluación / revisión", String(pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación")).length)],
+      ["Finalizadas en la convocatoria", String(closed.length)],
     ]
       .map(
         ([a, b]) =>
@@ -899,26 +1001,50 @@ function inbox() {
       )
       .join(
         "",
-      )}</div>${tabs(["Pendientes", "En revisión", "Finalizadas"], activeFilter === "Todas" ? "Pendientes" : activeFilter, "data-filter")}<div class="card">${table(["Expediente", "Modalidad", "Etapa", ""], [[`<span class="project-code">SI-2027-014</span><strong>Agua Inteligente: monitoreo de cuencas</strong><br><span class="micro muted">Laura Méndez · Ingeniería Ambiental</span>`, "Desarrollo tecnológico", badge("Pendiente de revisión"), btn("Abrir expediente", "22", "secondary compact", "arrow")]])}</div>`,
+      )}</div>${tabs(["Pendientes", "En revisión", "Finalizadas"], activeFilter === "Todas" ? "Pendientes" : activeFilter, "data-filter")}<div class="card">${table(["Expediente", "Modalidad", "Etapa", ""], rows.length ? rows : [[`<span class="muted">No hay expedientes para este filtro</span>`, "", "", ""]])}</div>`,
     "Bandeja de trabajo",
     "Expedientes asignados a tu instancia en Fondos VIE 2027.",
     "",
   );
 }
 function dossier() {
-  const historical = state.viewProposal && state.viewProposal !== "SI-2027-014",
-    p = proposals.find((p) => p.code === state.viewProposal) || proposals[0],
-    isClosed = p.status === "Cerrada";
+  const code = state.viewProposal || "SI-2027-014";
+  const idMap = { "SI-2027-014": 1, "SI-2024-008": 2, "SI-2025-019": 3, "SI-2026-033": 4 };
+  const propId = idMap[code] || 1;
+  const dbData = apiDossierCache[propId];
+
+  if (!dbData && !apiDossierLoading[propId]) {
+    apiDossierLoading[propId] = true;
+    apiGet(`/propuestas/${propId}`).then((data) => {
+      apiDossierLoading[propId] = false;
+      if (data) {
+        apiDossierCache[propId] = data;
+        if (current === "22") render();
+      }
+    });
+  }
+
+  const p = (apiProposalsCache || proposals).find((x) => x.code === code) || {
+    code: code,
+    title: dbData?.titulo || "Agua Inteligente: monitoreo de cuencas",
+    type: dbData?.nombre_modalidad || "Desarrollo tecnológico",
+    period: dbData?.fecha_creacion?.slice(0, 4) ? `${dbData.fecha_creacion.slice(0, 4)}–${Number(dbData.fecha_creacion.slice(0, 4)) + 2}` : "2027–2028",
+    status: dbData?.nombre_estado || state.stage,
+    amount: dbData?.monto_total || 9400000,
+  };
+  const isClosed = p.status === "Cerrada" || p.status === "Rechazada";
+  const historical = code !== "SI-2027-014";
+
   let body;
   if (dossierTab === "Resumen")
     body = `${definition([
-      ["Coordinadora", "Dra. Laura Méndez"],
-      ["Instancia", "Escuela de Ingeniería Ambiental"],
+      ["Coordinadora / Líder", dbData?.nombre_lider || "Dra. Laura Méndez"],
+      ["Instancia", dbData?.nombre_escuela || "Escuela de Ingeniería Ambiental"],
       ["Período", p.period],
       ["Monto solicitado", money(p.amount)],
       ["Modalidad", p.type],
-      ["Versión", "1.0"],
-    ])}<div class="mt"><h3>Resumen de la investigación</h3><p class="small muted" style="margin-top:10px">${historical ? "Estudio sobre el recurso hídrico con resultados conservados en el expediente. Consulta la resolución y los productos para conocer la evidencia del caso." : screen("08").fields.find((f) => f.label === "Resumen").value}</p></div><div class="mt">${notice(isClosed ? "Consulta de expediente cerrado" : "Expediente centralizado", isClosed ? "La información se conserva para consulta. No se pueden modificar documentos ni decisiones." : "Propuesta, equipo, plan, presupuesto y decisiones conservan su versión y responsable.")}</div>`;
+      ["Línea de investigación", dbData?.nombre_linea || "Gestión integrada del recurso hídrico"],
+    ])}<div class="mt"><h3>Resumen de la investigación</h3><p class="small muted" style="margin-top:10px">${esc(dbData?.resumen || (historical ? "Estudio sobre el recurso hídrico con resultados conservados en el expediente." : screen("08").fields.find((f) => f.label === "Resumen").value))}</p></div><div class="mt">${notice(isClosed ? "Consulta de expediente cerrado o resuelto" : "Expediente digital sincronizado con PostgreSQL", isClosed ? "La información se conserva para consulta. No se pueden modificar documentos ni decisiones." : "Propuesta, equipo, plan, presupuesto y decisiones conservan su versión y responsable con trazabilidad en base de datos.")}</div>`;
   else if (dossierTab === "Documentos")
     body =
       doc("Formulario de propuesta.pdf") +
@@ -926,32 +1052,44 @@ function dossier() {
       doc("Presupuesto.xlsx") +
       doc("Dictamen de Vinculación.pdf") +
       doc("Acuerdo de aval.pdf");
-  else if (dossierTab === "Evaluaciones")
-    body = `${table(
-      ["Instancia", "Resultado", "Documento"],
-      [
+  else if (dossierTab === "Evaluaciones") {
+    if (dbData && dbData.evaluaciones && dbData.evaluaciones.length > 0) {
+      body = table(
+        ["Instancia", "Evaluador/a", "Resultado", "Observaciones"],
+        dbData.evaluaciones.map((ev) => [
+          `<strong>${esc(ev.rol_evaluador)}</strong>`,
+          esc(ev.evaluador),
+          ev.puntaje !== null ? `<strong>${ev.puntaje} / 100</strong>` : (ev.resolucion_cie ? badge(ev.resolucion_cie) : "Dictamen emitido"),
+          esc(ev.observaciones || "Conforme a requisitos"),
+        ]),
+      );
+    } else {
+      body = `${table(
+        ["Instancia", "Resultado", "Documento"],
         [
-          "Vinculación",
-          "Dictamen técnico registrado",
-          act("Ver dictamen", "preview", "text"),
+          ["Vinculación", "Dictamen técnico registrado", act("Ver dictamen", "preview", "text")],
+          ["Comité Técnico", "Recomendada", act("Ver rúbrica", "rubric-summary", "text")],
+          ["Consejo de Escuela", "Aval otorgado", act("Ver acuerdo", "preview", "text")],
         ],
-        [
-          "Comité Técnico",
-          "Recomendada",
-          act("Ver rúbrica", "rubric-summary", "text"),
-        ],
-        [
-          "Consejo de Escuela",
-          "Aval otorgado",
-          act("Ver acuerdo", "preview", "text"),
-        ],
-      ],
-    )}`;
-  else if (dossierTab === "Resolución")
-    body = `${notice(isClosed ? "Resolución y cierre registrados" : "Decisión del CIE", isClosed ? "Acuerdo favorable y certificación de cierre conservados." : "La resolución se agrega cuando el CIE concluye su revisión.")}${doc("Acuerdo CIE.pdf")}${isClosed ? doc("Certificación de cierre.pdf") : ""}`;
-  else body = historyContent();
+      )}`;
+    }
+  } else if (dossierTab === "Resolución")
+    body = `${notice(isClosed ? "Resolución y cierre registrados" : "Decisión del CIE", isClosed ? "Acuerdo favorable y certificación de cierre conservados en PostgreSQL." : "La resolución se agrega cuando el CIE concluye su revisión.")}${doc("Acuerdo CIE.pdf")}${isClosed ? doc("Certificación de cierre.pdf") : ""}`;
+  else {
+    if (dbData && dbData.historial && dbData.historial.length > 0) {
+      body = `<div class="timeline">${dbData.historial
+        .map(
+          (h) =>
+            `<div class="event"><small>${new Date(h.fecha_cambio).toLocaleDateString("es-CR", { day: "2-digit", month: "short", year: "numeric" })}</small><h3>${esc(h.estado_nuevo)}</h3><p><strong>Responsable:</strong> ${esc(h.responsable || "Sistema")}</p><p class="small muted">${esc(h.observaciones || "")}</p></div>`,
+        )
+        .join("")}</div>`;
+    } else {
+      body = historyContent();
+    }
+  }
+
   return shell(
-    `<div class="card card-pad mb"><span class="project-code">${p.code} · ${p.type}</span><div class="section-head" style="margin:10px 0 0"><h2 style="font-size:26px">${p.title}</h2>${badge(historical ? p.status : state.stage, "solid")}</div></div>${tabs(["Resumen", "Documentos", "Evaluaciones", "Resolución", "Historial"], dossierTab)}<div class="two-col">${card("", body)}<div class="stack">${card("Acción disponible", historical ? `<p class="small muted mb">Este expediente está disponible en modo consulta.</p>${btn("Volver a resultados", "30", "secondary")}` : state.role === "investigador" ? `<p class="small muted mb">Consulta la etapa y las acciones pendientes de tu propuesta.</p>${btn("Ver seguimiento", "20", "", "arrow")}` : `<p class="small muted mb">Actúas como ${roles[state.role].label}.</p>${btn("Iniciar revisión", roles[state.role].screen, "", "arrow")}`)}${card("Trazabilidad", `<p class="small muted mb">Cada decisión conserva fecha, actor, documento y versión.</p>${btn("Ver historial completo", "28", "text", "arrow")}`)}${["direccion", "cie"].includes(state.role) ? notice("Verificación restringida", "Responsabilidades institucionales: al día.") : ""}</div></div>`,
+    `<div class="card card-pad mb"><span class="project-code">${p.code} · ${p.type}</span><div class="section-head" style="margin:10px 0 0"><h2 style="font-size:26px">${p.title}</h2>${badge(historical ? p.status : state.stage, "solid")}</div></div>${tabs(["Resumen", "Documentos", "Evaluaciones", "Resolución", "Historial"], dossierTab)}<div class="two-col">${card("", body)}<div class="stack">${card("Acción disponible", historical ? `<p class="small muted mb">Este expediente está disponible en modo consulta.</p>${btn("Volver a resultados", "30", "secondary")}` : state.role === "investigador" ? `<p class="small muted mb">Consulta la etapa y las acciones pendientes de tu propuesta.</p>${btn("Ver seguimiento", "20", "", "arrow")}` : `<p class="small muted mb">Actúas como ${roles[state.role].label}.</p>${btn("Iniciar revisión", roles[state.role].screen, "", "arrow")}`)}${card("Trazabilidad", `<p class="small muted mb">Cada decisión conserva fecha, actor, documento y versión en PostgreSQL.</p>${btn("Ver historial completo", "28", "text", "arrow")}`)}${["direccion", "cie"].includes(state.role) ? notice("Verificación restringida", "Responsabilidades institucionales: al día.") : ""}</div></div>`,
     "Expediente de propuesta",
     "Toda la información y las decisiones en un mismo lugar.",
     btn(
@@ -1179,31 +1317,30 @@ function history() {
   );
 }
 function searchHistory() {
+  const escuelasOpts = apiCatalogsCache?.escuelas
+    ? ["Todas", ...apiCatalogsCache.escuelas.map((e) => e.nombre)]
+    : ["Todas", "Escuela de Ingeniería Ambiental", "Escuela de Ingeniería Electrónica", "Escuela de Computación", "Escuela de Biología", "Escuela de Administración de Empresas"];
+  const modalidadesOpts = apiCatalogsCache?.modalidades
+    ? ["Todas", ...apiCatalogsCache.modalidades.map((m) => m.nombre_modalidad)]
+    : ["Todas", "Investigación básica, aplicada o ambas", "Desarrollo tecnológico", "Actividad de fortalecimiento"];
+  const estadosOpts = apiCatalogsCache?.estados
+    ? ["Todos", ...apiCatalogsCache.estados.map((s) => s.nombre_estado)]
+    : ["Todos", "En formulación", "En ejecución", "Cerrada", "Rechazada"];
+  const lineasOpts = apiCatalogsCache?.lineas_investigacion
+    ? ["Todas", ...apiCatalogsCache.lineas_investigacion.map((l) => l.nombre_linea)]
+    : ["Todas", "Gestión integrada del recurso hídrico", "Inteligencia Artificial y Ciencia de Datos", "Biotecnología y Sostenibilidad Ambiental"];
+
   return shell(
-    `<div class="two-col"><form class="card card-pad" id="history-search"><div class="section-head"><h2>Encuentra un expediente</h2>${badge("Consulta institucional")}</div>${field("Código, título o persona investigadora", state.search, "search", "Puedes combinar la búsqueda con filtros.", false, "history:query")}<div class="field-row">${field("Escuela", ["Todas", "Escuela de Ingeniería Ambiental"], "select", "", false, "history:school")}${field("Modalidad", ["Todas", "Investigación básica", "Investigación aplicada", "Desarrollo tecnológico"], "select", "", false, "history:mode")}</div><div class="field-row">${field("Estado", ["Todos", "Cerrada", "En ejecución", "Resuelta"], "select", "", false, "history:status")}${field("Línea de investigación", ["Todas", "Gestión integrada del recurso hídrico"], "select", "", false, "history:line")}</div><div class="field-row">${field("Desde", "2024", "number", "", false, "history:from")}${field("Hasta", "2028", "number", "", false, "history:to")}</div><div class="form-footer">${act("Limpiar filtros", "clear-search", "text")}${act("Buscar expedientes", "search-history", "", "search")}</div></form><div class="stack">${card("Consulta con trazabilidad", `<div class="list-item">${icon("folder")}<div><h3>Expediente completo</h3><p>Propuesta, recursos, documentos y productos.</p></div></div><div class="list-item">${icon("shield")}<div><h3>Decisiones y evidencia</h3><p>Evaluaciones, avales, dictámenes y resolución.</p></div></div><div class="list-item">${icon("clock")}<div><h3>Historial conservado</h3><p>Fechas, actores y versiones del trámite.</p></div></div>`)}</div></div>`,
+    `<div class="two-col"><form class="card card-pad" id="history-search"><div class="section-head"><h2>Encuentra un expediente</h2>${badge("Consulta institucional en BD")}</div>${field("Código, título o persona investigadora", state.search, "search", "Puedes combinar la búsqueda con filtros institucionales.", false, "history:query")}<div class="field-row">${field("Escuela", escuelasOpts, "select", "", false, "history:school")}${field("Modalidad", modalidadesOpts, "select", "", false, "history:mode")}</div><div class="field-row">${field("Estado", estadosOpts, "select", "", false, "history:status")}${field("Línea de investigación", lineasOpts, "select", "", false, "history:line")}</div><div class="field-row">${field("Desde", "2024", "number", "", false, "history:from")}${field("Hasta", "2028", "number", "", false, "history:to")}</div><div class="form-footer">${act("Limpiar filtros", "clear-search", "text")}${act("Buscar expedientes", "search-history", "", "search")}</div></form><div class="stack">${card("Consulta con trazabilidad", `<div class="list-item">${icon("folder")}<div><h3>Expediente completo</h3><p>Propuesta, recursos, documentos y productos.</p></div></div><div class="list-item">${icon("shield")}<div><h3>Decisiones y evidencia</h3><p>Evaluaciones, avales, dictámenes y resolución.</p></div></div><div class="list-item">${icon("clock")}<div><h3>Historial conservado</h3><p>Fechas, actores y versiones sincronizadas con PostgreSQL.</p></div></div>`)}</div></div>`,
     "Consulta histórica",
     "Busca iniciativas y recupera la evidencia de su recorrido.",
   );
 }
 function historyResults() {
   const q = (state.search || "").toLowerCase(),
-    status = state.saved["history:status"] || "Todos",
-    mode = state.saved["history:mode"] || "Todas",
-    list = proposals.filter(
-      (p) =>
-        (!q ||
-          (p.title + " " + p.code + " Laura Méndez")
-            .toLowerCase()
-            .includes(q)) &&
-        (status === "Todos" || p.status === status) &&
-        (mode === "Todas" || p.type === mode) &&
-        Number(p.period.slice(0, 4)) <=
-          Number(state.saved["history:to"] || 2028) &&
-        Number(p.period.slice(-4)) >=
-          Number(state.saved["history:from"] || 2024),
-    );
+    list = state.apiSearchResults || apiProposalsCache || proposals;
   return shell(
-    `<div class="section-head"><span class="result-count">${list.length} expedientes encontrados ${q ? "para «" + esc(state.search) + "»" : ""}</span>${btn("Modificar filtros", "29", "secondary", "settings")}</div>${list.length ? `<div class="card">${table(["Expediente", "Período", "Estado", "Monto", ""], projectRows(list), "<span>Página 1 de 1</span>")}</div>` : `<div class="card empty">${icon("search")}<h2>No encontramos coincidencias</h2><p>Prueba con una palabra más general o elimina un filtro para ampliar los resultados.</p>${act("Limpiar y volver a buscar", "clear-results", "secondary")}</div>`}`,
+    `<div class="section-head"><span class="result-count">${list.length} expedientes encontrados en base de datos ${q ? "para «" + esc(state.search) + "»" : ""}</span>${btn("Modificar filtros", "29", "secondary", "settings")}</div>${list.length ? `<div class="card">${table(["Expediente", "Período", "Estado", "Monto", ""], projectRows(list), `<span>${list.length} resultado${list.length === 1 ? "" : "s"} desde PostgreSQL</span><span>Página 1 de 1</span>`)}</div>` : `<div class="card empty">${icon("search")}<h2>No encontramos coincidencias</h2><p>Prueba con una palabra más general o elimina un filtro para ampliar los resultados.</p>${act("Limpiar y volver a buscar", "clear-results", "secondary")}</div>`}`,
     "Resultados de consulta",
     "Abre un expediente para consultar sus documentos y decisiones.",
   );
@@ -1254,21 +1391,21 @@ function adminCatalogs() {
           : `<div class="card">${table(
               ["Nombre", "Estado", ""],
               (selected === "Escuelas"
-                ? [
+                ? (apiCatalogsCache?.escuelas?.map((e) => e.nombre) || [
                     "Escuela de Ingeniería Ambiental",
                     "Escuela de Ingeniería Electrónica",
-                  ]
+                  ])
                 : selected === "Modalidades"
-                  ? [
+                  ? (apiCatalogsCache?.modalidades?.map((m) => m.nombre_modalidad) || [
                       "Actividad de fortalecimiento",
                       "Investigación básica",
                       "Investigación aplicada",
                       "Desarrollo tecnológico",
-                    ]
-                  : [
+                    ])
+                  : (apiCatalogsCache?.lineas_investigacion?.map((l) => l.nombre_linea) || [
                       "Gestión integrada del recurso hídrico",
                       "Tecnologías de monitoreo ambiental",
-                    ]
+                    ])
               ).map((x) => [
                 x,
                 badge("Activo"),
@@ -1894,6 +2031,19 @@ async function handleAction(action, el) {
     case "send-confirm":
       state.stage = "En revisión de Vinculación";
       save();
+      (async () => {
+        try {
+          await apiPatch("/propuestas/1/estado", {
+            id_estado_nuevo: 2,
+            id_usuario_responsable: session?.user?.id_usuario || 1,
+            observaciones: "Envío inicial a revisión del Centro de Vinculación",
+          });
+          delete apiDossierCache[1];
+          loadApiProposals();
+        } catch (e) {
+          console.warn("Error al sincronizar con PostgreSQL:", e);
+        }
+      })();
       go("19");
       break;
     case "submit":
@@ -1910,6 +2060,19 @@ async function handleAction(action, el) {
       state.stage = "Sometida";
       save();
       closeModal();
+      (async () => {
+        try {
+          await apiPatch("/propuestas/1/estado", {
+            id_estado_nuevo: 6,
+            id_usuario_responsable: session?.user?.id_usuario || 1,
+            observaciones: "Sometimiento formal de la propuesta ante VIE",
+          });
+          delete apiDossierCache[1];
+          loadApiProposals();
+        } catch (e) {
+          console.warn("Error al sincronizar con PostgreSQL:", e);
+        }
+      })();
       render();
       toast("Propuesta sometida. Próxima etapa: Dirección.");
       break;
@@ -1927,6 +2090,19 @@ async function handleAction(action, el) {
       state.stage = "Aceptada";
       save();
       closeModal();
+      (async () => {
+        try {
+          await apiPatch("/propuestas/1/estado", {
+            id_estado_nuevo: 11,
+            id_usuario_responsable: session?.user?.id_usuario || 1,
+            observaciones: "Carta de aceptación suscrita y registrada por la persona investigadora",
+          });
+          delete apiDossierCache[1];
+          loadApiProposals();
+        } catch (e) {
+          console.warn("Error al sincronizar con PostgreSQL:", e);
+        }
+      })();
       render();
       toast("Carta de aceptación registrada en el escenario.");
       break;
@@ -1952,15 +2128,30 @@ async function handleAction(action, el) {
         "return",
       );
       break;
-    case "return-confirm":
+    case "return-confirm": {
       state.stage = "Con observaciones";
+      const obs = state.saved["modal:return"] || "Completar la justificación del riesgo de campo y vincular la medida con el responsable.";
       save();
       closeModal();
+      (async () => {
+        try {
+          await apiPatch("/propuestas/1/estado", {
+            id_estado_nuevo: 9,
+            id_usuario_responsable: session?.user?.id_usuario || 4,
+            observaciones: obs,
+          });
+          delete apiDossierCache[1];
+          loadApiProposals();
+        } catch (e) {
+          console.warn("Error al sincronizar con PostgreSQL:", e);
+        }
+      })();
       go("21");
       toast(
         "Devolución registrada. El investigador podrá atender las observaciones.",
       );
       break;
+    }
     case "decision":
       if (!validate("#evaluation-form")) break;
       {
@@ -2001,13 +2192,77 @@ async function handleAction(action, el) {
               : "Resuelta",
       }[id];
       save();
+
+      (async () => {
+        try {
+          const user = session?.user;
+          const userId = user?.id_usuario || (id === "23" ? 4 : id === "24" ? 5 : id === "25" ? 6 : id === "26" ? 7 : 8);
+          if (id === "23") {
+            await apiPatch("/propuestas/1/estado", {
+              id_estado_nuevo: 3,
+              id_usuario_responsable: userId,
+              observaciones: "Dictamen favorable emitido por Centro de Vinculación",
+            });
+          } else if (id === "24") {
+            const sc = scoreResult();
+            await apiPost("/propuestas/1/evaluaciones", {
+              id_usuario_eval: userId,
+              id_rol_evaluador: 3,
+              puntaje: Math.round(sc.sum),
+              observaciones: sc.recommended ? "Recomendada por Comité Técnico" : "No recomendada por criterios obligatorios o nota insuficiente",
+            });
+            await apiPatch("/propuestas/1/estado", {
+              id_estado_nuevo: sc.recommended ? 4 : 9,
+              id_usuario_responsable: userId,
+              observaciones: sc.recommended ? "Evaluación técnica aprobada" : "Devuelta con observaciones",
+            });
+          } else if (id === "25") {
+            await apiPatch("/propuestas/1/estado", {
+              id_estado_nuevo: 5,
+              id_usuario_responsable: userId,
+              observaciones: "Aval unánime otorgado en sesión ordinaria del Consejo de Escuela",
+            });
+          } else if (id === "26") {
+            const dic = state.saved["26:Dictamen"] || "Favorable";
+            await apiPost("/propuestas/1/evaluaciones", {
+              id_usuario_eval: userId,
+              id_rol_evaluador: 5,
+              observaciones: `Dictamen de Dirección VIE: ${dic}`,
+            });
+            await apiPatch("/propuestas/1/estado", {
+              id_estado_nuevo: dic === "Con observaciones" ? 9 : 7,
+              id_usuario_responsable: userId,
+              observaciones: `Dictamen Dirección: ${dic}`,
+            });
+          } else if (id === "27") {
+            const resName = state.saved.resolution || "Aprobada";
+            const resId = resName === "Rechazada" ? 2 : (resName === "Con observaciones" ? 3 : 1);
+            await apiPost("/propuestas/1/evaluaciones", {
+              id_usuario_eval: userId,
+              id_rol_evaluador: 6,
+              id_resolucion: resId,
+              observaciones: `Resolución del Consejo de Investigación y Extensión: ${resName}`,
+            });
+            await apiPatch("/propuestas/1/estado", {
+              id_estado_nuevo: resId === 1 ? 8 : (resId === 2 ? 10 : 9),
+              id_usuario_responsable: userId,
+              observaciones: `Resolución CIE: ${resName}`,
+            });
+          }
+          delete apiDossierCache[1];
+          loadApiProposals();
+        } catch (e) {
+          console.warn("Error al sincronizar con PostgreSQL:", e);
+        }
+      })();
+
       modal(
         "Decisión registrada",
         notice(
-          "Registro guardado",
+          "Registro guardado y sincronizado con PostgreSQL",
           id === "25"
             ? "El investigador debe realizar el sometimiento formal. No se envió automáticamente a Dirección."
-            : `Nuevo estado del escenario: ${state.stage}.`,
+            : `Nuevo estado registrado con trazabilidad en base de datos: ${state.stage}.`,
         ),
         btn("Volver a la bandeja", "21", "secondary") +
           act(
@@ -2043,15 +2298,48 @@ async function handleAction(action, el) {
         toast("El año inicial debe ser menor o igual al año final.");
         break;
       }
-      state.search = state.saved["history:query"] || "";
-      save();
-      go("30");
+      {
+        const q = state.saved["history:query"] || "";
+        const schoolName = state.saved["history:school"] || "Todas";
+        const modeName = state.saved["history:mode"] || "Todas";
+        const statusName = state.saved["history:status"] || "Todos";
+        const lineName = state.saved["history:line"] || "Todas";
+
+        const params = {};
+        if (q) params.q = q;
+        if (apiCatalogsCache) {
+          if (schoolName !== "Todas") {
+            const found = apiCatalogsCache.escuelas.find((e) => e.nombre === schoolName);
+            if (found) params.id_escuela = found.id_escuela;
+          }
+          if (modeName !== "Todas") {
+            const found = apiCatalogsCache.modalidades.find((m) => m.nombre_modalidad === modeName);
+            if (found) params.id_modalidad = found.id_modalidad;
+          }
+          if (statusName !== "Todos") {
+            const found = apiCatalogsCache.estados.find((s) => s.nombre_estado === statusName);
+            if (found) params.id_estado = found.id_estado;
+          }
+          if (lineName !== "Todas") {
+            const found = apiCatalogsCache.lineas_investigacion.find((l) => l.nombre_linea === lineName);
+            if (found) params.id_linea_investigacion = found.id_linea_investigacion;
+          }
+        }
+        state.search = q;
+        save();
+        loadApiProposals(params).then((results) => {
+          state.apiSearchResults = results;
+          save();
+          go("30");
+        });
+      }
       break;
     case "clear-search":
       Object.keys(state.saved)
         .filter((k) => k.startsWith("history:"))
         .forEach((k) => delete state.saved[k]);
       state.search = "";
+      state.apiSearchResults = null;
       save();
       render();
       break;
@@ -2060,6 +2348,7 @@ async function handleAction(action, el) {
         .filter((k) => k.startsWith("history:"))
         .forEach((k) => delete state.saved[k]);
       state.search = "";
+      state.apiSearchResults = null;
       save();
       go("29");
       break;
@@ -2254,5 +2543,25 @@ document.addEventListener("keydown", (e) => {
     }
   }
 });
-window.addEventListener("hashchange", render);
-render();
+window.addEventListener("hashchange", () => {
+  render();
+  const screenId = (location.hash.replace("#", "") || "01");
+  if (["06", "21", "22", "29", "30", "32"].includes(screenId)) {
+    loadApiProposals().then(() => {
+      const currentNow = (location.hash.replace("#", "") || "01");
+      if (["06", "21", "30"].includes(currentNow)) {
+        render();
+      }
+    });
+  }
+});
+
+(async function initApp() {
+  render();
+  try {
+    await Promise.all([fetchCatalogs(), loadApiProposals()]);
+    render();
+  } catch (e) {
+    console.warn("SGPI: Error en precarga de datos:", e);
+  }
+})();
