@@ -125,9 +125,30 @@ async function top3PropuestasMasRecientes() {
   return top3propuestasmasrecientes;
 }
 
-top3PropuestasMasRecientes().then(resultado => {
-  console.log("Impreso afuera usando .then:", resultado);
-});
+let notificaciones = null;
+async function Notificaciones() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) return null;
+  try {
+    const res = await fetch(`${API_URL}/notificaciones/notificaciones?id_usuario=${idUsuario}`);
+    if (res.ok) notificaciones = await res.json(); // { total, formulacion, ejecucion, cerradas }
+  } catch (err) {
+    console.warn("numsPropuestas error:", err);
+  }
+  return notificaciones;
+}
+
+async function marcarLeida(idNotif) {
+  const n = (notificaciones ?? []).find((x) => x.id_notificacion === idNotif);
+  if (!n || n.leida) return;
+  n.leida = true; // optimista
+  //await apiPatch(`/notificaciones/${idNotif}/leer?id_usuario=${session.user.id_usuario}`, {});
+}
+
+async function marcarTodasLeidas() {
+  (notificaciones ?? []).forEach((n) => (n.leida = true));
+  //await apiPatch(`/notificaciones/leer-todas?id_usuario=${session.user.id_usuario}`, {});
+}
 
 async function apiGet(endpoint) {
   try {
@@ -574,45 +595,35 @@ function dashboard() {
     btn("Nueva propuesta", "07", "", "plus"),
   );
 }
+
 function notifications() {
-  let items = [
-    [
-      "Tu borrador está guardado",
-      "SI-2027-014 · Continúa con presupuesto y documentos.",
-      "21 ago 2026 · 10:42",
-      "15",
-    ],
-    [
-      "Fondos VIE 2027: fecha de sometimiento",
-      "Recuerda que necesitas evaluación técnica y aval antes del 28 de septiembre.",
-      "20 ago 2026 · 08:00",
-      "05",
-    ],
-    [
-      "Informe de seguimiento disponible",
-      "SI-2026-021 · Vulnerabilidad hídrica en microcuencas.",
-      "19 ago 2026 · 14:20",
-      "22",
-    ],
-  ];
-  if (activeFilter === "Sin leer" && state.read) items = [];
+  const all = notificaciones ?? [];
+  let items = all;
+  if (activeFilter === "Sin leer") items = all.filter((n) => !n.leida);
+  else if (activeFilter === "Trámites") items = all.filter((n) => n.tipo === "tramite");
+  else if (activeFilter === "Convocatorias") items = all.filter((n) => n.tipo === "convocatoria");
+
+  const fecha = (s) =>
+    new Date(s).toLocaleString("es-CR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const destino = (n) => (n.tipo === "convocatoria" ? "05" : n.id_propuesta ? "22" : "03");
+
   return shell(
     `${tabs(["Todas", "Sin leer", "Trámites", "Convocatorias"], activeFilter, "data-filter")}<div class="card card-pad">${
       items.length
         ? items
-            .filter((a, i) => activeFilter !== "Convocatorias" || i === 1)
             .map(
-              (a, i) =>
-                `<div class="list-item"><div class="list-icon">${icon(i === 1 ? "calendar" : "file")}</div><div class="grow"><div class="action-row"><h3>${a[0]}</h3>${!state.read && i < 2 ? badge("Sin leer") : ""}</div><p>${a[1]}</p><small class="micro muted">${a[2]}</small></div>${btn("Ver", a[3], "text", "arrow")}</div>`,
+              (n) =>
+                `<div class="list-item"><div class="list-icon">${icon(n.tipo === "convocatoria" ? "calendar" : "file")}</div><div class="grow"><div class="action-row"><h3>${esc(n.titulo)}</h3>${!n.leida ? badge("Sin leer") : ""}</div><p>${esc(n.mensaje)}</p><small class="micro muted">${fecha(n.fecha_creacion)}</small></div>${btn("Ver", destino(n), "text", "arrow", `data-notif="${n.id_notificacion}" ${n.id_propuesta ? `data-proposal="SI-${n.id_propuesta}"` : ""}`)}</div>`,
             )
             .join("")
-        : `<div class="empty">${icon("check")}<h2>Estás al día</h2><p>No tienes notificaciones sin leer.</p>${act("Ver todas", "all-notifications", "secondary")}</div>`
+        : `<div class="empty">${icon("check")}<h2>${activeFilter === "Sin leer" ? "Estás al día" : "Sin notificaciones"}</h2><p>${activeFilter === "Sin leer" ? "No tienes notificaciones sin leer." : "No hay notificaciones en esta categoría."}</p>${act("Ver todas", "all-notifications", "secondary")}</div>`
     }</div>`,
     "Notificaciones",
     "Novedades y acciones pendientes de tus expedientes.",
     act("Marcar todas como leídas", "read", "secondary", "check"),
   );
 }
+
 function calls() {
   return shell(
     `<div class="filters mb">${field("Buscar convocatoria", "", "search", "", false, "call:query")}${field("Estado", ["Abiertas para formulación", "Todas", "Cerradas"], "select")}${act("Buscar", "filter-calls", "secondary", "search")}</div><div class="grid two"><section class="card card-pad"><div class="section-head">${badge("Formulación")}</div><h2>Fondos VIE 2027</h2><p class="small muted" style="margin:12px 0 24px">Apoyo a iniciativas de fortalecimiento, investigación y desarrollo tecnológico.</p>${definition(
@@ -1640,7 +1651,7 @@ async function doLogin() {
     if (!key) throw new AuthError("noroles");
     setSession({ user });
     applyRole(key);
-    await Promise.all([numsPropuestas(), propuestaMasReciente(), top3PropuestasMasRecientes()]);
+    await Promise.all([numsPropuestas(), propuestaMasReciente(), top3PropuestasMasRecientes(), Notificaciones()]);
     save();
     go(homeFor());
   } catch (err) {
@@ -2577,7 +2588,7 @@ window.addEventListener("hashchange", () => {
 (async function initApp() {
   render();
   try {
-    await Promise.all([numsPropuestas(), propuestaMasReciente()]);
+    await Promise.all([numsPropuestas(), propuestaMasReciente(), Notificaciones(), top3PropuestasMasRecientes()]);
     render();
   } catch (e) {
     console.warn("SGPI: Error en precarga de datos:", e);
