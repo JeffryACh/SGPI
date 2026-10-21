@@ -6,7 +6,7 @@ services:
     container_name: sgpi-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-sgpi}:${POSTGRES_PASSWORD:-sgpi_dev}@db:5432/${POSTGRES_DB:-sgpi}
+      DATABASE_URL: ${DATABASE_URL}
     ports:
       - "3001:3000"
 

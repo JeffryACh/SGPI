@@ -3,7 +3,11 @@ import os
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://sgpi:sgpi_dev@localhost:5432/sgpi")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "Falta DATABASE_URL. Copia .env.example a .env y completa tus datos de Supabase."
+    )
 
 pool = ConnectionPool(
     DATABASE_URL,
@@ -12,7 +16,6 @@ pool = ConnectionPool(
     kwargs={"row_factory": dict_row},
     open=False,
 )
-
 
 def get_conn():
     """Dependencia de FastAPI: una conexión por request.

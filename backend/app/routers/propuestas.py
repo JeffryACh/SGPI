@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from psycopg import Connection
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
 
 from ..db import get_conn
 
@@ -27,8 +28,6 @@ class Top3PropuestasRecientes(BaseModel):
     status: str
     amount: float
 
-# IMPORTANTE: si este router tiene una ruta "/{id_propuesta}", esta ruta debe
-# declararse ANTES que ella; si no, FastAPI tomaría "dashboardpropuestas" como un id.
 @router.get("/dashboardpropuestas", response_model=DashboardPropuestas)
 def obtener_dashboard_propuestas(
     id_usuario: int = Query(..., description="ID del usuario a consultar"),
@@ -60,7 +59,7 @@ def obtener_dashboard_propuestas(
         cerradas=fila["cerradas"],
     )
 
-@router.get("/propuestaMasReciente", response_model = propuestaMasReciente)
+@router.get("/propuestaMasReciente", response_model = Optional[propuestaMasReciente])
 def obtener_propuesta_mas_reciente(
     id_usuario: int = Query(..., description="ID del usuario a consultar"),
     conn: Connection = Depends(get_conn),
@@ -82,7 +81,9 @@ def obtener_propuesta_mas_reciente(
             (id_usuario, id_usuario),
         )
         fila = cur.fetchone()
-
+    if fila is None:
+        return None
+    
     return propuestaMasReciente(
         id=fila["id_propuesta"],
         titulo=fila["titulo"],

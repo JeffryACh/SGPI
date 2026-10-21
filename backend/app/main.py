@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .db import pool
-from .routers import auth, propuestas, notificaciones
+from .routers import auth, propuestas, notificaciones, modalidades
 
 
 @asynccontextmanager
@@ -22,6 +22,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 app.include_router(auth.router)
 app.include_router(propuestas.router)
 app.include_router(notificaciones.router)
+app.include_router(modalidades.router)
 
 @app.get("/health")
 def health():
