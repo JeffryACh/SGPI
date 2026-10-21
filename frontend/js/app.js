@@ -5,6 +5,7 @@
    200 -> { id_usuario, nombre, correo, roles: ["Investigador", ...] }
    401 -> credenciales inválidas o usuario inactivo
    ===================================================================== */
+
 const API_URL = "http://localhost:3001",
   SESSION_KEY = "sgpi-session";
 const ROLE_KEYS = {
@@ -78,6 +79,55 @@ let apiProposalsCache = null;
 let apiCatalogsCache = null;
 const apiDossierCache = {};
 const apiDossierLoading = {};
+
+let numspropuestas = null;
+async function numsPropuestas() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) return null;
+  try {
+    const res = await fetch(`${API_URL}/propuestas/dashboardpropuestas?id_usuario=${idUsuario}`);
+    if (res.ok) numspropuestas = await res.json(); // { total, formulacion, ejecucion, cerradas }
+  } catch (err) {
+    console.warn("numsPropuestas error:", err);
+  }
+  return numspropuestas;
+}
+
+let propuestamasreciente = null;
+async function propuestaMasReciente() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) return null;
+  try {
+    const res = await fetch(`${API_URL}/propuestas/propuestaMasReciente?id_usuario=${idUsuario}`);
+    if (res.ok) propuestamasreciente = await res.json(); // { total, formulacion, ejecucion, cerradas }
+  } catch (err) {
+    console.warn("numsPropuestas error:", err);
+  }
+  return propuestamasreciente;
+}
+
+let top3propuestasmasrecientes = null
+async function top3PropuestasMasRecientes() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) return null;
+  const data = await apiGet(`/propuestas/top3PropuestaMasReciente?id_usuario=${idUsuario}`);
+  if (Array.isArray(data)) {
+    top3propuestasmasrecientes = data.map((p) => ({
+      id: p.id,
+      code: `SI-${p.id}`,
+      title: p.title,
+      type: p.tipo,
+      period: "-",
+      status: p.status,
+      amount: Number(p.amount) || 0,
+    }));
+  }
+  return top3propuestasmasrecientes;
+}
+
+top3PropuestasMasRecientes().then(resultado => {
+  console.log("Impreso afuera usando .then:", resultado);
+});
 
 async function apiGet(endpoint) {
   try {
@@ -416,41 +466,8 @@ function fieldsFor(id) {
 function doc(name, meta = "Versión 1.0", action = "preview") {
   return `<div class="doc-row"><span class="doc-icon">${/xlsx/i.test(name) ? "XLSX" : "PDF"}</span><div class="grow"><strong>${esc(name)}</strong><small>${esc(meta)}</small></div>${act("Ver", action, "text compact", "file", `data-doc="${esc(name)}"`)}</div>`;
 }
-const proposals = [
-  {
-    code: "SI-2027-014",
-    title: "Agua Inteligente: monitoreo de cuencas",
-    type: "Desarrollo tecnológico",
-    period: "2027–2028",
-    status: "En formulación",
-    amount: 9400000,
-  },
-  {
-    code: "SI-2027-019",
-    title: "Biofiltros para el reúso de agua",
-    type: "Investigación aplicada",
-    period: "2027–2028",
-    status: "En formulación",
-    amount: 6800000,
-  },
-  {
-    code: "SI-2026-021",
-    title: "Vulnerabilidad hídrica en microcuencas",
-    type: "Investigación aplicada",
-    period: "2026–2027",
-    status: "En ejecución",
-    amount: 7400000,
-  },
-  {
-    code: "SI-2024-008",
-    title: "Indicadores de calidad del agua rural",
-    type: "Investigación básica",
-    period: "2024–2025",
-    status: "Cerrada",
-    amount: 6100000,
-  },
-];
-function projectRows(list = proposals) {
+
+function projectRows(list = (top3propuestasmasrecientes ?? [])) {
   return list.map((p, i) => [
     `<span class="project-code">${p.code}</span><span class="project-name">${p.title}</span><span class="small muted">${p.type}</span>`,
     p.period,
@@ -524,11 +541,11 @@ function dashboard() {
       "",
     );
   return shell(
-    `<div class="hero"><div><h2>Agua Inteligente: monitoreo de cuencas</h2><p>Completa el presupuesto y los documentos para enviar a revisión.</p></div>${btn("Continuar propuesta", "15", "", "arrow")}</div><div class="grid four mt">${[
-      ["Mis propuestas", "4", "folder"],
-      ["En formulación", "2", "edit"],
-      ["En ejecución", "1", "clock"],
-      ["Cerradas", "1", "check"],
+    `<div class="hero"><div><h2> ${propuestamasreciente?.titulo ?? "------"} </h2><p>Completa el presupuesto y los documentos para enviar a revisión.</p></div>${btn("Continuar propuesta", "15", "", "arrow")}</div><div class="grid four mt">${[
+      ["Mis propuestas", numspropuestas?.total ?? "-", "folder"],
+      ["En formulación", numspropuestas?.formulacion ?? "-", "edit"],
+      ["En ejecución", numspropuestas?.ejecucion ?? "-", "clock"],
+      ["Cerradas", numspropuestas?.cerradas ?? "-", "check"],
     ]
       .map(
         ([a, b, c]) =>
@@ -538,7 +555,7 @@ function dashboard() {
         "",
       )}</div><div class="two-col mt"><section class="card"><div class="card-pad section-head" style="margin-bottom:0"><h2>Mis propuestas recientes</h2>${btn("Ver todas", "06", "text compact")}</div>${table(
       ["Propuesta", "Estado", ""],
-      proposals
+      (top3propuestasmasrecientes ?? [])
         .slice(0, 3)
         .map((p, i) => [
           `<span class="project-code">${p.code}</span><span class="project-name">${p.title}</span>`,
@@ -639,7 +656,7 @@ function callDetail() {
   );
 }
 function myProposals() {
-  const list = apiProposalsCache || proposals;
+  const list = apiProposalsCache || top3propuestasmasrecientes || [];
   let filtered = list;
   if (activeFilter === "En formulación") filtered = list.filter((p) => p.status === "En formulación");
   else if (activeFilter === "En ejecución") filtered = list.filter((p) => p.status === "En ejecución");
@@ -974,7 +991,7 @@ function tracking() {
   );
 }
 function inbox() {
-  const list = apiProposalsCache || proposals;
+  const list = apiProposalsCache || top3propuestasmasrecientes || [];
   const pending = list.filter((p) => !["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"].includes(p.status));
   const closed = list.filter((p) => ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"].includes(p.status));
 
@@ -1024,7 +1041,7 @@ function dossier() {
     });
   }
 
-  const p = (apiProposalsCache || proposals).find((x) => x.code === code) || {
+  const p = (apiProposalsCache || top3propuestasmasrecientes || []).find((x) => x.code === code) || {
     code: code,
     title: dbData?.titulo || "Agua Inteligente: monitoreo de cuencas",
     type: dbData?.nombre_modalidad || "Desarrollo tecnológico",
@@ -1338,7 +1355,7 @@ function searchHistory() {
 }
 function historyResults() {
   const q = (state.search || "").toLowerCase(),
-    list = state.apiSearchResults || apiProposalsCache || proposals;
+    list = state.apiSearchResults || apiProposalsCache || top3propuestasmasrecientes || [];
   return shell(
     `<div class="section-head"><span class="result-count">${list.length} expedientes encontrados en base de datos ${q ? "para «" + esc(state.search) + "»" : ""}</span>${btn("Modificar filtros", "29", "secondary", "settings")}</div>${list.length ? `<div class="card">${table(["Expediente", "Período", "Estado", "Monto", ""], projectRows(list), `<span>${list.length} resultado${list.length === 1 ? "" : "s"} desde PostgreSQL</span><span>Página 1 de 1</span>`)}</div>` : `<div class="card empty">${icon("search")}<h2>No encontramos coincidencias</h2><p>Prueba con una palabra más general o elimina un filtro para ampliar los resultados.</p>${act("Limpiar y volver a buscar", "clear-results", "secondary")}</div>`}`,
     "Resultados de consulta",
@@ -1623,6 +1640,7 @@ async function doLogin() {
     if (!key) throw new AuthError("noroles");
     setSession({ user });
     applyRole(key);
+    await Promise.all([numsPropuestas(), propuestaMasReciente(), top3PropuestasMasRecientes()]);
     save();
     go(homeFor());
   } catch (err) {
@@ -2559,7 +2577,7 @@ window.addEventListener("hashchange", () => {
 (async function initApp() {
   render();
   try {
-    await Promise.all([fetchCatalogs(), loadApiProposals()]);
+    await Promise.all([numsPropuestas(), propuestaMasReciente()]);
     render();
   } catch (e) {
     console.warn("SGPI: Error en precarga de datos:", e);
