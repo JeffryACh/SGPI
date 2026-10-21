@@ -1,0 +1,229 @@
+/*
+Correcciones de contraste para modo oscuro
+*/
+
+html[data-theme="dark"] {
+  --dark-background: #0b1420;
+  --dark-surface: #121f2c;
+  --dark-surface-emphasis: #172b3e;
+  --dark-text: #e6eff8;
+  --dark-muted: #c5d8e9;
+  --dark-border: rgba(210, 229, 248, 0.28);
+  --dark-primary: #176394;
+  --dark-primary-hover: #2078ad;
+}
+
+/* Texto general y encabezados */
+
+html[data-theme="dark"] body,
+html[data-theme="dark"] h1,
+html[data-theme="dark"] h2,
+html[data-theme="dark"] h3,
+html[data-theme="dark"] strong,
+html[data-theme="dark"] .project-name,
+html[data-theme="dark"] .section-head,
+html[data-theme="dark"] .eyebrow {
+  color: var(--dark-text);
+}
+
+/* Tarjeta destacada del dashboard */
+
+html[data-theme="dark"] .hero {
+  background: var(--dark-surface);
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+}
+
+html[data-theme="dark"] .hero h2,
+html[data-theme="dark"] .hero h3 {
+  color: var(--dark-text);
+}
+
+html[data-theme="dark"] .hero p {
+  color: var(--dark-muted);
+}
+
+/* Tarjetas y métricas */
+
+html[data-theme="dark"] .card,
+html[data-theme="dark"] .metric {
+  background: var(--dark-surface);
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+}
+
+html[data-theme="dark"] .metric .label,
+html[data-theme="dark"] .muted,
+html[data-theme="dark"] .subtitle,
+html[data-theme="dark"] small {
+  color: var(--dark-muted);
+}
+
+html[data-theme="dark"] .badge:not(.solid) {
+  background: var(--dark-surface-emphasis);
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+}
+
+html[data-theme="dark"] .badge:not(.solid) .dot {
+  background: currentColor;
+}
+
+html[data-theme="dark"] .badge.solid {
+  background: var(--dark-primary);
+  color: #ffffff;
+  border-color: #8eb9df;
+}
+
+/* Botones */
+
+html[data-theme="dark"] .btn {
+  background: var(--dark-primary);
+  color: #ffffff;
+  border-color: #8eb9df;
+}
+
+html[data-theme="dark"] .btn:hover {
+  background: var(--dark-primary-hover);
+  color: #ffffff;
+}
+
+html[data-theme="dark"] .btn.secondary,
+html[data-theme="dark"] .btn.text {
+  background: transparent;
+  color: #dcecff;
+  border-color: var(--dark-border);
+}
+
+html[data-theme="dark"] .btn.secondary:hover,
+html[data-theme="dark"] .btn.text:hover {
+  background: var(--dark-surface-emphasis);
+  color: #ffffff;
+}
+
+/* Campana, perfil y controles superiores */
+
+html[data-theme="dark"] .icon-btn,
+html[data-theme="dark"] .profile-btn {
+  background: var(--dark-surface);
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+}
+
+/* Tablas */
+
+html[data-theme="dark"] table,
+html[data-theme="dark"] tbody,
+html[data-theme="dark"] tr,
+html[data-theme="dark"] td {
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+}
+
+html[data-theme="dark"] th {
+  background: var(--dark-surface-emphasis);
+  color: #dcecff;
+  border-color: var(--dark-border);
+}
+
+html[data-theme="dark"] tr.clickable:hover {
+  background: var(--dark-surface-emphasis);
+}
+
+html[data-theme="dark"] .project-code {
+  color: var(--dark-muted);
+}
+
+/* Formularios */
+
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  background: var(--dark-surface);
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+}
+
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder {
+  color: #9fb7cc;
+}
+
+html[data-theme="dark"] option {
+  background: var(--dark-surface);
+  color: var(--dark-text);
+}
+
+html[data-theme="dark"] .radio-card,
+html[data-theme="dark"] .review-row,
+html[data-theme="dark"] .ethics-item {
+  background: var(--dark-surface);
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+}
+
+html[data-theme="dark"] .radio-card:has(input:checked) {
+  background: var(--dark-surface-emphasis);
+  border-color: #8eb9df;
+}
+
+/* Avisos y alertas */
+
+html[data-theme="dark"] .notice {
+  background: var(--dark-surface-emphasis);
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+  border-left-color: #8eb9df;
+}
+
+html[data-theme="dark"] .notice.warning {
+  background: #2a1b20;
+  color: var(--dark-text);
+  border-color: rgba(239, 51, 64, 0.55);
+  border-left-color: #ff6975;
+}
+
+html[data-theme="dark"] .notice p {
+  color: var(--dark-muted);
+}
+
+/* Botones internos que originalmente tienen fondo blanco */
+
+html[data-theme="dark"] .review-row button,
+html[data-theme="dark"] .pill-options button,
+html[data-theme="dark"] .prototype-banner button,
+html[data-theme="dark"] .modal-head button,
+html[data-theme="dark"] .modal .role-option,
+html[data-theme="dark"] .footer-note button,
+html[data-theme="dark"] .role-order-actions button {
+  background: var(--dark-surface);
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+}
+
+html[data-theme="dark"] .pill-options button.selected {
+  background: var(--dark-primary);
+  color: #ffffff;
+}
+
+/* Modales y menús */
+
+html[data-theme="dark"] .modal,
+html[data-theme="dark"] .user-menu,
+html[data-theme="dark"] .notification-menu {
+  background: var(--dark-surface);
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+}
+
+/* Línea de tiempo */
+
+html[data-theme="dark"] .event::before {
+  background: var(--dark-surface);
+  border-color: #8eb9df;
+}
+
+html[data-theme="dark"] .event.current::before {
+  background: #ef3340;
+  border-color: #ef3340;
+}
