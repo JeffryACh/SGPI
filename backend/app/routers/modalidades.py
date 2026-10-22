@@ -16,7 +16,7 @@ class modalidad(BaseModel):
     activo: bool
 
 @router.get("/totalmodalidades", response_model=list[modalidad])
-def obtener_dashboard_propuestas(
+def obtener_modalidades(
     conn: Connection = Depends(get_conn),
 ):
     with conn.cursor() as cur:

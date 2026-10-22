@@ -159,13 +159,39 @@ async function Modalidades() {
   return modalidades;
 }
 
+let escuelas = null
+async function obtener_escuelas() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) return null;
+  try {
+    const res = await fetch(`${API_URL}/escuelas/totalescuelas?id_usuario=${idUsuario}`);
+    if (res.ok) escuelas = await res.json(); // lista de notificaciones
+  } catch (err) {
+    console.warn("Notificaciones error:", err);
+  }
+  return escuelas;
+}
+
+let lineas_investigacion = null
+async function obtener_lineas_investigacion() {
+  try {
+    const res = await fetch(`${API_URL}/lineas_de_investigacion/totalLineas`);
+    if (res.ok) lineas_investigacion = await res.json(); // lista de notificaciones
+  } catch (err) {
+    console.warn("Notificaciones error:", err);
+  }
+  return lineas_investigacion;
+}
+
 async function obtenerDatosBackend() {
   await Promise.all([
     numsPropuestas(), 
     propuestaMasReciente(), 
     Notificaciones(), 
     top3PropuestasMasRecientes(), 
-    Modalidades()
+    Modalidades(),
+    obtener_escuelas(),
+    obtener_lineas_investigacion()
   ]);
 }
 
@@ -648,8 +674,103 @@ function newProposal() {
 }
 
 function dataForm() {
-  return `${field("Título de la propuesta", "Agua Inteligente: monitoreo de cuencas", "text", "Usa un título claro que identifique el propósito de la investigación.", true)}<div class="field-row">${field("Instancia coordinadora", ["Escuela de Ingeniería Ambiental"], "select", "", true)}${field("Modalidad", "Desarrollo tecnológico", "readonly")}</div>${field("Línea de investigación", ["Gestión integrada del recurso hídrico"], "select", "", true)}<div class="field-row">${field("Fecha de inicio", "2027-01-01", "date", "", true)}${field("Fecha de finalización", "2028-12-31", "date", "Duración propuesta: 24 meses.", true)}</div>${field("Resumen", screen("08").fields.find((f) => f.label === "Resumen").value, "textarea", "Máximo 500 palabras.", true)}${field("Palabras clave", "Calidad del agua; monitoreo; cuencas; sensores", "text", "Incluye de 4 a 6 palabras clave.", true)}<details class="accordion"><summary>Información adicional del formulario</summary>${field("Resumen en inglés", "Development and validation of a water-quality monitoring system in two pilot watersheds.", "textarea", "Máximo 500 palabras.", true)}${field("Palabras clave en inglés", "Water quality; monitoring; watersheds; sensors", "text", "4 a 6 palabras clave.", true)}${field("Prioridad nacional y ODS", "Gestión del recurso hídrico · ODS 6", "text")}${field("Continuidad y financiamiento previo", "No corresponde a una continuación; no tiene financiamiento externo.", "textarea")}${field("Instrumento jurídico / convenio", "No aplica.", "text")}${field("Vinculación con posgrado", "No aplica.", "text")}${field("Información sensible", "Documentación técnica del software, sujeta a valoración de Vinculación.", "textarea")}</details>`;
+  const escuelasOpts = (escuelas ?? []).map((e) => e.nombre);
+  const lineasOpts = (lineas_investigacion ?? []).map((l) => l.nombre);
+  return `
+    ${field(
+      "Título de la propuesta",
+      "Agua Inteligente: monitoreo de cuencas",
+      "text",
+      "Usa un título claro que identifique el propósito de la investigación.",
+      true
+    )}
+    
+    <div class="field-row">
+      ${field("Instancia coordinadora", escuelasOpts, "select", "", true)}
+      ${field("Modalidad", "Desarrollo tecnológico", "readonly")}
+    </div>
+
+    ${field(
+      "Línea de investigación",
+      lineasOpts,
+      "select",
+      "",
+      true
+    )}
+
+    <div class="field-row">
+      ${field("Fecha de inicio", "2027-01-01", "date", "", true)}
+      ${field("Fecha de finalización", "2028-12-31", "date", "Duración propuesta: 24 meses.", true)}
+    </div>
+
+    ${field(
+      "Resumen",
+      screen("08").fields.find((f) => f.label === "Resumen").value,
+      "textarea",
+      "Máximo 500 palabras.",
+      true
+    )}
+
+    ${field(
+      "Palabras clave",
+      "Calidad del agua; monitoreo; cuencas; sensores",
+      "text",
+      "Incluye de 4 a 6 palabras clave.",
+      true
+    )}
+
+    <details class="accordion">
+      <summary>Información adicional del formulario</summary>
+      
+      ${field(
+        "Resumen en inglés",
+        "Development and validation of a water-quality monitoring system in two pilot watersheds.",
+        "textarea",
+        "Máximo 500 palabras.",
+        true
+      )}
+      
+      ${field(
+        "Palabras clave en inglés",
+        "Water quality; monitoring; watersheds; sensors",
+        "text",
+        "4 a 6 palabras clave.",
+        true
+      )}
+      
+      ${field(
+        "Prioridad nacional y ODS",
+        "Gestión del recurso hídrico · ODS 6",
+        "text"
+      )}
+      
+      ${field(
+        "Continuidad y financiamiento previo",
+        "No corresponde a una continuación; no tiene financiamiento externo.",
+        "textarea"
+      )}
+      
+      ${field(
+        "Instrumento jurídico / convenio",
+        "No aplica.",
+        "text"
+      )}
+      
+      ${field(
+        "Vinculación con posgrado",
+        "No aplica.",
+        "text"
+      )}
+      
+      ${field(
+        "Información sensible",
+        "Documentación técnica del software, sujeta a valoración de Vinculación.",
+        "textarea"
+      )}
+    </details>
+  `;
 }
+
 function teamForm() {
   return `${notice("Dedicación total: 16 horas semanales", "Se registran 8 h VIE y 8 h REC. La participación estudiantil se presupuesta aparte.")}<div class="mt">${table(
     ["Persona / instancia", "Rol", "Horas", ""],
