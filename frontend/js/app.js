@@ -75,6 +75,19 @@ const LOGIN_ERRORS = {
     "Tu usuario no tiene un rol válido asignado. Contacta a un administrador.",
 };
 
+const SCREEN_LOADERS = {
+  "04": obtener_convocatorias,
+  "05": () => obtenerEtapasConvocatoria(state.viewCall),
+};
+
+async function loadScreenData() {
+  const id = location.hash.replace("#", "") || "01";
+  const loader = SCREEN_LOADERS[id];
+  if (!loader || !session) return;
+  await loader();
+  if ((location.hash.replace("#", "") || "01") === id) render(); // sigue en la misma pantalla
+}
+
 let numspropuestas = null;
 async function numsPropuestas() {
   const idUsuario = session?.user?.id_usuario;
@@ -183,6 +196,29 @@ async function obtener_lineas_investigacion() {
   return lineas_investigacion;
 }
 
+let convocatorias = null
+async function obtener_convocatorias() {
+  try {
+    const res = await fetch(`${API_URL}/convocatorias/totalConvocatorias`);
+    if (res.ok) convocatorias = await res.json(); // lista de notificaciones
+  } catch (err) {
+    console.warn("Notificaciones error:", err);
+  }
+  return convocatorias;
+}
+
+let etapasConvocatoria = null
+async function obtenerEtapasConvocatoria(id_convocatoria) {
+  etapasConvocatoria  = null
+  try {
+    const res = await fetch(`${API_URL}/convocatorias/etapas_convocatorias?id_convocatoria=${id_convocatoria}`);
+    if (res.ok) etapasConvocatoria  = await res.json(); // lista de notificaciones
+  } catch (err) {
+    console.warn("Notificaciones error:", err);
+  }
+  return etapasConvocatoria ;
+}
+
 async function obtenerDatosBackend() {
   await Promise.all([
     numsPropuestas(), 
@@ -191,7 +227,7 @@ async function obtenerDatosBackend() {
     top3PropuestasMasRecientes(), 
     Modalidades(),
     obtener_escuelas(),
-    obtener_lineas_investigacion()
+    obtener_lineas_investigacion(),
   ]);
 }
 
@@ -598,47 +634,64 @@ function notifications() {
 }
 
 function calls() {
+  const fmt = (d) =>
+    new Date(d).toLocaleDateString("es-CR", { day: "2-digit", month: "short", year: "numeric" });
+  const q = (state.saved["call:query"] || "").toLowerCase();
+  const estado = state.saved["call:status"] || "Abiertas para formulación";
+
+  const list = (convocatorias ?? []).filter(
+    (c) =>
+      c.nombre.toLowerCase().includes(q) &&
+      (estado === "Todas" || (estado === "Cerradas" ? !c.activo : c.activo)),
+  );
+
+  const cards = list
+    .map(
+      (c) =>
+        `<section class="card card-pad"><div class="section-head">${badge(c.activo ? "Formulación" : "Cerrada")}</div><h2>${esc(c.nombre)}</h2><p class="small muted" style="margin:12px 0 24px">${esc(c.descripcion)}</p>${definition([
+          ["Formulación", `${fmt(c.fecha_inicio)} – ${fmt(c.fecha_cierre)}`],
+          ["Inicio de ejecución", fmt(c.fecha_inicio_ejecucion)],
+          ["Modalidades", `${(modalidades ?? []).length} familias de iniciativas`],
+        ])}<div class="form-footer">${btn("Ver convocatoria", "05", "secondary","",`data-convocatoria="${c.id_convocatoria}"`)}${c.activo ? btn("Crear propuesta", "07", "", "plus") : ""}</div></section>`,
+    )
+    .join("");
+
+  const empty = `<section class="card empty">${icon("search")}<h2>Sin convocatorias</h2><p>No hay convocatorias para este filtro.</p></section>`;
+
   return shell(
-    `<div class="filters mb">${field("Buscar convocatoria", "", "search", "", false, "call:query")}${field("Estado", ["Abiertas para formulación", "Todas", "Cerradas"], "select")}${act("Buscar", "filter-calls", "secondary", "search")}</div><div class="grid two"><section class="card card-pad"><div class="section-head">${badge("Formulación")}</div><h2>Fondos VIE 2027</h2><p class="small muted" style="margin:12px 0 24px">Apoyo a iniciativas de fortalecimiento, investigación y desarrollo tecnológico.</p>${definition(
-      [
-        ["Formulación", "28 jul – 21 ago 2026"],
-        ["Sometimiento formal", "28 sep 2026"],
-        ["Inicio de ejecución", "01 ene 2027"],
-        ["Modalidades", "3 familias de iniciativas"],
-      ],
-    )}<div class="form-footer">${btn("Ver convocatoria", "05", "secondary")}${btn("Crear propuesta", "07", "", "plus")}</div></section>${card("Antes de comenzar", `<div class="timeline"><div class="event"><h3>Revisa los instrumentos vigentes</h3><p>Disposiciones, formulario, plan y presupuesto.</p></div><div class="event"><h3>Define modalidad y equipo</h3><p>Los topes y productos cambian según la iniciativa.</p></div><div class="event"><h3>Programa las revisiones</h3><p>Vinculación, Comité y consejos preceden al sometimiento.</p></div></div>`)}</div>`,
+    `<div class="filters mb">${field("Buscar convocatoria", "", "search", "", false, "call:query")}${field("Estado", ["Abiertas para formulación", "Todas", "Cerradas"], "select", "", false, "call:status")}${act("Buscar", "filter-calls", "secondary", "search")}</div><div class="grid two">${cards || empty}${card("Antes de comenzar", `<div class="timeline"><div class="event"><h3>Revisa los instrumentos vigentes</h3><p>Disposiciones, formulario, plan y presupuesto.</p></div><div class="event"><h3>Define modalidad y equipo</h3><p>Los topes y productos cambian según la iniciativa.</p></div><div class="event"><h3>Programa las revisiones</h3><p>Vinculación, Comité y consejos preceden al sometimiento.</p></div></div>`)}</div>`,
     "Convocatorias",
     "Encuentra los requisitos y las fechas para tu próxima propuesta.",
   );
 }
-const calendarRows = [
-  ["Formulación", "28 jul – 21 ago 2026"],
-  ["Vinculación", "24 – 28 ago 2026"],
-  ["Evaluación técnica", "31 ago – 11 sep 2026"],
-  ["Avales de consejos", "14 – 25 sep 2026"],
-  ["Sometimiento formal", "28 sep 2026"],
-  ["Dictamen de Dirección", "29 sep – 12 oct 2026"],
-  ["Resolución CIE", "13 – 23 oct 2026"],
-  ["Carta de aceptación", "02 – 06 nov 2026"],
-];
+
+function etapasRows() {
+  const fmt = (d) => new Date(d).toLocaleDateString("es-CR", { day: "2-digit", month: "short", year: "numeric" });
+  return (etapasConvocatoria ?? []).map((e) => [
+    e.nombre_etapa,
+    e.fecha_fin && e.fecha_fin !== e.fecha_inicio ? `${fmt(e.fecha_inicio)} – ${fmt(e.fecha_fin)}` : fmt(e.fecha_inicio),
+  ]);
+}
+
 function callDetail() {
+  const conv = (convocatorias ?? []).find((c) => c.id_convocatoria === state.viewCall);
+  const inicioEjecucion = conv
+  ? new Date(conv.fecha_inicio_ejecucion).toLocaleDateString("es-CR", { month: "long", year: "numeric" })
+  : "";
   return shell(
     `<div class="two-col"><div class="stack">${card(
       "Una convocatoria, distintas formas de investigar",
       `<p class="small muted mb">Selecciona la modalidad que corresponde a los resultados esperados. Los límites se verifican por año y por iniciativa.</p>${table(
         ["Modalidad", "Duración inicial", "Tope"],
-        [
-          ["Fortalecimiento", "1 año", money(2000000) + " total"],
-          ["Básica / aplicada", "2 años", money(4000000) + " / año"],
-          ["Desarrollo tecnológico", "3 años", money(5000000) + " / año"],
-        ],
+        (modalidades ?? []).map((m) => [esc(m.titulo), esc(m.duracion), money(m.monto)]),
       )}`,
-    )}${card("Instrumentos de la convocatoria", doc("Disposiciones Fondos VIE 2027.pdf") + doc("Formulario de proyecto de investigación.docx") + doc("Plan de acción y gestión del riesgo.xlsx") + doc("Presupuesto Fondos VIE 2027.xlsx") + doc("Rúbricas de evaluación 2027.xlsx"))}${notice("No omitas las etapas previas", "Enviar a evaluación y someter ante VIE son acciones distintas. El investigador realiza el sometimiento formal después de obtener los avales.")}</div>${card("Calendario 2026", `<div class="timeline">${calendarRows.map(([a, b], i) => `<div class="event ${i === 0 ? "current" : ""}"><h3>${a}</h3><p>${b}</p></div>`).join("")}</div>`)}</div>`,
-    "Fondos VIE 2027",
-    "Convocatoria de investigación · Inicio de ejecución: enero de 2027",
+    )}${card("Instrumentos de la convocatoria", doc("Disposiciones Fondos VIE 2027.pdf") + doc("Formulario de proyecto de investigación.docx") + doc("Plan de acción y gestión del riesgo.xlsx") + doc("Presupuesto Fondos VIE 2027.xlsx") + doc("Rúbricas de evaluación 2027.xlsx"))}${notice("No omitas las etapas previas", "Enviar a evaluación y someter ante VIE son acciones distintas. El investigador realiza el sometimiento formal después de obtener los avales.")}</div>${card("Calendario", `<div class="timeline">${etapasRows().map(([a, b], i) => `<div class="event ${i === 0 ? "current" : ""}"><h3>${esc(a)}</h3><p>${esc(b)}</p></div>`).join("")}</div>`)}</div>`,
+    conv?.nombre ?? "Convocatoria",
+    `Convocatoria de investigación · Inicio de ejecución: ${inicioEjecucion}`,
     btn("Crear propuesta", "07", "", "plus"),
   );
 }
+
 function myProposals() {
   const list = top3propuestasmasrecientes || [];
   let filtered = list;
@@ -1351,9 +1404,11 @@ const events = [
     "Carta registrada en el plazo de aceptación.",
   ],
 ];
+
 function historyContent() {
   return `<div class="timeline">${events.map(([d, t, a, b]) => `<div class="event"><small>${d}</small><h3>${t}</h3><p>${a}</p><p>${b}</p></div>`).join("")}</div>`;
 }
+
 function history() {
   return shell(
     `${card("SI-2027-014 · Historial de actuaciones", historyContent())}`,
@@ -1362,6 +1417,7 @@ function history() {
     btn("Volver al expediente", "22", "secondary", "back"),
   );
 }
+
 function searchHistory() {
   const escuelasOpts = ["Todas", "Escuela de Ingeniería Ambiental", "Escuela de Ingeniería Electrónica", "Escuela de Computación", "Escuela de Biología", "Escuela de Administración de Empresas"];
   const modalidadesOpts = ["Todas", "Investigación básica, aplicada o ambas", "Desarrollo tecnológico", "Actividad de fortalecimiento"];
@@ -1374,6 +1430,7 @@ function searchHistory() {
     "Busca iniciativas y recupera la evidencia de su recorrido.",
   );
 }
+
 function historyResults() {
   const q = (state.search || "").toLowerCase(),
     list = top3propuestasmasrecientes || [];
@@ -1383,17 +1440,14 @@ function historyResults() {
     "Abre un expediente para consultar sus documentos y decisiones.",
   );
 }
+
 function adminCalls() {
   return shell(
     `<div class="card mb">${table(["Convocatoria", "Ejecución", "Estado", ""], [['<strong>Fondos VIE 2027</strong><br><span class="micro muted">Disposiciones y cronograma vigentes</span>', "Desde 01 ene 2027", badge("Configurada"), act("Editar", "admin-call", "secondary compact", "edit")]])}</div><div class="grid two">${card("Cronograma de la convocatoria", table(["Etapa", "Fecha"], calendarRows), act("Editar", "admin-calendar", "text compact"))}${card(
       "Reglas por modalidad",
       table(
         ["Modalidad", "Duración", "Tope"],
-        [
-          ["Fortalecimiento", "1 año", "₡2M total"],
-          ["Básica / aplicada", "2 años", "₡4M/año"],
-          ["Desarrollo tecnológico", "3 años", "₡5M/año"],
-        ],
+        (modalidades ?? []).map((m) => [esc(m.titulo), esc(m.duracion), money(m.monto)]),
       ),
     )}</div>`,
     "Administración de convocatorias",
@@ -1401,6 +1455,7 @@ function adminCalls() {
     act("Nueva convocatoria", "admin-call", "secondary", "plus"),
   );
 }
+
 function adminCatalogs() {
   const selected = activeFilter === "Todas" ? "Rúbricas" : activeFilter;
   const roleRows = (state.roleOrder || Object.keys(roles))
@@ -1672,6 +1727,9 @@ async function doLogin() {
 }
 async function handleAction(action, el) {
   switch (action) {
+    case "filter-calls":
+      render();
+      break;
     case "close":
       closeModal();
       break;
@@ -2342,6 +2400,10 @@ document.addEventListener("click", (e) => {
       state.viewProposal = nav.dataset.proposal;
       save();
     }
+    if (nav.dataset.convocatoria) {
+      state.viewCall = Number(nav.dataset.convocatoria);
+      save();
+    }
     go(nav.dataset.go);
     return;
   }
@@ -2426,13 +2488,18 @@ document.addEventListener("keydown", (e) => {
     }
   }
 });
-window.addEventListener("hashchange", render);
+
+window.addEventListener("hashchange", () => {
+  render();
+  loadScreenData();
+});
 
 (async function initApp() {
   render();
   try {
     await obtenerDatosBackend()
     render();
+    loadScreenData();
   } catch (e) {
     console.warn("SGPI: Error en precarga de datos:", e);
   }
