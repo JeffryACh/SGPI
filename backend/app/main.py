@@ -6,7 +6,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .db import pool
-from .routers import auth, propuestas, notificaciones, modalidades, escuelas, lineas_de_investigacion, convocatorias
+from .routers import (
+    auth,
+    propuestas,
+    notificaciones,
+    modalidades,
+    escuelas,
+    lineas_de_investigacion,
+    convocatorias,
+    tipos_hora,
+    catalogos,
+)
 
 
 @asynccontextmanager
@@ -26,6 +36,8 @@ app.include_router(modalidades.router)
 app.include_router(escuelas.router)
 app.include_router(lineas_de_investigacion.router)
 app.include_router(convocatorias.router)
+app.include_router(tipos_hora.router)
+app.include_router(catalogos.router)
 
 @app.get("/health")
 def health():
