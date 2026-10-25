@@ -1,3 +1,39 @@
+﻿"""
+========================================================================================
+ARCHIVO: backend/app/routers/propuestas.py
+========================================================================================
+
+2.1. OBJETIVO DEL ARCHIVO:
+    Centralizar la lógica de negocio, persistencia, trazabilidad, transición de estados y
+    evaluaciones de las propuestas de investigación postuladas a la Convocatoria Fondos VIE 2027.
+
+2.2. RELACIONES CON OTRAS PARTES DEL SISTEMA:
+    2.2.1. De dónde obtiene datos:
+           - Recibe payloads JSON desde el Frontend en 'frontend/js/app.js' (asistente de formulación
+             en pantallas 08 a 18, pantallas de evaluación 23 a 27 y filtros de búsqueda en 29).
+           - Consulta y escribe en las tablas de Supabase: 'propuestas', 'research_team',
+             'proposal_objectives', 'academic_product_commitments', 'action_plans', 'risks',
+             'proposal_budget', 'proposal_ethics_declarations', 'proposal_state_history',
+             'evaluations', 'technical_committee_evaluations', 'cie_resolution_evaluations' y 'notificaciones'.
+           - Utiliza la conexión activa de 'app.db.get_conn'.
+    2.2.2. A dónde envía datos:
+           - Retorna métricas cuantitativas al Dashboard (Pantalla 02).
+           - Retorna códigos institucionales reales ('SI-YYYY-NNN') y períodos calculados a 'top3Propuestas'.
+           - Retorna expedientes completos (dossier) a las vistas de evaluación y consulta histórica.
+           - Emite notificaciones y auditorías automáticas mediante triggers y registros de base de datos.
+
+2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
+    Implementa el núcleo funcional del SGPI:
+    - Cálculo resiliente de métricas de formulación, ejecución y cierre (Desajuste #1).
+    - Obtención de códigos institucionales y períodos reales sin guiones quemados (Desajuste #4).
+    - Creación atómica multitabla de propuestas validando reglas normativas VIE 2027 (bienes duraderos
+      únicamente en Año 1 y cuota mínima de productos por horas) (Desajuste #6).
+    - Expediente íntegro consolidado (dossier) con todas las subtablas vinculadas.
+    - Transición auditable de estados con disparo de historial y alertas.
+    - Registro formal de evaluaciones técnicas y resoluciones colegiadas.
+========================================================================================
+"""
+
 import math
 from datetime import date, datetime
 from typing import Any, Optional
@@ -8,14 +44,28 @@ from pydantic import BaseModel, Field
 
 from ..db import get_conn
 
+# [Línea clave]: Declara el router bajo el prefijo /propuestas para agrupar las operaciones centrales de expedientes.
 router = APIRouter(prefix="/propuestas", tags=["propuestas"])
 
 
 # =====================================================================
-# PYDANTIC SCHEMAS
+# PYDANTIC SCHEMAS (MODELOS DE DATOS)
 # =====================================================================
 
 class DashboardPropuestas(BaseModel):
+    """
+    Modelo de respuesta con los contadores consolidados de propuestas para el dashboard.
+
+    Serializa las métricas cuantitativas agregadas por estado de tramitación para un usuario específico.
+
+    Se utiliza como response_model en el endpoint GET /propuestas/dashboardpropuestas.
+
+    atributos:
+        * int : total Conteo total de propuestas asociadas al usuario (como líder o equipo).
+        * int : formulacion Cantidad de propuestas en estado 'En formulación' o borrador.
+        * int : ejecucion Cantidad de propuestas aprobadas y en fase de ejecución activa.
+        * int : cerradas Cantidad de propuestas concluidas o con resolución final.
+    """
     total: int
     formulacion: int
     ejecucion: int
@@ -23,11 +73,38 @@ class DashboardPropuestas(BaseModel):
 
 
 class propuestaMasReciente(BaseModel):
+    """
+    Modelo de respuesta que identifica la propuesta activa más reciente en formulación.
+
+    Transporta el ID y título de la última propuesta en borrador para permitir retomar su edición.
+
+    Se utiliza como response_model en el endpoint GET /propuestas/propuestaMasReciente.
+
+    atributos:
+        * int : id Identificador único de la propuesta en formulación.
+        * str : titulo Nombre o título de la propuesta en borrador.
+    """
     id: int
     titulo: str
 
 
 class Top3PropuestasRecientes(BaseModel):
+    """
+    Modelo de respuesta para las tarjetas y tablas de propuestas recientes en la interfaz.
+
+    Transporta los metadatos resumidos (código, título, tipo, período, estado y monto total).
+
+    Se utiliza en GET /propuestas/top3PropuestaMasReciente alimentando las pantallas 02, 03 y 30.
+
+    atributos:
+        * int : id Identificador numérico de la propuesta.
+        * str : code Código institucional generado (formato SI-YYYY-NNN).
+        * str : title Título de la propuesta de investigación.
+        * str : tipo Nombre de la modalidad de participación.
+        * str : period Período de ejecución calculado en años (ej. 2027–2028).
+        * str : status Nombre del estado actual en que se encuentra.
+        * float : amount Monto total financiado derivado de la suma presupuestaria.
+    """
     id: int
     code: str
     title: str
@@ -37,20 +114,58 @@ class Top3PropuestasRecientes(BaseModel):
     amount: float
 
 
-# Schemas para la Creación y Dossier Completo de Propuestas
 class TeamMemberIn(BaseModel):
+    """
+    Modelo de entrada que representa a un miembro del equipo de investigación en la propuesta.
+
+    Valida la asignación horaria semanal de cada investigador entre 1 y 40 horas y su tipo de financiamiento.
+
+    Se utiliza dentro del arreglo 'equipo' de PropuestaCrearIn (Pantalla 09).
+
+    atributos:
+        * int : id_usuario Identificador del usuario que integrará el equipo investigador.
+        * int : id_tipo_hora Identificador del tipo de hora asignada (VIE, CONS, REC, DOC, etc.).
+        * int : horas_asignadas Cantidad de horas semanales dedicadas al proyecto.
+    """
     id_usuario: int
     id_tipo_hora: int
     horas_asignadas: int = Field(ge=1, le=40)
 
 
 class ObjetivoIn(BaseModel):
+    """
+    Modelo de entrada para la definición de objetivos de investigación de la propuesta.
+
+    Valida el código nemotécnico (OG para General, OE1..OEn para Específicos), descripción y orden.
+
+    Se utiliza dentro del arreglo 'objetivos' de PropuestaCrearIn (Pantalla 11).
+
+    atributos:
+        * str : codigo_objetivo Identificador nemotécnico corto (ej. OG, OE1, OE2).
+        * str : descripcion Redacción del objetivo redactado en infinitivo.
+        * int : orden Posición ordinal del objetivo en el documento de propuesta.
+    """
     codigo_objetivo: str = Field(..., max_length=10, description="Ej: OG, OE1, OE2")
     descripcion: str
     orden: int = 1
 
 
 class ProductoAcademicoIn(BaseModel):
+    """
+    Modelo de entrada para los compromisos de productos académicos o activos de propiedad intelectual.
+
+    Almacena el tipo de producto, descripción, meta verificable y opcionalmente el objetivo al que tributa.
+
+    Se utiliza dentro del arreglo 'productos_academicos' de PropuestaCrearIn (Pantallas 11 y 16).
+
+    atributos:
+        * str : tipo_producto Tipo de producto (Artículo Scopus, Libro, Software, Patente, etc.).
+        * str : descripcion Descripción detallada del entregable comprometido.
+        * str : meta_esperada Indicador de cumplimiento verificable.
+        * str : categoria Clasificación (Publicación científica, Activo PI, Transferencia).
+        * Optional[int] : id_objetivo Objetivo específico al que se asocia el producto.
+        * bool : es_obligatorio Indica si el producto es parte de la cuota normativa obligatoria.
+    """
     tipo_producto: str
     descripcion: str
     meta_esperada: str
@@ -60,6 +175,19 @@ class ProductoAcademicoIn(BaseModel):
 
 
 class PlanAccionIn(BaseModel):
+    """
+    Modelo de entrada para las actividades cronológicas del plan de acción del proyecto.
+
+    Valida descripción, rango de fechas de ejecución y miembro del equipo asignado como responsable.
+
+    Se utiliza dentro del arreglo 'plan_accion' de PropuestaCrearIn (Pantalla 13).
+
+    atributos:
+        * str : descripcion_actividad Nombre y alcance de la actividad a desarrollar.
+        * date : fecha_inicio Fecha en que inicia la actividad.
+        * Optional[date] : fecha_fin Fecha programada de culminación de la actividad.
+        * Optional[int] : id_usuario_responsable Identificador del investigador a cargo.
+    """
     descripcion_actividad: str
     fecha_inicio: date
     fecha_fin: Optional[date] = None
@@ -67,6 +195,20 @@ class PlanAccionIn(BaseModel):
 
 
 class RiesgoIn(BaseModel):
+    """
+    Modelo de entrada para la matriz de gestión y mitigación de riesgos de la propuesta.
+
+    Captura la descripción del riesgo, niveles de severidad y su medida de mitigación asociada.
+
+    Se utiliza dentro del arreglo 'riesgos' de PropuestaCrearIn (Pantalla 14).
+
+    atributos:
+        * str : descripcion_riesgo Evento adverso potencial que podría afectar el proyecto.
+        * int : id_nivel_probabilidad Nivel de probabilidad de ocurrencia (Bajo, Medio, Alto).
+        * int : id_nivel_impacto Nivel de impacto en caso de materialización.
+        * Optional[str] : medida_mitigacion Plan de contingencia o acción preventiva.
+        * Optional[int] : id_plan_accion Actividad del plan de acción vinculada al riesgo.
+    """
     descripcion_riesgo: str
     id_nivel_probabilidad: int
     id_nivel_impacto: int
@@ -75,12 +217,39 @@ class RiesgoIn(BaseModel):
 
 
 class PresupuestoItemIn(BaseModel):
+    """
+    Modelo de entrada para el desglose financiero presupuestario por rubro y año.
+
+    Valida que los montos sean no negativos y que el año de ejecución esté en el rango 1 a 3.
+
+    Se utiliza dentro del arreglo 'presupuesto' de PropuestaCrearIn (Pantalla 15).
+
+    atributos:
+        * int : id_rubro Identificador del rubro presupuestario institucional.
+        * float : monto Monto solicitado para ese rubro en colones costarricenses (CRC).
+        * int : anio Año de ejecución presupuestaria al que corresponde el gasto (1, 2 o 3).
+    """
     id_rubro: int
     monto: float = Field(ge=0)
     anio: int = Field(default=1, ge=1, le=3)
 
 
 class DeclaracionEticaIn(BaseModel):
+    """
+    Modelo de entrada para las declaraciones de aspectos bioéticos y de bioseguridad.
+
+    Captura si la propuesta involucra seres humanos, animales o biodiversidad y el trámite regulatorio.
+
+    Se utiliza dentro del arreglo 'declaraciones_eticas' de PropuestaCrearIn (Pantalla 17).
+
+    atributos:
+        * str : tipo_aspecto Aspecto evaluado (Seres humanos, Fauna silvestre, Genética, etc.).
+        * bool : aplica Bandera que indica si el proyecto requiere permiso de este tipo.
+        * Optional[str] : justificacion_exencion Justificación técnica si no requiere trámite.
+        * Optional[str] : ente_regulatorio Entidad externa ante la que se tramita (CONIS, MINAE).
+        * Optional[str] : numero_permiso Número oficial de oficio o resolución de permiso.
+        * Optional[str] : estado_tramite Estado actual de la gestión (Aprobado, En trámite).
+    """
     tipo_aspecto: str
     aplica: bool
     justificacion_exencion: Optional[str] = ""
@@ -90,6 +259,33 @@ class DeclaracionEticaIn(BaseModel):
 
 
 class PropuestaCrearIn(BaseModel):
+    """
+    Modelo de entrada consolidado (Request Body) para la creación atómica de una propuesta completa.
+
+    Recibe la totalidad de los datos estructurados en las pantallas 08 a 18 del asistente
+    de formulación para ser insertados en una sola transacción en Supabase.
+
+    Se utiliza como cuerpo de petición en el endpoint POST /propuestas.
+
+    atributos:
+        * int : id_usuario_lider Investigador proponente y responsable principal.
+        * int : id_escuela Escuela o centro de investigación coordinador.
+        * int : id_modalidad Modalidad de financiamiento seleccionada.
+        * int : id_linea_investigacion Línea institucional vinculada.
+        * str : titulo Título oficial del proyecto de investigación.
+        * Optional[str] : resumen Resumen ejecutivo del proyecto.
+        * Optional[int] : id_convocatoria Convocatoria a la que se postula (por defecto 1 = Fondos VIE 2027).
+        * Optional[date] : fecha_inicio Fecha prevista de inicio de actividades.
+        * Optional[date] : fecha_fin Fecha prevista de finalización.
+        * Optional[int] : estado_inicial Estado de registro (1 = En formulación / Borrador).
+        * list[TeamMemberIn] : equipo Miembros del equipo de investigación y horas asignadas.
+        * list[ObjetivoIn] : objetivos Objetivos generales y específicos formulados.
+        * list[ProductoAcademicoIn] : productos_academicos Entregables comprometidos.
+        * list[PlanAccionIn] : plan_accion Cronograma de actividades planificadas.
+        * list[RiesgoIn] : riesgos Matriz de riesgos y mitigaciones.
+        * list[PresupuestoItemIn] : presupuesto Desglose presupuestario por rubro y año.
+        * list[DeclaracionEticaIn] : declaraciones_eticas Aspectos bioéticos declarados.
+    """
     id_usuario_lider: int
     id_escuela: int
     id_modalidad: int
@@ -99,7 +295,7 @@ class PropuestaCrearIn(BaseModel):
     id_convocatoria: Optional[int] = 1
     fecha_inicio: Optional[date] = None
     fecha_fin: Optional[date] = None
-    estado_inicial: Optional[int] = 1  # 1 = En formulación / Borrador
+    estado_inicial: Optional[int] = 1
     equipo: list[TeamMemberIn] = []
     objetivos: list[ObjetivoIn] = []
     productos_academicos: list[ProductoAcademicoIn] = []
@@ -110,12 +306,39 @@ class PropuestaCrearIn(BaseModel):
 
 
 class EstadoActualizarIn(BaseModel):
+    """
+    Modelo de entrada para ejecutar transiciones de estado en una propuesta.
+
+    Recibe el nuevo estado, usuario ejecutor y observaciones de la decisión institucional.
+
+    Se utiliza como cuerpo de petición en el endpoint PATCH /propuestas/{id_propuesta}/estado.
+
+    atributos:
+        * int : id_nuevo_estado Identificador del nuevo estado hacia el que transita la propuesta.
+        * int : id_usuario_responsable Funcionario o evaluador que autoriza o registra el cambio.
+        * Optional[str] : observaciones Justificación, acuerdo o notas de la transición.
+    """
     id_nuevo_estado: int
     id_usuario_responsable: int
     observaciones: Optional[str] = "Cambio de estado de propuesta"
 
 
 class EvaluacionIn(BaseModel):
+    """
+    Modelo de entrada para registrar evaluaciones, rúbricas o resoluciones sobre una propuesta.
+
+    Soporta puntajes del Comité Técnico, resoluciones del CIE y avance condicional de estado.
+
+    Se utiliza en el endpoint POST /propuestas/{id_propuesta}/evaluaciones (Pantallas 23 a 27).
+
+    atributos:
+        * int : id_usuario_eval Evaluador o funcionario que emite la valoración.
+        * int : id_rol_evaluador Rol bajo el cual se realiza la evaluación.
+        * Optional[str] : observaciones Comentarios cualitativos o recomendaciones emitidas.
+        * Optional[int] : puntaje_comite Calificación numérica (0–100) si evalúa el Comité Técnico.
+        * Optional[int] : id_resolucion_cie Resolución colegiada (1=Aprobada, 2=Rechazada, 3=Observada) si evalúa el CIE.
+        * Optional[int] : cambiar_a_estado Estado opcional al que se transita la propuesta automáticamente.
+    """
     id_usuario_eval: int
     id_rol_evaluador: int
     observaciones: Optional[str] = ""
@@ -124,8 +347,21 @@ class EvaluacionIn(BaseModel):
     cambiar_a_estado: Optional[int] = None
 
 
-# Helper para verificar columnas existentes en 'propuestas'
 def _get_table_columns(cur, table_name: str) -> set[str]:
+    """
+    Inspeccionar dinámicamente las columnas existentes en una tabla de PostgreSQL.
+
+    Consulta 'information_schema.columns' para el esquema público y retorna un conjunto
+    con los nombres de columnas presentes, previniendo excepciones de columnas inexistentes.
+
+    parametros:
+        - Cursor : cur Cursor activo de la conexión a PostgreSQL.
+        - str : table_name Nombre de la tabla a verificar en information_schema.
+
+    return:
+        + set[str] : columnas Conjunto de nombres de columnas en minúsculas presentes en la tabla.
+    """
+    # [Línea clave]: Consulta el catálogo del sistema PostgreSQL para verificar la presencia de columnas migratadas.
     cur.execute(
         """
         SELECT column_name 
@@ -138,7 +374,7 @@ def _get_table_columns(cur, table_name: str) -> set[str]:
 
 
 # =====================================================================
-# ENDPOINTS EXISTENTES CORREGIDOS (DESAJUSTES #1 Y #4)
+# ENDPOINTS: DASHBOARD Y CONSULTAS RECIENTES (DESAJUSTES #1 Y #4)
 # =====================================================================
 
 @router.get("/dashboardpropuestas", response_model=DashboardPropuestas)
@@ -147,25 +383,36 @@ def obtener_dashboard_propuestas(
     conn: Connection = Depends(get_conn),
 ):
     """
-    Desajuste #1: Soporta tanto 'En formulación' como 'Borrador', y tolera variaciones
-    de mayúsculas/acentos mediante coincidencias flexibles con ILIKE.
+    Calcular los contadores estadísticos de propuestas para el dashboard del usuario.
+
+    Ejecuta un conteo condicional con 'FILTER' agrupando por los estados normativos. Aplica
+    escapado '%%' y coincidencia flexible con 'ILIKE' para resolver el Desajuste #1 (tolerando
+    variaciones como 'Borrador' o 'En formulación' y acentos).
+
+    parametros:
+        - int : id_usuario Identificador del usuario consultado.
+        - Connection : conn Conexión transaccional inyectada por FastAPI desde el pool de Supabase.
+
+    return:
+        + DashboardPropuestas : metricas Objeto con los 4 contadores estadísticos para Pantalla 02.
     """
     with conn.cursor() as cur:
+        # [Línea clave]: Ejecuta el conteo condicional con escapado %% para evitar errores de placeholder en psycopg 3.
         cur.execute(
             """
             SELECT
                 count(DISTINCT p.id_propuesta) AS total,
                 count(DISTINCT p.id_propuesta) FILTER (
                     WHERE e.nombre_estado IN ('En formulación', 'Borrador')
-                       OR e.nombre_estado ILIKE '%formulaci%'
+                       OR e.nombre_estado ILIKE '%%formulaci%%'
                 ) AS formulacion,
                 count(DISTINCT p.id_propuesta) FILTER (
                     WHERE e.nombre_estado IN ('En ejecución', 'En Ejecución')
-                       OR e.nombre_estado ILIKE '%ejecuci%'
+                       OR e.nombre_estado ILIKE '%%ejecuci%%'
                 ) AS ejecucion,
                 count(DISTINCT p.id_propuesta) FILTER (
                     WHERE e.nombre_estado IN ('Cerrada', 'Rechazada', 'Aprobada por CIE')
-                       OR e.nombre_estado ILIKE '%cerrad%'
+                       OR e.nombre_estado ILIKE '%%cerrad%%'
                 ) AS cerradas
             FROM propuestas p
             JOIN estados e ON e.id_estado = p.estado_actual
@@ -190,10 +437,20 @@ def obtener_propuesta_mas_reciente(
     conn: Connection = Depends(get_conn),
 ):
     """
-    Desajuste #1: Busca la propuesta más reciente en formulación, tolerando
-    'Borrador' o 'En formulación' para evitar que devuelva null por discrepancia de catálogo.
+    Obtener la propuesta más reciente en formulación para mostrar el botón de continuar edición.
+
+    Filtra las propuestas del usuario en estado de formulación o borrador, ordenadas por fecha de
+    creación descendente y limita el resultado a 1 registro.
+
+    parametros:
+        - int : id_usuario Identificador del usuario consultado.
+        - Connection : conn Conexión transaccional inyectada por FastAPI desde el pool de Supabase.
+
+    return:
+        + Optional[propuestaMasReciente] : propuesta Objeto con ID y título, o None si no tiene borradores.
     """
     with conn.cursor() as cur:
+        # [Línea clave]: Coincidencia flexible de estado para recuperar el borrador activo sin falsos nulos.
         cur.execute(
             """
             SELECT 
@@ -204,7 +461,7 @@ def obtener_propuesta_mas_reciente(
             LEFT JOIN research_team rt ON rt.id_propuesta = p.id_propuesta
             WHERE (
                 e.nombre_estado IN ('En formulación', 'Borrador')
-                OR e.nombre_estado ILIKE '%formulaci%'
+                OR e.nombre_estado ILIKE '%%formulaci%%'
             )
             AND (p.id_usuario_lider = %s OR rt.id_usuario = %s)
             ORDER BY p.fecha_creacion DESC
@@ -229,10 +486,21 @@ def obtener_propuestas_mas_reciente(
     conn: Connection = Depends(get_conn),
 ):
     """
-    Desajuste #4: Recupera el código institucional real (SI-YYYY-NNN) y el período
-    calculado de ejecución, eliminando los guiones '-' estáticos que se devolvían antes.
+    Listar las propuestas más recientes del usuario mostrando código real y período de ejecución.
+
+    Inspecciona si las columnas 'codigo', 'fecha_inicio' y 'fecha_fin' existen en la BD. Extrae
+    el código institucional único y calcula el período formateado 'YYYY–YYYY', sumando los rubros
+    de presupuesto para devolver el monto total derivado sin valores quemados '-' (Desajuste #4).
+
+    parametros:
+        - int : id_usuario Identificador del usuario consultado.
+        - Connection : conn Conexión transaccional inyectada por FastAPI desde el pool de Supabase.
+
+    return:
+        + list[Top3PropuestasRecientes] : lista Lista de propuestas para las tarjetas de la Pantalla 02.
     """
     with conn.cursor() as cur:
+        # [Línea clave]: Inspecciona las columnas para construir la consulta SQL adaptada al esquema de Supabase.
         cols = _get_table_columns(cur, "propuestas")
         has_codigo = "codigo" in cols
         has_fechas = "fecha_inicio" in cols and "fecha_fin" in cols
@@ -256,6 +524,7 @@ def obtener_propuestas_mas_reciente(
         if has_fechas:
             group_by_cols.extend(["p.fecha_inicio", "p.fecha_fin"])
 
+        # [Línea clave]: Agrupa por propuesta y suma los rubros de proposal_budget para obtener el monto total.
         sql = f"""
             SELECT
                 p.id_propuesta AS id,
@@ -296,7 +565,7 @@ def obtener_propuestas_mas_reciente(
 
 
 # =====================================================================
-# ENDPOINTS NUEVOS: CREACIÓN, DOSSIER, BÚSQUEDA Y EVALUACIÓN (DESAJUSTE #6)
+# ENDPOINTS: LISTADO, EXPEDIENTE Y TRANSACCIONES ATÓMICAS (DESAJUSTE #6)
 # =====================================================================
 
 @router.get("", response_model=list[dict[str, Any]])
@@ -311,8 +580,23 @@ def listar_propuestas(
     conn: Connection = Depends(get_conn),
 ):
     """
-    Consulta general de propuestas con soporte para filtros combinados de búsqueda
-    histórica (Pantalla 29) y bandejas de entrada de evaluadores (Pantallas 23 a 27).
+    Buscador general de propuestas con filtros facetados para consulta histórica y bandejas de evaluadores.
+
+    Construye dinámicamente cláusulas WHERE según los parámetros suministrados (escuela, modalidad,
+    línea, estado o texto de búsqueda 'q'), ejecutando un JOIN multidimensional optimizado.
+
+    parametros:
+        - Optional[int] : id_usuario Filtro opcional por pertenencia a equipo o líder.
+        - Optional[int] : id_escuela Filtro por unidad académica.
+        - Optional[int] : id_modalidad Filtro por modalidad de financiamiento.
+        - Optional[int] : id_linea Filtro por línea de investigación.
+        - Optional[int] : id_estado Filtro numérico por ID de estado.
+        - Optional[str] : estado_nombre Filtro textual por nombre de estado.
+        - Optional[str] : q Cadena de texto libre a buscar en título o código de propuesta.
+        - Connection : conn Conexión transaccional inyectada por FastAPI desde el pool de Supabase.
+
+    return:
+        + list[dict[str, Any]] : propuestas Lista de expedientes resumidos que coinciden con los criterios.
     """
     with conn.cursor() as cur:
         cols = _get_table_columns(cur, "propuestas")
@@ -387,6 +671,7 @@ def listar_propuestas(
         if has_fechas:
             group_cols.extend(["p.fecha_inicio", "p.fecha_fin"])
 
+        # [Línea clave]: Ejecuta la búsqueda facetada multi-criterio para alimentar las bandejas y el histórico.
         sql = f"""
             SELECT
                 p.id_propuesta,
@@ -426,11 +711,21 @@ def obtener_dossier_propuesta(
     conn: Connection = Depends(get_conn),
 ):
     """
-    Retorna el expediente íntegro de la propuesta con todas sus tablas hijas
-    para consulta en pantalla o emisión de dictamen de evaluadores.
+    Obtener el expediente digital completo (dossier) de una propuesta con todas sus tablas hijas.
+
+    Consulta la cabecera principal y de forma concurrente extrae: equipo investigador, objetivos,
+    productos académicos, plan de acción, riesgos, presupuesto anualizado, declaraciones éticas,
+    historial de cambios de estado y evaluaciones registradas.
+
+    parametros:
+        - int : id_propuesta Identificador único de la propuesta a consultar.
+        - Connection : conn Conexión transaccional inyectada por FastAPI desde el pool de Supabase.
+
+    return:
+        + dict[str, Any] : dossier Estructura JSON completa del expediente para Pantalla 22.
     """
     with conn.cursor() as cur:
-        # 1. Cabecera principal
+        # [Línea clave]: Consulta la cabecera principal de la propuesta y sus datos asociados.
         cols = _get_table_columns(cur, "propuestas")
         has_codigo = "codigo" in cols
         has_fechas = "fecha_inicio" in cols and "fecha_fin" in cols
@@ -470,7 +765,7 @@ def obtener_dossier_propuesta(
         if not prop:
             raise HTTPException(status_code=404, detail="Propuesta no encontrada")
 
-        # 2. Equipo investigador
+        # [Línea clave]: Consulta los miembros del equipo investigador con nombres de usuario y tipo de hora.
         cur.execute(
             """
             SELECT rt.id_usuario, u.nombre, u.correo, rt.id_tipo_hora,
@@ -484,7 +779,7 @@ def obtener_dossier_propuesta(
         )
         equipo = cur.fetchall()
 
-        # 3. Objetivos
+        # [Línea clave]: Consulta los objetivos ordenados por su posición ordinal.
         objetivos = []
         try:
             cur.execute(
@@ -500,7 +795,7 @@ def obtener_dossier_propuesta(
         except Exception:
             pass
 
-        # 4. Productos académicos comprometidos
+        # [Línea clave]: Consulta los productos académicos comprometidos y su estado de cumplimiento.
         productos = []
         try:
             cur.execute(
@@ -516,7 +811,7 @@ def obtener_dossier_propuesta(
         except Exception:
             pass
 
-        # 5. Plan de acción
+        # [Línea clave]: Consulta las actividades del plan de acción ordenadas por fecha de inicio.
         planes = []
         try:
             cur.execute(
@@ -534,7 +829,7 @@ def obtener_dossier_propuesta(
         except Exception:
             pass
 
-        # 6. Riesgos
+        # [Línea clave]: Consulta los riesgos y sus niveles textuales de probabilidad e impacto.
         riesgos = []
         try:
             cur.execute(
@@ -553,7 +848,7 @@ def obtener_dossier_propuesta(
         except Exception:
             pass
 
-        # 7. Presupuesto
+        # [Línea clave]: Consulta el presupuesto anualizado por rubro.
         presupuesto = []
         try:
             budget_cols = _get_table_columns(cur, "proposal_budget")
@@ -571,7 +866,7 @@ def obtener_dossier_propuesta(
         except Exception:
             pass
 
-        # 8. Declaraciones Éticas
+        # [Línea clave]: Consulta las declaraciones éticas registradas para la propuesta.
         eticas = []
         try:
             cur.execute(
@@ -587,7 +882,7 @@ def obtener_dossier_propuesta(
         except Exception:
             pass
 
-        # 9. Historial de estados
+        # [Línea clave]: Consulta la bitácora inmutable de cambios de estado para trazabilidad.
         historial = []
         try:
             cur.execute(
@@ -609,7 +904,7 @@ def obtener_dossier_propuesta(
         except Exception:
             pass
 
-        # 10. Evaluaciones
+        # [Línea clave]: Consulta las evaluaciones registradas por Comité Técnico, Vinculación y CIE.
         evaluaciones = []
         try:
             cur.execute(
@@ -653,21 +948,33 @@ def crear_propuesta(
     conn: Connection = Depends(get_conn),
 ):
     """
-    Desajuste #6: Creación atómica de la propuesta y todas sus entidades hijas.
-    Valida las reglas institucionales VIE 2027:
-    - Restricción de adquisición de equipo y bienes duraderos solo en el Año 1.
-    - Proporcionalidad mínima de 1 producto académico por cada 10 horas semanales del equipo.
-    - Generación garantizada de código institucional SI-YYYY-NNN.
+    Creación atómica de la propuesta y todas sus entidades hijas validando la normativa VIE 2027.
+
+    1. Valida reglas de negocio de la VIE:
+       - Restricción de adquisición de bienes duraderos únicamente en el Año 1 (Sección 2.3.9).
+       - Proporcionalidad mínima de productos académicos por cuota de horas semanales (Sección 2.4.1).
+    2. Inserta la cabecera en 'propuestas' obteniendo el ID autogenerado.
+    3. Garantiza la asignación del código institucional único 'SI-YYYY-NNN'.
+    4. Inserta concurrentemente en 'research_team', 'proposal_objectives',
+       'academic_product_commitments', 'action_plans', 'risks', 'proposal_budget',
+       'proposal_ethics_declarations', 'proposal_state_history' y 'notificaciones'.
+
+    parametros:
+        - PropuestaCrearIn : payload Estructura completa con todos los componentes del expediente.
+        - Connection : conn Conexión transaccional inyectada por FastAPI desde el pool de Supabase.
+
+    return:
+        + dict : resultado Diccionario con bandera de éxito, mensaje y metadatos de la propuesta creada.
     """
     # -------------------------------------------------------------
     # 1. Validaciones de Negocio Obligatorias (Disposiciones VIE 2027)
     # -------------------------------------------------------------
-    # Regla 1: Equipo y bienes duraderos únicamente en Año 1 (Sección 2.3.9)
-    # Buscamos si algún rubro de bienes duraderos fue enviado con año > 1
     with conn.cursor() as cur:
+        # [Línea clave]: Mapea rubros presupuestarios para verificar la regla de bienes duraderos en Año 1.
         cur.execute("SELECT id_rubro, nombre_rubro FROM rubros_presupuesto")
         rubros_map = {r["id_rubro"]: r["nombre_rubro"].lower() for r in cur.fetchall()}
 
+    # [Línea clave]: Regla 2.3.9: bloquea compras de bienes duraderos en años 2 o 3 con HTTP 400.
     for item in payload.presupuesto:
         nom = rubros_map.get(item.id_rubro, "")
         if ("duradero" in nom or "equipo" in nom) and item.anio > 1:
@@ -676,12 +983,10 @@ def crear_propuesta(
                 detail="La adquisición de equipo y bienes duraderos debe formularse obligatoriamente en el Año 1 (Sección 2.3.9 Disposiciones Fondos VIE 2027).",
             )
 
-    # Regla 2: Proporcionalidad de Productos Académicos (Sección 2.4.1)
-    # Mínimo 1 producto por cada 10 horas totales asignadas al equipo de investigación
+    # [Línea clave]: Regla 2.4.1: calcula la proporción de al menos 1 producto por cada 10 horas semanales.
     total_horas = sum(m.horas_asignadas for m in payload.equipo)
     min_productos_requeridos = max(1, math.ceil(total_horas / 10)) if total_horas > 0 else 1
 
-    # Si se envía directamente a revisión (estado > 1), se exige la cuota completa
     if payload.estado_inicial and payload.estado_inicial > 1:
         if len(payload.productos_academicos) < min_productos_requeridos:
             raise HTTPException(
@@ -693,12 +998,17 @@ def crear_propuesta(
     # 2. Inserción Atómica Multitabla
     # -------------------------------------------------------------
     with conn.cursor() as cur:
+        # [Línea clave]: Obtiene columnas de todas las tablas antes de insertar para garantizar consistencia.
         cols = _get_table_columns(cur, "propuestas")
+        risks_cols = _get_table_columns(cur, "risks")
+        budget_cols = _get_table_columns(cur, "proposal_budget")
         has_codigo = "codigo" in cols
         has_convocatoria = "id_convocatoria" in cols
         has_fechas = "fecha_inicio" in cols and "fecha_fin" in cols
+        has_plan_fk = "id_plan_accion" in risks_cols
+        has_anio_col = "anio" in budget_cols
+        code_expr = "COALESCE(codigo, 'SI-' || id_propuesta::text)" if has_codigo else "'SI-' || id_propuesta::text"
 
-        # Construir columnas y valores dinámicamente según el esquema activo
         insert_cols = [
             "id_usuario_lider",
             "id_escuela",
@@ -731,14 +1041,14 @@ def crear_propuesta(
         placeholders = ", ".join(["%s"] * len(values))
         cols_str = ", ".join(insert_cols)
 
-        # Usar OVERRIDING SYSTEM VALUE solo si fuera necesario, aquí id_propuesta es identity autogenerado
+        # [Línea clave]: Inserta la cabecera en propuestas retornando el id generado por PostgreSQL.
         cur.execute(
             f"INSERT INTO propuestas ({cols_str}) VALUES ({placeholders}) RETURNING id_propuesta;",
             tuple(values),
         )
         id_propuesta = cur.fetchone()["id_propuesta"]
 
-        # Si la columna 'codigo' existe y el trigger de base de datos no lo generó, generarlo aquí
+        # [Línea clave]: Asegura la asignación del código institucional en caso de que el trigger no lo asigne.
         if has_codigo:
             cur.execute("SELECT codigo FROM propuestas WHERE id_propuesta = %s;", (id_propuesta,))
             codigo_row = cur.fetchone()
@@ -821,8 +1131,6 @@ def crear_propuesta(
                 pass
 
         # 7. Matriz de Riesgos (vinculada al plan de acción si existe columna)
-        risks_cols = _get_table_columns(cur, "risks")
-        has_plan_fk = "id_plan_accion" in risks_cols
         for r in payload.riesgos:
             try:
                 if has_plan_fk:
@@ -845,8 +1153,6 @@ def crear_propuesta(
                 pass
 
         # 8. Presupuesto Anualizado
-        budget_cols = _get_table_columns(cur, "proposal_budget")
-        has_anio_col = "anio" in budget_cols
         for b in payload.presupuesto:
             try:
                 if has_anio_col:
@@ -921,7 +1227,7 @@ def crear_propuesta(
         except Exception:
             pass
 
-        # Obtener el código final generado
+        # [Línea clave]: Consulta y retorna el registro recién creado con su código asignado.
         cur.execute(
             f"SELECT id_propuesta, {code_expr} AS codigo, titulo FROM propuestas WHERE id_propuesta = %s",
             (id_propuesta,),
@@ -942,12 +1248,22 @@ def actualizar_estado_propuesta(
     conn: Connection = Depends(get_conn),
 ):
     """
-    Transición de estado de propuesta.
-    Dispara automáticamente el trigger de auditoría (proposal_state_history)
-    y el trigger de notificaciones automáticas al líder.
+    Avanzar o retroceder el estado de tramitación de una propuesta con auditoría y notificación.
+
+    Verifica la existencia de la propuesta, actualiza 'estado_actual' en 'propuestas' y dispara
+    automáticamente los triggers de base de datos 'trg_log_proposal_state_change' (auditoría en
+    'proposal_state_history') y 'trg_notify_proposal_state_change' (alerta al líder).
+
+    parametros:
+        - int : id_propuesta Identificador de la propuesta cuya etapa cambia.
+        - EstadoActualizarIn : payload Objeto con el nuevo estado, usuario responsable y observaciones.
+        - Connection : conn Conexión transaccional inyectada por FastAPI desde el pool de Supabase.
+
+    return:
+        + dict : resultado Diccionario con el ID de la propuesta, nuevo estado y nombre del estado.
     """
     with conn.cursor() as cur:
-        # 1. Obtener estado actual
+        # [Línea clave]: Obtiene el estado actual de la propuesta antes de actualizar para verificar su existencia.
         cur.execute("SELECT estado_actual, titulo, id_usuario_lider FROM propuestas WHERE id_propuesta = %s", (id_propuesta,))
         actual = cur.fetchone()
         if not actual:
@@ -955,7 +1271,7 @@ def actualizar_estado_propuesta(
 
         estado_anterior = actual["estado_actual"]
 
-        # 2. Actualizar estado
+        # [Línea clave]: Ejecuta la actualización de estado que activa los triggers automáticos de PostgreSQL.
         cur.execute(
             """
             UPDATE propuestas
@@ -967,7 +1283,7 @@ def actualizar_estado_propuesta(
         )
         actualizado = cur.fetchone()
 
-        # 3. Respaldo manual en proposal_state_history en caso de que los triggers de BD no estén activos
+        # [Línea clave]: Registro de respaldo en la bitácora inmutable de historial de estados.
         try:
             cur.execute(
                 """
@@ -979,7 +1295,7 @@ def actualizar_estado_propuesta(
         except Exception:
             pass
 
-        # 4. Obtener nombre del nuevo estado
+        # [Línea clave]: Obtiene el nombre textual del nuevo estado para informar al cliente web.
         cur.execute("SELECT nombre_estado FROM estados WHERE id_estado = %s", (payload.id_nuevo_estado,))
         estado_nombre = cur.fetchone()
 
@@ -998,17 +1314,28 @@ def registrar_evaluacion(
     conn: Connection = Depends(get_conn),
 ):
     """
-    Registra el dictamen o evaluación emitida por un evaluador (Vinculación, Comité Técnico, CIE).
-    Permite además avanzar o devolver el estado de la propuesta automáticamente.
+    Registrar el dictamen, calificación o resolución emitida por un rol evaluador institucional.
+
+    Inserta el registro base en la tabla 'evaluations'. Si el evaluador es el Comité Técnico y envía
+    puntaje, inserta en 'technical_committee_evaluations'. Si es el CIE, inserta en 'cie_resolution_evaluations'.
+    Si se suministra 'cambiar_a_estado', transiciona la propuesta en la misma transacción atómica.
+
+    parametros:
+        - int : id_propuesta Identificador de la propuesta evaluada.
+        - EvaluacionIn : payload Objeto con evaluador, rol, notas, puntaje opcional y nuevo estado.
+        - Connection : conn Conexión transaccional inyectada por FastAPI desde el pool de Supabase.
+
+    return:
+        + dict : resultado Diccionario con el ID de evaluación generado y nuevo estado de la propuesta.
     """
     with conn.cursor() as cur:
-        # 1. Verificar propuesta
+        # [Línea clave]: Valida la existencia de la propuesta a evaluar.
         cur.execute("SELECT id_propuesta, titulo, id_usuario_lider FROM propuestas WHERE id_propuesta = %s", (id_propuesta,))
         prop = cur.fetchone()
         if not prop:
             raise HTTPException(status_code=404, detail="Propuesta no encontrada")
 
-        # 2. Insertar evaluación principal
+        # [Línea clave]: Inserta la evaluación base en evaluations retornando su id_evaluacion generado.
         cur.execute(
             """
             INSERT INTO evaluations (id_propuesta, id_usuario_eval, id_rol_evaluador, fecha_evaluacion, observaciones)
@@ -1019,7 +1346,7 @@ def registrar_evaluacion(
         )
         id_eval = cur.fetchone()["id_evaluacion"]
 
-        # 3. Si incluye puntaje numérico del Comité Técnico
+        # [Línea clave]: Registra el puntaje cuantitativo (0-100) si evalúa el Comité Técnico.
         if payload.puntaje_comite is not None:
             try:
                 cur.execute(
@@ -1033,7 +1360,7 @@ def registrar_evaluacion(
             except Exception:
                 pass
 
-        # 4. Si incluye resolución formal del CIE
+        # [Línea clave]: Registra la resolución colegiada (Aprobada/Rechazada/Observada) si evalúa el CIE.
         if payload.id_resolucion_cie is not None:
             try:
                 cur.execute(
@@ -1047,7 +1374,7 @@ def registrar_evaluacion(
             except Exception:
                 pass
 
-        # 5. Si se solicitó actualización de estado como consecuencia del dictamen
+        # [Línea clave]: Si la evaluación concluye la fase, actualiza automáticamente el estado de la propuesta.
         nuevo_estado_nombre = None
         if payload.cambiar_a_estado is not None:
             cur.execute(

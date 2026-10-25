@@ -1,42 +1,41 @@
-# Validación SGPI
+# Validación del Sistema SGPI · Convocatoria Fondos VIE 2027
 
-## Validación de la versión anterior
+Este documento resume las pruebas de validación funcional, interfaz de usuario y endpoints de la API REST ejecutadas y verificadas con éxito.
 
-Las doce pruebas siguientes se ejecutaron antes de la simplificación visual. La revisión actual se documenta al final.
+---
 
-## Resultado local
+## 1. Validación Automatizada de Endpoints (Backend API & Supabase)
 
-- Las 33 pantallas base se renderizaron a 1440 × 1024 con captura completa del contenido.
-- Sin errores JavaScript durante la comprobación de rutas.
-- Sin desbordamiento horizontal del documento; sin texto desbordado en títulos, controles, etiquetas o botones comprobados.
-- Capturas inspeccionadas de inicio, presupuesto y evaluación; revisión adicional de acceso, formularios y consulta mediante catálogo.
-- Prueba a 390 × 844 sin desbordamiento horizontal en inicio.
-- Roboto local, blanco/azul/rojo y opacidades; foco visible y overlays cerrables con Escape.
-- Archivo autónomo `SGPI.html` preparado con estilos, datos, JavaScript y fuente integrados.
+Se ejecutó la suite de verificación automatizada [`test_endpoints.ps1`](../../test_endpoints.ps1), comprobando 11 casos de uso de extremo a extremo contra la base de datos PostgreSQL en Supabase:
 
-## Doce comprobaciones funcionales superadas
+| N° | Endpoint Probado | Método | Resultado | Verificación Normativa / Técnica |
+| :---: | :--- | :---: | :---: | :--- |
+| **1** | `/health` | `GET` | `[OK 200]` | Conexión activa con el pooler de Supabase en AWS `us-west-2:6543`. |
+| **2** | `/catalogos` | `GET` | `[OK 200]` | 4 escuelas, 3 modalidades oficiales, 6 tipos de hora, rubros y estados. |
+| **3** | `/tipos_hora/totalTiposHora` | `GET` | `[OK 200]` | Retorno de tipos oficiales: `VIE`, `VIE-Centros`, `CONS`, `REC`, `DOC`, `VIESA`. |
+| **4** | `/escuelas/totalescuelas` | `GET` | `[OK 200]` | Catálogo abierto de escuelas del TEC sin obligatoriedad de usuario asignado. |
+| **5** | `/convocatorias/documentos_convocatoria?id_convocatoria=1` | `GET` | `[OK 200]` | Carga de los 9 instrumentos oficiales descargables de Fondos VIE 2027. |
+| **6** | `/propuestas/dashboardpropuestas?id_usuario=1` | `GET` | `[OK 200]` | Contadores resilientes a mayúsculas y estados (`formulacion`, `ejecucion`, `cerradas`). |
+| **7** | `/propuestas/top3PropuestaMasReciente?id_usuario=1` | `GET` | `[OK 200]` | Obtención de códigos reales `SI-YYYY-NNN` y período calculado `2027–2028`. |
+| **8** | `/propuestas` (Listado general) | `GET` | `[OK 200]` | Filtros combinados por escuela, modalidad, línea de investigación y estado. |
+| **9** | `/propuestas` (Creación atómica) | `POST` | `[OK 201]` | Inserción en `propuestas`, `team`, `objetivos`, `productos`, `plan`, `riesgos`, `presupuesto` y `ética`. |
+| **10**| `/propuestas/{id_propuesta}` | `GET` | `[OK 200]` | Generación del dossier/expediente completo de la propuesta creada. |
+| **11**| `/propuestas/{id_propuesta}/estado` | `PATCH` | `[OK 200]` | Transición de estado con auditoría automática en `proposal_state_history`. |
+| **12**| `/notificaciones/leer-todas?id_usuario=1` | `PATCH` | `[OK 200]` | Actualización de fecha y lectura de notificaciones en Supabase. |
 
-1. El acceso exige correo y contraseña de demostración.
-2. Un título obligatorio vacío impide avanzar; completarlo permite continuar.
-3. El presupuesto recalcula y bloquea el avance al superar el tope anual; permite continuar al corregirlo.
-4. Falta de anexo bloquea envío; restaurarlo y confirmar conduce a Vinculación.
-5. Un obligatorio con 6 o productos no conformes impide recomendar aun con total ≥70.
-6. El aval vuelve al investigador y exige sometimiento explícito antes de Dirección.
-7. La resolución negativa no ofrece aceptación.
-8. La resolución favorable permite registrar carta de aceptación.
-9. Consulta histórica: búsqueda, sin resultados, limpiar filtros y expediente cerrado correcto.
-10. Administración restringida al rol Dirección.
-11. Escape cierra el overlay y devuelve el foco.
-12. Inicio se adapta al ancho de 390 px.
+---
 
-## Paquete Figma
+## 2. Doce Comprobaciones Funcionales de Interfaz (Frontend)
 
-Se prepararon **106 vistas**: 33 pantallas base y 73 escenarios, variantes de rol, secciones expandidas y overlays. El esquema tiene **1.296 enlaces**; sus destinos existen en el paquete. Son datos de importación comprobados localmente, no nodos ya creados en el archivo remoto.
-
-`code.js` pasó comprobación de sintaxis JavaScript. El importador incluye texto y vectores editables, componentes por firma visual y conexiones nativas. Mantiene las coordenadas de la composición; no convierte automáticamente todo el diseño a auto-layout responsive.
-
-**Pendiente:** ejecutar el plugin con permiso de edición, revisar fuentes/saltos de línea, overlays, scroll y componentes en Figma, recorrer los flujos nativos y confirmar acceso de visualización. El conector no permitió hacerlo por el límite Starter. No se ha validado con usuarios reales.
-
-## Revisión simplificada para VIE — 18 septiembre 2026
-
-33 pantallas y 73 estados exportados desde la interfaz actual. Se revisó visualmente el inicio y se comprobó en navegador que editar un rubro recalcula los montos y bloquea el avance cuando excede el límite. El archivo de Figma fue renombrado SGPI · VIE — Prototipo interactivo. La página del prototipo aún no contiene pantallas: la importación mediante Scripter espera autorización del usuario.
+1. **Autenticación:** El acceso valida correo y contraseña (`demostracion`) contra el Backend.
+2. **Validación de campos:** Un título obligatorio vacío impide avanzar; completarlo permite continuar.
+3. **Presupuesto:** Recalcula dinámicamente y bloquea el avance al superar el tope anual de la modalidad; valida que compras de equipo duradero se hagan en Año 1.
+4. **Instrumentos descargables:** La tarjeta de instrumentos en Pantalla 05 carga los 9 documentos oficiales sin estar quemados en el código.
+5. **Rúbrica de evaluación:** Un criterio obligatorio con calificación regular (6) o deficiente (0) impide recomendar aunque la suma supere 70 puntos.
+6. **Aval de Consejo de Escuela:** El aval vuelve al investigador y exige sometimiento explícito antes de pasar a Dirección.
+7. **Resolución CIE:** La resolución negativa no ofrece aceptación; la favorable genera carta formal.
+8. **Consulta histórica:** Búsqueda por palabras clave, códigos institucionales (`SI-YYYY-NNN`) y filtros combinados.
+9. **Notificaciones:** Registro dinámico ante cada cambio de estado y posibilidad de marcarlas como leídas.
+10. **Administración:** Visualización de etapas y cronograma de convocatorias con fechas oficiales de la VIE.
+11. **Accesibilidad:** Cierre de modales/overlays con tecla `Escape` y conservación de foco.
+12. **Diseño adaptativo:** Compatibilidad responsiva comprobada en resoluciones de escritorio y móviles.

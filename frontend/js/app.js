@@ -1,13 +1,60 @@
-"use strict";
+﻿"use strict";
+/**
+ * ============================================================================
+ * 2.1. OBJETIVO DEL ARCHIVO:
+ * Funcionar como el controlador maestro y motor de SPA (Single Page Application)
+ * del Frontend del SGPI (Sistema de Gestión de Propuestas de Investigación),
+ * gestionando el ciclo de vida de la aplicación, navegación cliente, autenticación,
+ * sincronización con la API REST y renderizado dinámico de las 33 pantallas.
+ *
+ * 2.2. RELACIONES:
+ * 2.2.1. De dónde obtiene datos:
+ *   - Del Backend FastAPI (http://localhost:3001) a través de peticiones HTTP:
+ *     * /auth/login (credenciales y roles de usuario)
+ *     * /propuestas/dashboardpropuestas (conteos de propuestas)
+ *     * /propuestas/propuestaMasReciente (última propuesta activa)
+ *     * /propuestas/top3PropuestaMasReciente (top 3 propuestas recientes)
+ *     * /notificaciones/notificaciones (bandeja de notificaciones)
+ *     * /modalidades/totalmodalidades (catálogo de modalidades)
+ *     * /escuelas/totalescuelas (catálogo de escuelas)
+ *     * /lineas_de_investigacion/totalLineas (catálogo de líneas de investigación)
+ *     * /convocatorias/totalConvocatorias y /convocatorias/etapas_convocatorias
+ *   - De window.SGPI_CONTENT (content.js) con el catálogo declarativo de pantallas.
+ *   - De localStorage del navegador ('sgpi-session' y 'sgpi-demo').
+ * 2.2.2. A dónde envía datos:
+ *   - Al Backend FastAPI para autenticación (/auth/login) y actualización de estados.
+ *   - Al DOM del navegador (inyección en #app, gestión de modales, alertas y breadcrumbs).
+ *   - A localStorage para persistir la sesión y estado de demostración.
+ *
+ * 2.3. A GROSO MODO ¿QUÉ HACE EL ARCHIVO?:
+ * Implementa la lógica reactiva integral de la aplicación: valida sesiones,
+ * consulta catálogos en paralelo al inicializar, procesa formularios de propuesta
+ * por etapas, renderiza vistas según el rol activo (Investigador, Vinculación,
+ * Comité Técnico, Consejo de Escuela, Dirección, CIE), controla el historial con
+ * URL hash, y maneja accesibilidad, atajos de teclado y modales.
+ * ============================================================================
+ */
+
 /* =====================================================================
-   Autenticación (login real contra la API)
-   POST {API_URL}/auth/login  { correo, password }
-   200 -> { id_usuario, nombre, correo, roles: ["Investigador", ...] }
-   401 -> credenciales inválidas o usuario inactivo
+   Autenticación y configuración de API
    ===================================================================== */
 
+// [Línea clave]: ¿Por qué soy importante? Define la URL base de comunicación con la API del Backend. ¿Para qué? Enrutar todas las solicitudes HTTP fetch. ¿Dónde me usan? En todas las funciones cliente de la API (apiLogin, numsPropuestas, etc.).
 const API_URL = "http://localhost:3001",
   SESSION_KEY = "sgpi-session";
+
+/**
+ * Mapeo de diccionario tipo Enum entre los nombres oficiales de rol y sus claves de estado interno.
+ * Asocia cadenas de texto provistas por la base de datos con identificadores en minúsculas usados en el frontend.
+ * Se utiliza al deserializar la sesión del usuario y al aplicar permisos o filtros de pantalla.
+ * atributos:
+ *     * string : Investigador Clave para Investigador proponente ('investigador').
+ *     * string : Vinculación Clave para Centro de Vinculación ('vinculacion').
+ *     * string : "Comité Técnico" Clave para Comité Técnico Evaluador ('comite').
+ *     * string : "Consejo de Escuela" Clave para Consejo de Escuela ('consejo').
+ *     * string : "Dirección de Investigación" Clave para Dirección de Investigación ('direccion').
+ *     * string : CIE Clave para Consejo de Investigación y Extensión ('cie').
+ */
 const ROLE_KEYS = {
   Investigador: "investigador",
   Vinculación: "vinculacion",
@@ -29,11 +76,29 @@ try {
   )
     session = s;
 } catch {}
+/**
+ * Persistir o revocar el objeto de sesión de usuario en memoria y en localStorage.
+ * Asigna la variable en memoria 'session'; si es no nulo lo serializa en JSON en localStorage,
+ * de lo contrario elimina la llave SESSION_KEY del almacenamiento local.
+ * parametros:
+ *     - Object|null : s Objeto con datos del usuario autenticado o null para cerrar sesión.
+ * return:
+ *     + void : undefined No retorna valor.
+ */
 const setSession = (s) => {
   session = s;
   if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s));
   else localStorage.removeItem(SESSION_KEY);
 };
+
+/**
+ * Extraer las iniciales mayúsculas de un nombre completo para mostrarlas en avatares visuales.
+ * Divide la cadena por espacios en blanco, toma hasta las primeras dos palabras y concatena sus letras iniciales en mayúscula.
+ * parametros:
+ *     - string : n Nombre de la persona a procesar.
+ * return:
+ *     + string : iniciales Cadena de hasta dos caracteres en mayúscula (ej. 'LM').
+ */
 const initials = (n) =>
   String(n)
     .split(/\s+/)
@@ -41,15 +106,34 @@ const initials = (n) =>
     .slice(0, 2)
     .map((w) => w[0].toUpperCase())
     .join("");
+
+/**
+ * Clase de excepción personalizada para categorizar errores ocurridos durante el proceso de login.
+ * Hereda de Error y asigna un código interno ('network', 'credentials', 'server', 'noroles').
+ * Se lanza en apiLogin() y se captura en doLogin() para desplegar mensajes al usuario.
+ * atributos:
+ *     * string : code Código representativo del tipo de fallo de autenticación.
+ */
 class AuthError extends Error {
   constructor(code) {
     super(code);
     this.code = code;
   }
 }
+
+/**
+ * Realizar la petición de inicio de sesión HTTP POST contra el endpoint de autenticación del backend.
+ * Envía credenciales JSON a /auth/login. Lanza AuthError ante desconexión de red, credenciales 401 o fallo 500.
+ * parametros:
+ *     - string : correo Dirección de correo electrónico institucional ingresada.
+ *     - string : password Contraseña en texto plano ingresada por el usuario.
+ * return:
+ *     + Promise<Object> : usuario Datos del usuario autenticado (id_usuario, nombre, correo, roles).
+ */
 async function apiLogin(correo, password) {
   let res;
   try {
+    // [Línea clave]: ¿Por qué soy importante? Petición de validación de identidad. ¿Para qué? Transmitir correo y contraseña al backend FastAPI. ¿Dónde me usan? Dentro del flujo asíncrono de apiLogin().
     res = await fetch(`${API_URL}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -66,6 +150,17 @@ async function apiLogin(correo, password) {
     throw new AuthError("server");
   }
 }
+
+/**
+ * Diccionario de mensajes de error de autenticación amigables para el usuario.
+ * Mapea códigos de AuthError a textos explicativos en español.
+ * En el bloque catch de doLogin() para alimentar la alerta de error.
+ * atributos:
+ *     * string : credentials Mensaje de credenciales erróneas.
+ *     * string : network Mensaje de servidor inalcanzable.
+ *     * string : server Mensaje de error interno en el servidor.
+ *     * string : noroles Mensaje de usuario sin roles asignados.
+ */
 const LOGIN_ERRORS = {
   credentials: "Correo o contraseña incorrectos.",
   network:
@@ -75,11 +170,27 @@ const LOGIN_ERRORS = {
     "Tu usuario no tiene un rol válido asignado. Contacta a un administrador.",
 };
 
+/**
+ * Diccionario de cargadores de datos específicos por identificador de pantalla.
+ * Vincula el id de pantalla con la función asíncrona que descarga los datos necesarios.
+ * En loadScreenData() tras un cambio de hash de URL.
+ * atributos:
+ *     * Function : "04" Cargador de convocatorias generales.
+ *     * Function : "05" Cargador de etapas de convocatoria según la seleccionada.
+ */
 const SCREEN_LOADERS = {
   "04": obtener_convocatorias,
   "05": () => obtenerEtapasConvocatoria(state.viewCall),
 };
 
+/**
+ * Cargar datos asíncronos específicos de la pantalla actual activa en la URL.
+ * Lee el hash actual de la URL, consulta SCREEN_LOADERS y ejecuta la función de carga si existe; luego re-renderiza.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<void> : undefined Resuelve al completar la carga y el re-renderizado.
+ */
 async function loadScreenData() {
   const id = location.hash.replace("#", "") || "01";
   const loader = SCREEN_LOADERS[id];
@@ -89,10 +200,20 @@ async function loadScreenData() {
 }
 
 let numspropuestas = null;
+
+/**
+ * Obtener del backend el desglose estadístico de propuestas para el dashboard del usuario.
+ * Invoca el endpoint GET /propuestas/dashboardpropuestas con el id_usuario en sesión y guarda el resultado en numspropuestas.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Object|null> : numspropuestas Objeto con { total, formulacion, ejecucion, cerradas } o null.
+ */
 async function numsPropuestas() {
   const idUsuario = session?.user?.id_usuario;
   if (!idUsuario) return null;
   try {
+    // [Línea clave]: ¿Por qué soy importante? Consulta las métricas globales del investigador. ¿Para qué? Alimentar las 4 tarjetas estadísticas del panel principal. ¿Dónde me usan? En dashboard() y precarga.
     const res = await fetch(`${API_URL}/propuestas/dashboardpropuestas?id_usuario=${idUsuario}`);
     if (res.ok) numspropuestas = await res.json(); // { total, formulacion, ejecucion, cerradas }
   } catch (err) {
@@ -102,6 +223,15 @@ async function numsPropuestas() {
 }
 
 let propuestamasreciente = null;
+
+/**
+ * Consultar la propuesta más recientemente actualizada del usuario autenticado.
+ * Consume el endpoint GET /propuestas/propuestaMasReciente pasando el id_usuario de la sesión.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Object|null> : propuestamasreciente Objeto con datos básicos de la propuesta o null.
+ */
 async function propuestaMasReciente() {
   const idUsuario = session?.user?.id_usuario;
   if (!idUsuario) return null;
@@ -115,10 +245,20 @@ async function propuestaMasReciente() {
 }
 
 let top3propuestasmasrecientes = null;
+
+/**
+ * Obtener las 3 propuestas más recientes del usuario para renderizar la tabla rápida del inicio.
+ * Pide al backend /propuestas/top3PropuestaMasReciente y transforma los registros al formato de fila de interfaz.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>|null> : top3propuestasmasrecientes Lista de las 3 propuestas formateadas.
+ */
 async function top3PropuestasMasRecientes() {
   const idUsuario = session?.user?.id_usuario;
   if (!idUsuario) return null;
   try {
+    // [Línea clave]: ¿Por qué soy importante? Obtiene los últimos proyectos en trabajo. ¿Para qué? Desplegar el listado de acceso rápido en el inicio del investigador. ¿Dónde me usan? En dashboard() y projectRows().
     const res = await fetch(`${API_URL}/propuestas/top3PropuestaMasReciente?id_usuario=${idUsuario}`);
     if (res.ok) {
       const data = await res.json();
@@ -139,6 +279,15 @@ async function top3PropuestasMasRecientes() {
 }
 
 let notificaciones = null;
+
+/**
+ * Descargar la lista completa de notificaciones del usuario autenticado desde el backend.
+ * Realiza un GET a /notificaciones/notificaciones?id_usuario=... y almacena los resultados en la variable global.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>|null> : notificaciones Lista de notificaciones del usuario.
+ */
 async function Notificaciones() {
   const idUsuario = session?.user?.id_usuario;
   if (!idUsuario) return null;
@@ -151,74 +300,148 @@ async function Notificaciones() {
   return notificaciones;
 }
 
-// Solo actualizan el estado local: el backend aún no tiene endpoints para marcar como leída.
+/**
+ * Marcar una notificación específica como leída en la interfaz y persistirlo en el backend.
+ * Actualiza la bandera en el arreglo en memoria y envía una petición asíncrona a la API.
+ * parametros:
+ *     - number : idNotif Identificador numérico de la notificación.
+ * return:
+ *     + void : undefined Actualiza estado in-place y dispara notificación al backend.
+ */
 function marcarLeida(idNotif) {
   const n = (notificaciones ?? []).find((x) => x.id_notificacion === idNotif);
   if (n) n.leida = true;
+  fetch(`${API_URL}/notificaciones/marcar-leida?id_notificacion=${idNotif}`, { method: "POST" })
+    .catch((e) => console.warn("Error avisando lectura:", e));
 }
 
+/**
+ * Marcar todas las notificaciones pendientes del usuario como leídas.
+ * Muta la propiedad leida a true en todos los elementos de memoria y realiza un POST a /marcar-todas-leidas.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + void : undefined Actualiza estado en memoria y sincroniza en segundo plano.
+ */
 function marcarTodasLeidas() {
   (notificaciones ?? []).forEach((n) => (n.leida = true));
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) return;
+  fetch(`${API_URL}/notificaciones/marcar-todas-leidas?id_usuario=${idUsuario}`, { method: "POST" })
+    .catch((e) => console.warn("Error marcando todas leídas:", e));
 }
 
-let modalidades = null
+let modalidades = null;
+
+/**
+ * Obtener el catálogo institucional de modalidades de investigación activas.
+ * Realiza una consulta GET al endpoint /modalidades/totalmodalidades y almacena el resultado.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>|null> : modalidades Lista de modalidades disponibles.
+ */
 async function Modalidades() {
   try {
     const res = await fetch(`${API_URL}/modalidades/totalmodalidades`);
-    if (res.ok) modalidades = await res.json(); // lista de notificaciones
+    if (res.ok) modalidades = await res.json();
   } catch (err) {
-    console.warn("Notificaciones error:", err);
+    console.warn("Modalidades error:", err);
   }
   return modalidades;
 }
 
-let escuelas = null
+let escuelas = null;
+
+/**
+ * Descargar la lista de escuelas y centros de investigación disponibles para el usuario.
+ * Envía una consulta GET a /escuelas/totalescuelas con el id_usuario en sesión.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>|null> : escuelas Lista de instancias coordinadoras disponibles.
+ */
 async function obtener_escuelas() {
   const idUsuario = session?.user?.id_usuario;
   if (!idUsuario) return null;
   try {
     const res = await fetch(`${API_URL}/escuelas/totalescuelas?id_usuario=${idUsuario}`);
-    if (res.ok) escuelas = await res.json(); // lista de notificaciones
+    if (res.ok) escuelas = await res.json();
   } catch (err) {
-    console.warn("Notificaciones error:", err);
+    console.warn("obtener_escuelas error:", err);
   }
   return escuelas;
 }
 
-let lineas_investigacion = null
+let lineas_investigacion = null;
+
+/**
+ * Consultar el catálogo de líneas de investigación institucionales vigentes.
+ * Invoca el endpoint GET /lineas_de_investigacion/totalLineas.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>|null> : lineas_investigacion Lista de líneas activas.
+ */
 async function obtener_lineas_investigacion() {
   try {
     const res = await fetch(`${API_URL}/lineas_de_investigacion/totalLineas`);
-    if (res.ok) lineas_investigacion = await res.json(); // lista de notificaciones
+    if (res.ok) lineas_investigacion = await res.json();
   } catch (err) {
-    console.warn("Notificaciones error:", err);
+    console.warn("obtener_lineas_investigacion error:", err);
   }
   return lineas_investigacion;
 }
 
-let convocatorias = null
+let convocatorias = null;
+
+/**
+ * Descargar el listado maestro de convocatorias institucionales registradas en el SGPI.
+ * Realiza una llamada GET a /convocatorias/totalConvocatorias y actualiza la variable en memoria.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>|null> : convocatorias Lista completa de convocatorias.
+ */
 async function obtener_convocatorias() {
   try {
     const res = await fetch(`${API_URL}/convocatorias/totalConvocatorias`);
-    if (res.ok) convocatorias = await res.json(); // lista de notificaciones
+    if (res.ok) convocatorias = await res.json();
   } catch (err) {
-    console.warn("Notificaciones error:", err);
+    console.warn("obtener_convocatorias error:", err);
   }
   return convocatorias;
 }
 
-let etapasConvocatoria = null
+let etapasConvocatoria = null;
+
+/**
+ * Obtener el cronograma de etapas y fechas límite de una convocatoria particular.
+ * Realiza una petición GET a /convocatorias/etapas_convocatorias filtrando por el id_convocatoria suministrado.
+ * parametros:
+ *     - number|string : id_convocatoria Identificador único de la convocatoria.
+ * return:
+ *     + Promise<Array<Object>|null> : etapasConvocatoria Cronograma de etapas de la convocatoria.
+ */
 async function obtenerEtapasConvocatoria(id_convocatoria) {
-  etapasConvocatoria  = null
+  etapasConvocatoria  = null;
   try {
     const res = await fetch(`${API_URL}/convocatorias/etapas_convocatorias?id_convocatoria=${id_convocatoria}`);
-    if (res.ok) etapasConvocatoria  = await res.json(); // lista de notificaciones
+    if (res.ok) etapasConvocatoria  = await res.json();
   } catch (err) {
-    console.warn("Notificaciones error:", err);
+    console.warn("obtenerEtapasConvocatoria error:", err);
   }
   return etapasConvocatoria ;
 }
 
+/**
+ * Ejecutar la precarga paralela de todos los catálogos y métricas iniciales del sistema.
+ * Lanza simultáneamente vía Promise.all las consultas de métricas, convocatorias, escuelas y modalidades.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<void> : undefined Resuelve cuando todas las consultas han retornado.
+ */
 async function obtenerDatosBackend() {
   await Promise.all([
     numsPropuestas(), 
@@ -231,8 +454,35 @@ async function obtenerDatosBackend() {
   ]);
 }
 
+/**
+ * Helper selector simplificado de elemento individual en el DOM (equivalente a querySelector).
+ * Invoca querySelector sobre la raíz especificada (por defecto document).
+ * parametros:
+ *     - string : s Selector CSS a evaluar.
+ *     - Element|Document : r Nodo raíz de búsqueda.
+ * return:
+ *     + Element|null : elemento Nodo del DOM coincidente o null si no existe.
+ */
 const $ = (s, r = document) => r.querySelector(s),
+  /**
+   * Helper selector de múltiples elementos en el DOM como un arreglo nativo de JavaScript.
+   * Invoca querySelectorAll y desestructura los resultados dentro de un nuevo Array.
+   * parametros:
+   *     - string : s Selector CSS a consultar.
+   *     - Element|Document : r Nodo raíz de búsqueda.
+   * return:
+   *     + Array<Element> : elementos Arreglo nativo con los elementos encontrados.
+   */
   $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+/**
+ * Escapar caracteres HTML especiales para mitigar vulnerabilidades de inyección de código (XSS).
+ * Reemplaza los caracteres ampersand, comillas y signos menor/mayor por sus entidades HTML correspondientes.
+ * parametros:
+ *     - any : s Valor o cadena a sanear.
+ * return:
+ *     + string : saneado Cadena de texto sanitizada segura para interpolación en HTML.
+ */
 const esc = (s) =>
   String(s ?? "").replace(
     /[&<>"']/g,
@@ -241,8 +491,33 @@ const esc = (s) =>
         c
       ],
   );
+
+/**
+ * Formatear montos numéricos a moneda oficial costarricense (Colones ₡) sin decimales.
+ * Concatena el prefijo ₡ con el valor numérico localizado en es-CR con maximumFractionDigits: 0.
+ * parametros:
+ *     - number|string : n Cantidad numérica a formatear.
+ * return:
+ *     + string : monedaFormateada Representación en colones (ej. '₡1.400.000').
+ */
 const money = (n) =>
   "₡" + Number(n).toLocaleString("es-CR", { maximumFractionDigits: 0 });
+
+/**
+ * Diccionario de rutas SVG vectoriales utilizadas como iconos en toda la aplicación.
+ * Mapea nombres de iconos a las coordenadas del atributo 'd' de un elemento <path>.
+ * Se consume en la función icon(name) para generar el marcado SVG embebido.
+ * atributos:
+ *     * string : home Coordenadas de icono de inicio.
+ *     * string : folder Coordenadas de carpeta.
+ *     * string : calendar Coordenadas de calendario.
+ *     * string : inbox Coordenadas de bandeja de entrada.
+ *     * string : search Coordenadas de lupa de búsqueda.
+ *     * string : bell Coordenadas de campana de notificaciones.
+ *     * string : user Coordenadas de usuario/perfil.
+ *     * string : check Coordenadas de check/confirmación.
+ *     * string : file Coordenadas de documento genérico.
+ */
 const paths = {
   home: "M3 10 12 3l9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z",
   folder: "M3 6h6l2 2h10v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z",
@@ -270,8 +545,30 @@ const paths = {
   edit: "m15 3 6 6-12 12H3v-6Zm-10 10 6 6",
   shield: "M12 2 3 6v6c0 5 9 10 9 10s9-5 9-10V6Zm-5 10 3 3 7-7",
 };
+
+/**
+ * Construir el elemento HTML <svg> correspondiente al nombre de icono solicitado.
+ * Consulta paths[name] y genera un SVG con viewBox '0 0 24 24'. Si no existe, usa el icono de archivo por defecto.
+ * parametros:
+ *     - string : name Nombre del icono requerido.
+ * return:
+ *     + string : svgMarkup Marcado HTML del icono vectorial.
+ */
 const icon = (name) =>
   `<svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="${paths[name] || paths.file}"/></svg>`;
+
+/**
+ * Diccionario de configuración de roles institucionales con sus datos demostrativos por defecto.
+ * Mapea la clave interna de rol con su etiqueta oficial, nombre por defecto, iniciales y pantalla de inicio.
+ * En el selector de roles de demostración y al calcular el menú y permisos en shell() y person().
+ * atributos:
+ *     * Object : investigador Configuración para Investigador proponente.
+ *     * Object : vinculacion Configuración para Centro de Vinculación.
+ *     * Object : comite Configuración para Comité Técnico.
+ *     * Object : consejo Configuración para Consejo de Escuela.
+ *     * Object : direccion Configuración para Dirección de Investigación.
+ *     * Object : cie Configuración para Consejo de Investigación y Extensión.
+ */
 const roles = {
   investigador: {
     label: "Investigador proponente",
@@ -305,6 +602,17 @@ const roles = {
   },
   cie: { label: "CIE", name: "Ricardo Mora", initials: "RM", screen: "27" },
 };
+
+/**
+ * Estado por defecto de la aplicación frontend con valores iniciales de presupuesto y navegación.
+ * Inicializa el rol activo, tema claro/oscuro, rúbricas, estado de formularios y partidas de presupuesto.
+ * Como prototipo de clonación para estructurar el objeto global state.
+ * atributos:
+ *     * string : role Rol institucional activo.
+ *     * string : stage Etapa actual de la propuesta en demostración.
+ *     * string : theme Tema visual ('light' o 'dark').
+ *     * Array<Object> : budget Partidas presupuestarias iniciales.
+ */
 const defaultState = {
   role: "investigador",
   stage: "En formulación",
@@ -362,6 +670,8 @@ const defaultState = {
   historyStatus: "Todos",
   resolution: "Aprobada",
 };
+
+// [Línea clave]: ¿Por qué soy importante? Es el almacén de estado reactivo global en el frontend. ¿Para qué? Mantener sincronizados formularios, tema, rol y progreso entre pantallas. ¿Dónde me usan? Leído y mutado en toda la aplicación.
 let state = structuredClone(defaultState);
 try {
   state = {
@@ -380,9 +690,35 @@ let current = "01",
   activeFilter = "Todas",
   dossierTab = "Resumen",
   userMenuOpen = false;
+
+/**
+ * Guardar el estado interactivo actual en el localStorage del navegador.
+ * Serializa la variable global state bajo la clave 'sgpi-demo'.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + void : undefined No retorna valor.
+ */
 const save = () => localStorage.setItem("sgpi-demo", JSON.stringify(state));
+
+/**
+ * Obtener la definición de metadatos de una pantalla a partir de su identificador.
+ * Busca en el arreglo SGPI_CONTENT.screens el objeto cuyo atributo id coincida.
+ * parametros:
+ *     - string : id Identificador de pantalla de dos caracteres (ej. '08').
+ * return:
+ *     + Object|undefined : screen Objeto de configuración de pantalla.
+ */
 const screen = (id) => SGPI_CONTENT.screens.find((s) => s.id === id);
-// Persona que se muestra en pantalla: la real si el rol activo es uno de los suyos; si se cambió a un rol de demostración, el nombre de ejemplo.
+
+/**
+ * Determinar la información de la persona y rol a mostrar en el encabezado de perfil.
+ * Si hay sesión real activa y su rol coincide con state.role, usa el nombre del usuario real; de lo contrario usa el rol ficticio de demo.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Object : persona Objeto con label, name, e initials.
+ */
 const person = () => {
   const r = roles[state.role];
   return session && session.user.roles.some((n) => ROLE_KEYS[n] === state.role)
@@ -393,7 +729,25 @@ const person = () => {
       }
     : r;
 };
+
+/**
+ * Obtener el identificador de pantalla de inicio asignado al rol activo.
+ * Retorna '02' para investigador y '21' (Bandeja de trabajo) para roles evaluadores.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : pantallaInicio Identificador de la pantalla de inicio correspondiente.
+ */
 const homeFor = () => (state.role === "investigador" ? "02" : "21");
+
+/**
+ * Cambiar el rol institucional activo en la demostración y sincronizar la etapa de la propuesta.
+ * Asigna state.role con la nueva clave, fija el expediente SI-2027-014 y actualiza la etapa según el rol.
+ * parametros:
+ *     - string : key Clave del rol a activar ('investigador', 'vinculacion', etc.).
+ * return:
+ *     + void : undefined Muta el estado in-place.
+ */
 function applyRole(key) {
   state.role = key;
   state.viewProposal = "SI-2027-014";
@@ -406,14 +760,50 @@ function applyRole(key) {
     cie: "Dictaminada",
   }[key];
 }
+
+/**
+ * Calcular la suma del presupuesto para el Año 1 (Columna A).
+ * Aplica reduce sobre state.budget sumando los valores numéricos del atributo 'a'.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + number : totalA Suma del presupuesto del Año 1 en colones.
+ */
 const totalA = () => state.budget.reduce((a, r) => a + Number(r.a), 0),
+  /**
+   * Calcular la suma del presupuesto para el Año 2 (Columna B).
+   * Aplica reduce sobre state.budget sumando los valores numéricos del atributo 'b'.
+   * parametros:
+   *     (ninguno)
+   * return:
+   *     + number : totalB Suma del presupuesto del Año 2 en colones.
+   */
   totalB = () => state.budget.reduce((a, r) => a + Number(r.b), 0);
+
+/**
+ * Validar el cumplimiento de las restricciones presupuestarias oficiales de la convocatoria VIE.
+ * Comprueba que el total por año sea <= ₡5.000.000, equipo en año 2 sea 0, y becas cumplan mínimo de ₡960.000.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + boolean : esValido Verdadero si cumple todas las reglas financieras.
+ */
 const budgetValid = () =>
   totalA() <= 5000000 &&
   totalB() <= 5000000 &&
   state.budget[0].b === 0 &&
   state.budget[3].a >= 960000 &&
   state.budget[3].b >= 960000;
+/**
+ * Diccionario de textos de ayuda contextual (tooltips) para acciones y opciones principales de navegación.
+ * Asocia etiquetas de botones y enlaces con su descripción funcional accesible.
+ * Se consume en tooltipAttrs(), btn(), act() y navItem() para poblar atributos title y data-tooltip.
+ * atributos:
+ *     * string : Inicio Ayuda para opción de inicio.
+ *     * string : "Mis propuestas" Ayuda para listado de propuestas del investigador.
+ *     * string : "Bandeja de trabajo" Ayuda para expedientes asignados a roles de evaluación.
+ *     * string : Convocatorias Ayuda para catálogo de convocatorias.
+ */
 const optionHelp = {
   Inicio: "Resumen y tareas pendientes.",
   "Mis propuestas": "Consulta o continúa tus propuestas.",
@@ -427,26 +817,139 @@ const optionHelp = {
   "Guardar borrador": "Conserva los cambios en este navegador.",
   "Guardar y continuar": "Valida la sección y avanza al siguiente paso.",
 };
+
+/**
+ * Generar la cadena de atributos HTML para desplegar tooltips accesibles en elementos interactivos.
+ * Verifica si la etiqueta existe en optionHelp y genera 'class="has-tooltip" data-tooltip="..." title="..."'.
+ * parametros:
+ *     - string : label Texto o etiqueta del control interactivo.
+ * return:
+ *     + string : attrs Cadena con atributos HTML o vacía si no aplica tooltip.
+ */
 const tooltipAttrs = (label) =>
   optionHelp[label]
     ? `class="has-tooltip" data-tooltip="${esc(optionHelp[label])}" title="${esc(optionHelp[label])}"`
     : "";
+
+/**
+ * Construir el marcado HTML estándar de un botón con enlace de navegación cliente (data-go).
+ * Retorna un elemento <button> con clases, destino de navegación, icono SVG y atributos contextuales.
+ * parametros:
+ *     - string : label Texto visible del botón.
+ *     - string|null : target Identificador de pantalla a la que navegar (data-go).
+ *     - string : style Clases CSS adicionales (ej. 'text', 'compact', 'secondary').
+ *     - string : ic Nombre del icono a renderizar al lado del texto.
+ *     - string : attrs Atributos HTML adicionales para el elemento.
+ * return:
+ *     + string : btnHtml Marcado HTML estructurado del botón.
+ */
 const btn = (label, target, style = "", ic = "", attrs = "") =>
   `<button class="btn ${style} ${optionHelp[label] ? "has-tooltip" : ""}" ${target ? `data-go="${target}"` : ""} ${optionHelp[label] ? `data-tooltip="${esc(optionHelp[label])}" title="${esc(optionHelp[label])}"` : ""} ${attrs}>${ic ? icon(ic) : ""}${esc(label)}</button>`;
+
+/**
+ * Construir el marcado HTML estándar de un botón de acción interactiva (data-action).
+ * Invoca el helper btn() asociando un atributo data-action que será despachado por handleAction().
+ * parametros:
+ *     - string : label Texto visible de la acción.
+ *     - string : action Nombre clave del comando o evento (ej. 'save', 'upload', 'roles').
+ *     - string : style Clases CSS de estilizado.
+ *     - string : ic Nombre del icono a incrustar.
+ *     - string : attrs Atributos complementarios.
+ * return:
+ *     + string : actHtml Botón con data-action generado.
+ */
 const act = (label, action, style = "", ic = "", attrs = "") =>
   btn(label, null, style, ic, `data-action="${action}" ${attrs}`);
+
+/**
+ * Generar un badge indicador o pastilla de estado con punto de color.
+ * Retorna un <span> con clase .badge, un punto interno .dot y el texto provisto saneado.
+ * parametros:
+ *     - string : text Texto de estado a mostrar (ej. 'Borrador', 'Aprobada').
+ *     - string : type Modificador CSS opcional de color (ej. 'success', 'warning', 'danger').
+ * return:
+ *     + string : badgeHtml Marcado del componente visual badge.
+ */
 const badge = (text, type = "") =>
   `<span class="badge ${type}"><span class="dot"></span>${esc(text)}</span>`;
+
+/**
+ * Generar un bloque de aviso contextual informativo o de advertencia (.notice).
+ * Construye una tarjeta con icono de alerta o información, título en negrita y párrafo descriptivo.
+ * parametros:
+ *     - string : title Encabezado del aviso.
+ *     - string : body Texto detallado del aviso.
+ *     - string : type Variante visual ('info' o 'warning').
+ * return:
+ *     + string : noticeHtml Marcado HTML de la caja de aviso.
+ */
 const notice = (title, body, type = "") =>
   `<div class="notice ${type}">${icon(type === "warning" ? "alert" : "info")}<div><strong>${esc(title)}</strong><p>${esc(body)}</p></div></div>`;
+
+/**
+ * Construir una tarjeta visual contenedora (.card) con encabezado y acciones opcionales.
+ * Envuelve el contenido en un <section class="card card-pad"> con título y botones si aplican.
+ * parametros:
+ *     - string : title Título de la sección de la tarjeta.
+ *     - string : body Contenido interno en HTML de la tarjeta.
+ *     - string : action Botones o controles para el encabezado superior derecho.
+ * return:
+ *     + string : cardHtml Marcado de la tarjeta contenedora.
+ */
 const card = (title, body, action = "") =>
   `<section class="card card-pad">${title ? `<div class="section-head"><h2>${title}</h2>${action}</div>` : ""}${body}</section>`;
+
+/**
+ * Renderizar una tabla HTML accesible a partir de matrices de encabezados y celdas.
+ * Genera el contenedor responsive .table-wrap con thead, tbody, filas tr/td y pie opcional.
+ * parametros:
+ *     - Array<string> : heads Lista de títulos para las columnas en th.
+ *     - Array<Array<string>> : rows Matriz bidimensional de celdas para cada fila.
+ *     - string : footer Contenido opcional para el pie de la tabla.
+ * return:
+ *     + string : tableHtml Marcado HTML de la tabla estructurada.
+ */
 const table = (heads, rows, footer = "") =>
   `<div class="table-wrap"><table><thead><tr>${heads.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>${footer ? `<div class="table-foot">${footer}</div>` : ""}`;
+
+/**
+ * Construir una lista de definición accesible (<dl>) para desplegar pares clave-valor de metadatos.
+ * Mapea pares [término, descripción] a elementos <dt> y <dd> estructurados.
+ * parametros:
+ *     - Array<[string, string]> : items Colección de tuplas [etiqueta, valor].
+ * return:
+ *     + string : defHtml Marcado HTML de la lista de definiciones.
+ */
 const definition = (items) =>
   `<dl class="definition">${items.map(([a, b]) => `<div><dt>${esc(a)}</dt><dd>${b}</dd></div>`).join("")}</dl>`;
+
+/**
+ * Renderizar una barra de pestañas (tabs) de navegación o filtrado horizontal.
+ * Mapea una lista de nombres de pestañas marcando la activa según el valor seleccionado.
+ * parametros:
+ *     - Array<string> : items Lista de nombres de pestañas.
+ *     - string : selected Nombre de la pestaña actualmente activa.
+ *     - string : attr Atributo HTML para almacenar el valor ('data-tab' o 'data-filter').
+ * return:
+ *     + string : tabsHtml Marcado HTML del contenedor de pestañas.
+ */
 const tabs = (items, selected, attr = "data-tab") =>
   `<div class="tabs">${items.map((t) => `<button class="tab ${t === selected ? "active" : ""}" ${attr}="${esc(t)}">${esc(t)}</button>`).join("")}</div>`;
+
+/**
+ * Construir un control de campo de formulario individual con label, input accesible y validación.
+ * Evalúa el tipo de campo ('text', 'textarea', 'select', 'checkbox', 'file', 'date', 'password'),
+ * resuelve el valor guardado en state.saved si existe, e incrusta el mensaje de error de validación.
+ * parametros:
+ *     - string : label Etiqueta descriptiva del campo.
+ *     - any : value Valor por defecto o arreglo de opciones para selects.
+ *     - string : kind Tipo de control ('text', 'textarea', 'select', 'checkbox', 'file', 'date', etc.).
+ *     - string : help Texto explicativo inferior de ayuda.
+ *     - boolean : required Si el campo es de llenado obligatorio.
+ *     - string : key Llave única de almacenamiento en state.saved (opcional).
+ * return:
+ *     + string : fieldHtml Marcado del control de formulario con contenedor .field.
+ */
 function field(
   label,
   value = "",
@@ -455,6 +958,7 @@ function field(
   required = false,
   key = "",
 ) {
+  // [Línea clave]: ¿Por qué soy importante? Genera una clave persistente única para el campo. ¿Para qué? Recuperar y almacenar borradores parciales en state.saved. ¿Dónde me usan? En el binding de valores de todos los formularios.
   const k = key || `${current}:${label}`,
     val = state.saved[k] ?? value,
     id = "f-" + k.replace(/[^\w]/g, "-"),
@@ -474,6 +978,15 @@ function field(
     control = `<input ${attr} type="${["email", "number", "password", "date", "search"].includes(kind) ? kind : "text"}" value="${esc(val)}" ${kind === "readonly" ? "readonly" : ""}>`;
   return `<div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}${help ? `<span class="help">${esc(help)}</span>` : ""}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>`;
 }
+
+/**
+ * Generar todos los campos de formulario definidos en el catálogo de metadatos de una pantalla.
+ * Consulta screen(id).fields e invoca field() secuencialmente para cada descriptor de campo.
+ * parametros:
+ *     - string : id Identificador de pantalla a procesar.
+ * return:
+ *     + string : fieldsHtml Concatenación de todos los campos renderizados.
+ */
 function fieldsFor(id) {
   return (screen(id).fields || [])
     .map((f) =>
@@ -493,10 +1006,29 @@ function fieldsFor(id) {
     )
     .join("");
 }
+
+/**
+ * Construir la fila visual representativa de un documento adjunto con icono y acción de previsualizar.
+ * Genera un contenedor .doc-row con insignia de formato (PDF/XLSX), nombre, metadatos y botón de acción.
+ * parametros:
+ *     - string : name Nombre del archivo o anexo.
+ *     - string : meta Metadatos textuales (ej. 'Versión 1.0 · 240 KB').
+ *     - string : action Acción a disparar al pulsar 'Ver' ('preview' o similar).
+ * return:
+ *     + string : docHtml Marcado de la fila de documento.
+ */
 function doc(name, meta = "Versión 1.0", action = "preview") {
   return `<div class="doc-row"><span class="doc-icon">${/xlsx/i.test(name) ? "XLSX" : "PDF"}</span><div class="grow"><strong>${esc(name)}</strong><small>${esc(meta)}</small></div>${act("Ver", action, "text compact", "file", `data-doc="${esc(name)}"`)}</div>`;
 }
 
+/**
+ * Formatear una colección de propuestas para renderizarlas como filas de tabla institucional.
+ * Transforma cada propuesta en una tupla con código, título, periodo, badge de estado, monto y botón de acción.
+ * parametros:
+ *     - Array<Object> : list Lista de propuestas a mostrar (por defecto top3propuestasmasrecientes).
+ * return:
+ *     + Array<Array<string>> : rows Matriz de celdas apta para el helper table().
+ */
 function projectRows(list = (top3propuestasmasrecientes ?? [])) {
   return list.map((p, i) => [
     `<span class="project-code">${p.code}</span><span class="project-name">${p.title}</span><span class="small muted">${p.type}</span>`,
@@ -520,10 +1052,36 @@ function projectRows(list = (top3propuestasmasrecientes ?? [])) {
     ),
   ]);
 }
+
+/**
+ * Generar un botón de elemento de navegación para la barra lateral del menú principal.
+ * Retorna un botón .nav-item con clase .active si coincide con la pantalla actual e icono SVG.
+ * parametros:
+ *     - string : label Texto visible del enlace del menú.
+ *     - string : id Pantalla de destino (data-go).
+ *     - string : ic Nombre del icono SVG.
+ *     - boolean : active Si el ítem está actualmente seleccionado.
+ * return:
+ *     + string : navItemHtml Botón de navegación formateado.
+ */
 function navItem(label, id, ic, active) {
   return `<button class="nav-item ${active ? "active" : ""} ${optionHelp[label] ? "has-tooltip" : ""}" data-go="${id}" ${optionHelp[label] ? `data-tooltip="${esc(optionHelp[label])}" title="${esc(optionHelp[label])}"` : ""}>${icon(ic)}${label}</button>`;
 }
+
+/**
+ * Proveer el marco estructural maestro (Layout Shell) de la aplicación completa.
+ * Genera el contenedor principal con sidebar de navegación institucional según el rol,
+ * barra superior con notificaciones y menú de usuario, área principal de contenido y botón flotante de soporte.
+ * parametros:
+ *     - string : body Contenido específico de la pantalla a desplegar.
+ *     - string : title Título principal de la vista en h1.
+ *     - string : description Subtítulo o texto descriptivo superior.
+ *     - string : headingActions Botones de acción situados al lado derecho del título.
+ * return:
+ *     + string : shellHtml Estructura completa de página lista para inyección en el DOM.
+ */
 function shell(body, title, description = "", headingActions = "") {
+  // [Línea clave]: ¿Por qué soy importante? Resuelve dinámicamente la identidad y rol visible del usuario. ¿Para qué? Ajustar las opciones del menú lateral a sus facultades (investigador vs evaluador vs superadmin). ¿Dónde me usan? Al armar el layout principal en shell().
   const r = person(),
     research = state.role === "investigador",
     admin = state.role === "direccion",
@@ -531,6 +1089,15 @@ function shell(body, title, description = "", headingActions = "") {
   const module = (screen(current) || {}).module || "Expediente";
   return `<div class="app"><aside class="sidebar"><div class="brand"><div class="brand-mark">S</div><div><div class="brand-name">SGPI</div><span class="tec-wordmark">Tecnológico de Costa Rica</span></div></div><nav aria-label="Navegación principal"><div class="nav-group">${navItem("Inicio", "02", "home", current === "02")}${research ? navItem("Mis propuestas", "06", "folder", +current >= 6 && +current <= 20) : navItem("Bandeja de trabajo", "21", "inbox", +current >= 21 && +current <= 27)}${research ? navItem("Convocatorias", "04", "calendar", current === "04" || current === "05") : ""}${historical ? navItem("Consulta histórica", "29", "search", current === "29" || current === "30") : ""}</div>${admin ? `<div class="nav-title" style="margin-top:28px">SUPERADMINISTRACIÓN</div><div class="nav-group">${navItem("Convocatorias", "31", "calendar", current === "31")}${navItem("Rúbricas y catálogos", "32", "settings", current === "32")}</div>` : ""}</nav><div class="nav-group" style="margin-top:auto">${navItem("Mi perfil", "33", "user", current === "33")}<button class="nav-item has-tooltip" data-action="contact" data-tooltip="Persona de contacto y canales de apoyo." title="Persona de contacto y canales de apoyo.">${icon("info")}Contacto y soporte</button><button class="nav-item has-tooltip" data-action="logout" data-tooltip="${esc(optionHelp["Cerrar sesión"])}" title="${esc(optionHelp["Cerrar sesión"])}">${icon("logout")}Cerrar sesión</button></div></aside><div class="main"><header class="topbar"><div class="topbar-context"><strong>VIE</strong></div><div class="topbar-actions"><button class="icon-btn" data-go="03" aria-label="Notificaciones">${icon("bell")}${!state.read ? '<span class="notif-dot"></span>' : ""}</button><button class="profile-btn" data-action="user-menu" aria-expanded="${userMenuOpen}" aria-haspopup="menu"><span class="avatar">${esc(r.initials)}</span><span class="profile-text"><strong>${esc(r.name)}</strong><br><span class="micro muted">${r.label}</span></span>${icon("down")}</button>${userMenuOpen ? `<div class="user-menu" role="menu"><div class="user-menu-head"><strong>${esc(r.name)}</strong><div class="micro muted">${r.label}</div></div><button role="menuitem" data-go="33">${icon("user")}Mi perfil</button><button role="menuitem" data-action="settings">${icon("settings")}Ajustes y accesibilidad</button><button role="menuitem" data-action="contact">${icon("info")}Contactar soporte</button><button role="menuitem" class="danger" data-action="logout">${icon("logout")}Cerrar sesión</button></div>` : ""}</div></header><main class="content"><div class="page-heading"><div><h1>${esc(title)}</h1>${description ? `<p class="subtitle">${esc(description)}</p>` : ""}</div>${headingActions ? `<div class="action-row">${headingActions}</div>` : ""}</div>${body}</main></div><button class="support-fab" data-action="contact" aria-label="Contactar soporte">${icon("info")}<span>Soporte</span></button></div>`;
 }
+
+/**
+ * Lista de tuplas de los 11 pasos cronológicos del asistente de formulación de propuestas.
+ * Define el identificador de pantalla y el nombre de cada etapa del formulario wizard.
+ * En formShell() para renderizar el stepper lateral con barra de progreso y botones anterior/siguiente.
+ * atributos:
+ *     * string : 0 Identificador de pantalla de la sección ('08' a '18').
+ *     * string : 1 Título descriptivo de la sección (ej. 'Datos generales', 'Presupuesto').
+ */
 const steps = [
   ["08", "Datos generales"],
   ["09", "Equipo investigador"],
@@ -544,14 +1111,47 @@ const steps = [
   ["17", "Documentos"],
   ["18", "Revisión y envío"],
 ];
+
+/**
+ * Proveer el marco estructural común (Wizard Shell) para los formularios de formulación de propuestas.
+ * Genera el stepper lateral con la barra de progreso porcentual, contenedor de formulario,
+ * encabezado con badge 'Borrador', y pie con botones 'Anterior', 'Guardar borrador' y 'Guardar y continuar'.
+ * parametros:
+ *     - string : inner Contenido HTML con los campos específicos de la etapa activa.
+ *     - string : id Identificador de la pantalla actual en el formulario wizard.
+ * return:
+ *     + string : formShellHtml Marcado completo del asistente de pasos.
+ */
 function formShell(inner, id = current) {
+  // [Línea clave]: ¿Por qué soy importante? Calcula el índice del paso activo. ¿Para qué? Establecer el ancho de la barra de progreso y habilitar los pasos concluidos en el stepper. ¿Dónde me usan? En la generación del stepper en formShell().
   const idx = steps.findIndex((s) => s[0] === id);
   return `<div class="form-layout"><aside><div class="small" style="margin:0 10px 10px"><strong>Tu propuesta</strong><p class="micro muted" style="margin-top:4px">Paso ${idx + 1} de 11</p></div><div class="progress" style="margin:0 10px 18px"><span style="width:${((idx + 1) / 11) * 100}%"></span></div><nav class="stepper" aria-label="Secciones del formulario">${steps.map(([n, l], i) => `<button class="step ${i === idx ? "active" : i < idx ? "done" : ""}" data-go="${n}"><span>${i < idx ? "✓" : i + 1}</span>${l}</button>`).join("")}</nav><p class="micro muted" style="margin:20px 10px">Puedes guardar y continuar después.<br>Los campos con * son obligatorios.</p></aside><div><form id="proposal-form" class="card form-card" novalidate><div class="form-title"><h2>${esc(screen(id).title)}</h2>${badge("Borrador")}</div>${inner}<div class="form-footer"><div>${idx > 0 ? btn("Anterior", steps[idx - 1][0], "text", "back") : btn("Mis propuestas", "06", "text", "back")}</div><div class="action-row">${act("Guardar borrador", "save", "secondary")}${idx < 10 ? act("Guardar y continuar", "next", "", "arrow", `data-next="${steps[idx + 1][0]}"`) : act("Enviar a evaluación", "send", "", "arrow")}</div></div></form><div class="saved" style="margin-top:12px">${icon("check")}Cambios guardados</div></div></div>`;
 }
+/**
+ * Construir y renderizar el formulario de inicio de sesión de usuario (Pantalla 01).
+ * Genera el contenedor central con el logotipo del TEC/VIE, campos para correo y contraseña,
+ * área viva para mensajes de error accesibles y enlaces de soporte institucional.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : loginHtml Marcado HTML de la pantalla de autenticación.
+ */
 function login() {
   return `<main class="login-simple"><div class="login-panel"><div class="brand"><div class="brand-mark">S</div><div><div class="brand-name">SGPI <span class="login-vie">/ VIE</span></div><span class="tec-wordmark">Tecnológico de Costa Rica</span></div></div><h1>Iniciar sesión</h1><p class="muted">Gestión de propuestas de investigación</p><form id="login-form" novalidate>${field("Correo institucional", "", "email", "", true, "login:email")}${field("Contraseña", "", "password", "", true, "login:password")}<div id="login-error" role="alert" aria-live="assertive"></div>${act("Ingresar", "login", "", "arrow")}<div class="login-help">${act("Ayuda para ingresar", "login-help", "text")} · ${act("Ayuda para crear cuenta", "account-help", "text")}</div></form><div class="login-help">${act("Contactar a una persona", "contact", "text", "info")}</div></div><button class="support-fab" data-action="contact" aria-label="Contactar soporte">${icon("info")}<span>Soporte</span></button></main>`;
 }
+
+/**
+ * Renderizar el panel principal o Dashboard institucional (Pantalla 02) según el rol del usuario.
+ * Si el usuario es evaluador/revisor, muestra la bandeja prioritaria y métricas de dictamen.
+ * Si es investigador, renderiza métricas conectadas a numspropuestas, la propuesta más reciente,
+ * la tabla de proyectos en curso y la fecha límite de sometimiento de convocatorias.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : dashboardHtml Marcado estructurado del panel de inicio.
+ */
 function dashboard() {
+  // [Línea clave]: ¿Por qué soy importante? Bifurcación condicional de interfaz según privilegios de rol. ¿Para qué? Mostrar métricas de evaluación a comités o panel de formulación a investigadores. ¿Dónde me usan? Al inicio de dashboard().
   if (state.role !== "investigador")
     return shell(
       `<div class="hero"><div><h2>Una propuesta espera tu revisión</h2><p>Consulta el expediente completo antes de registrar la decisión de ${roles[state.role].label}.</p></div>${btn("Abrir bandeja", "21", "", "arrow")}</div><div class="grid three mt">${[
@@ -605,6 +1205,15 @@ function dashboard() {
   );
 }
 
+/**
+ * Renderizar el centro general de notificaciones y novedades (Pantalla 03).
+ * Aplica los filtros por categoría y estado de lectura, genera las filas de tarjetas
+ * con fechas formateadas e incrusta el botón de marcado masivo.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : notifHtml Marcado de la pantalla de notificaciones.
+ */
 function notifications() {
   const all = notificaciones ?? [];
   let items = all;
@@ -633,6 +1242,15 @@ function notifications() {
   );
 }
 
+/**
+ * Renderizar la pantalla de búsqueda y listado de convocatorias institucionales (Pantalla 04).
+ * Filtra la colección convocatorias por texto y estado activo/cerrado, presentando tarjetas
+ * con cronograma, familias de iniciativas y acceso directo a la formulación.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : callsHtml Marcado HTML de la lista de convocatorias.
+ */
 function calls() {
   const fmt = (d) =>
     new Date(d).toLocaleDateString("es-CR", { day: "2-digit", month: "short", year: "numeric" });
@@ -665,6 +1283,14 @@ function calls() {
   );
 }
 
+/**
+ * Formatear el listado de etapas y plazos de la convocatoria activa para su visualización.
+ * Mapea las etapas en etapasConvocatoria a tuplas [nombre, rangoFechas] con formato localizado.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Array<[string, string]> : etapasRows Matriz de etapas y fechas formateadas.
+ */
 function etapasRows() {
   const fmt = (d) => new Date(d).toLocaleDateString("es-CR", { day: "2-digit", month: "short", year: "numeric" });
   return (etapasConvocatoria ?? []).map((e) => [
@@ -673,6 +1299,15 @@ function etapasRows() {
   ]);
 }
 
+/**
+ * Renderizar la vista detallada de una convocatoria (Pantalla 05).
+ * Despliega modalidades institucionales, instrumentos normativos descargables,
+ * advertencias sobre etapas de evaluación y la línea de tiempo interactiva de fechas.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : detailHtml Marcado estructurado del detalle de la convocatoria.
+ */
 function callDetail() {
   const conv = (convocatorias ?? []).find((c) => c.id_convocatoria === state.viewCall);
   const inicioEjecucion = conv
@@ -692,6 +1327,15 @@ function callDetail() {
   );
 }
 
+/**
+ * Renderizar la pantalla de gestión del portafolio personal del investigador (Pantalla 06).
+ * Aplica pestañas de filtrado (Todas, En formulación, En ejecución, Cerradas) sobre la lista de propuestas
+ * y las despliega en una tabla con estados sincronizados con PostgreSQL.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : proposalsHtml Marcado HTML de la vista Mis Propuestas.
+ */
 function myProposals() {
   const list = top3propuestasmasrecientes || [];
   let filtered = list;
@@ -711,6 +1355,15 @@ function myProposals() {
   );
 }
 
+/**
+ * Renderizar el selector de modalidad para crear una nueva propuesta (Pantalla 07).
+ * Despliega tarjetas de selección tipo radio con las modalidades del catálogo de base de datos
+ * junto con guías sobre requisitos, equipo y presupuestos.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : newProposalHtml Marcado HTML del paso inicial de creación.
+ */
 function newProposal() {
   return shell(
     `<div class="two-col"><form class="card card-pad" id="modality-form"><div class="section-head"><h2>Elige la modalidad</h2>${badge("Paso inicial")}</div><div class="stack">${(modalidades ?? [])
@@ -726,7 +1379,17 @@ function newProposal() {
   );
 }
 
+/**
+ * Renderizar el formulario de datos generales y metadatos del proyecto (Pantalla 08).
+ * Genera campos para título, escuela coordinadora (poblada de escuelas de la API), modalidad,
+ * línea de investigación (de lineas_investigacion), fechas, resumen, palabras clave e información institucional.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : dataFormHtml Marcado HTML interno de la sección de datos generales.
+ */
 function dataForm() {
+  // [Línea clave]: ¿Por qué soy importante? Mapea los catálogos asíncronos de la base de datos a listas de opciones. ¿Para qué? Alimentar los selectores de escuela y línea de investigación del formulario. ¿Dónde me usan? Al construir dataForm().
   const escuelasOpts = (escuelas ?? []).map((e) => e.nombre);
   const lineasOpts = (lineas_investigacion ?? []).map((l) => l.nombre);
   return `
@@ -824,6 +1487,15 @@ function dataForm() {
   `;
 }
 
+/**
+ * Renderizar la sección del equipo investigador y dedicación horaria (Pantalla 09).
+ * Despliega la tabla de nombramientos (coordinador, investigadores, horas VIE/REC),
+ * botón para agregar participantes, campo de beca estudiantil y acordeón de colaboradores externos.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : teamFormHtml Marcado HTML de la gestión de equipo.
+ */
 function teamForm() {
   return `${notice("Dedicación total: 16 horas semanales", "Se registran 8 h VIE y 8 h REC. La participación estudiantil se presupuesta aparte.")}<div class="mt">${table(
     ["Persona / instancia", "Rol", "Horas", ""],
@@ -854,9 +1526,29 @@ function teamForm() {
       : "<span>Nombramientos: 01 ene 2027 – 31 dic 2028</span>",
   )}</div><div class="action-row mt mb">${act("Agregar participante", "team", "secondary", "plus")}</div>${field("Participación estudiantil", "Valeria Campos · 10 h/semana de beca asistente especial; validación de campo y trabajo final de graduación.", "textarea", "₡960.000 por año para 400 horas a ₡2.400/h.", true)}<details class="accordion"><summary>Colaboración externa y responsabilidades</summary><p>Las personas externas se identifican con institución, ORCID, carta de compromiso y tareas en el plan. La persona titular se registra cuando se emplean horas CONS.</p>${field("Institución externa", "Sin participantes externos en la versión inicial.", "text")}</details>`;
 }
+
+/**
+ * Renderizar la sección de descripción, justificación y antecedentes (Pantalla 10).
+ * Genera campos de texto para el problema de investigación, justificación del impacto,
+ * estado del arte con referencias y anexo de fundamentación documental.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : foundationHtml Marcado HTML de fundamentación.
+ */
 function foundationForm() {
   return `${field("Problema e importancia", screen("10").fields[0].value, "textarea", "Máximo una página.", true)}${field("Justificación", screen("10").fields[1].value, "textarea", "Explica la contribución y las personas beneficiarias.", true)}${field("Estado del arte y vacío identificado", "Revisión previa documentada: los sistemas comparados presentan limitaciones de continuidad de mediciones e integración de datos en las microcuencas del caso. El prototipo aborda ese vacío mediante calibración comparativa y registro continuo.", "textarea", "Máximo 2 páginas. Incluye al menos 10 referencias primarias WoS/Scopus de los últimos 5 años.", true)}<details class="accordion"><summary>Ver referencias y antecedentes del caso</summary><p>Referencias pendientes de completar en este ejemplo.</p>${field("Antecedentes", screen("10").fields[2].value, "textarea")}${doc("Fundamentación.pdf")}</details>`;
 }
+
+/**
+ * Renderizar el formulario de objetivos generales y específicos (Pantalla 11).
+ * Construye el área para el objetivo general y genera dinámicamente campos para cada
+ * objetivo específico (OE1, OE2, OE3, etc.), permitiendo incorporar objetivos adicionales.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : objFormHtml Marcado HTML de objetivos.
+ */
 function objectiveForm() {
   return `${field("Objetivo general", screen("11").fields[0].value, "textarea", "", true)}<h3 style="margin:22px 0 16px">Objetivos específicos</h3>${screen(
     "11",
@@ -874,9 +1566,31 @@ function objectiveForm() {
       "",
     )}${state.extraObjective ? field("OE4", state.extraObjective, "textarea", "Objetivo agregado en esta sesión.", true) : ""}${act("Agregar objetivo", "objective", "secondary", "plus")}`;
 }
+
+/**
+ * Renderizar la sección de diseño metodológico y validación (Pantalla 12).
+ * Despliega campos para el enfoque, procedimientos técnicos, usuarios participantes,
+ * análisis de resultados y compromisos de productos de PI (software y artículos WoS).
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : methodologyHtml Marcado HTML de metodología.
+ */
 function methodologyForm() {
   return `${field("Enfoque y diseño metodológico", screen("12").fields[0].value, "textarea", "Describe enfoque, alcance y diseño.", true)}${field("Procedimientos y técnicas", screen("12").fields[1].value, "textarea", "Incluye instrumentos, variables y procedimientos de medición.", true)}${field("Usuarios y validación", "Personas responsables de la gestión de dos microcuencas piloto. La validación compara mediciones de pH, temperatura y conductividad con instrumentos de referencia; se documentan concordancia, cobertura temporal y limitaciones.", "textarea", "Justifica la selección de sitios y cómo se comprobará el desempeño.", true)}${field("Análisis de resultados", screen("12").fields[2].value, "textarea", "", true)}<details class="accordion"><summary>Productos y difusión</summary><p>Productos comprometidos para 16 h: software (activo de PI), artículo sometido WoS/Scopus y manual técnico. La validación de PI corresponde a Vinculación.</p></details>`;
 }
+
+/**
+ * Matriz de actividades iniciales del plan de trabajo con vinculación a objetivos y responsables.
+ * Define tuplas [OE, Nombre, Entregable, Responsable, Meses] para cada actividad programada.
+ * En planForm() para construir la tabla de actividades y el diagrama Gantt trimestral.
+ * atributos:
+ *     * Array<string> : 0 Código del objetivo específico (OE1, OE2, OE3).
+ *     * string : 1 Descripción de la actividad.
+ *     * string : 2 Producto o entregable esperado.
+ *     * string : 3 Iniciales y rol del responsable.
+ *     * string : 4 Rango de meses de ejecución.
+ */
 const activities = [
   [
     "OE1",
@@ -907,6 +1621,16 @@ const activities = [
     "21–24",
   ],
 ];
+
+/**
+ * Renderizar la sección del plan de acción y cronograma de actividades (Pantalla 13).
+ * Genera la tabla trazable de actividades con entregables y responsables, botones de adición,
+ * y una representación visual de diagrama Gantt dividido en 8 trimestres (T1 a T8).
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : planFormHtml Marcado HTML del plan de acción.
+ */
 function planForm() {
   return `${notice("Cada actividad conserva su trazabilidad", "Asocia objetivo, resultado, participante, responsabilidad, riesgo y plazo en meses correlativos.")}<div class="mt">${table(
     ["Objetivo / actividad", "Resultado", "Responsable", "Meses"],
@@ -920,6 +1644,17 @@ function planForm() {
       ]),
   )}</div><div class="action-row mt mb">${act("Agregar actividad", "activity", "secondary", "plus")}${btn("Revisar riesgos", "14", "text", "arrow")}</div><h3 class="mb">Cronograma · 24 meses</h3><div class="gantt"><div>Actividad</div>${["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8"].map((x) => `<div>${x}</div>`).join("")}${activities.map((r, i) => `<div>${r[1]}</div>${Array.from({ length: 8 }, (_, j) => `<div ${j >= i * 2 && j < i * 2 + 2 ? 'class="bar"' : ""}></div>`).join("")}`).join("")}</div><details class="accordion"><summary>Giras e informes de seguimiento</summary><p>Se planifican giras de campo durante meses 13–20, informes semestrales en meses 6, 12, 18 y 24 e informes anuales en meses 12 y 24. La coordinación supervisa su entrega.</p></details>`;
 }
+
+/**
+ * Matriz de riesgos previstos asociados a cada actividad principal del proyecto.
+ * Define tuplas [Actividad, EventoDeRiesgo, MedidaMitigacion, Responsable].
+ * En riskForm() para desplegar la matriz de contingencia obligatoria.
+ * atributos:
+ *     * string : 0 Nombre de la actividad.
+ *     * string : 1 Descripción del riesgo identificado.
+ *     * string : 2 Medida de mitigación aplicable.
+ *     * string : 3 Nombre del responsable del monitoreo.
+ */
 const risks = [
   [
     "Definir requerimientos",
@@ -946,6 +1681,16 @@ const risks = [
     "Laura Méndez",
   ],
 ];
+
+/**
+ * Renderizar la matriz de gestión de riesgos y mitigación (Pantalla 14).
+ * Despliega la tabla con riesgos, medidas de contingencia y responsables por actividad,
+ * permitiendo registrar eventos adicionales.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : riskFormHtml Marcado HTML de la matriz de riesgos.
+ */
 function riskForm() {
   return `${notice("4 actividades · 4 riesgos asociados", "La plantilla exige identificar riesgos, mitigación y responsable para cada actividad.")}<div class="mt">${table(
     ["Actividad / riesgo", "Medida de mitigación", "Responsable"],
@@ -958,7 +1703,18 @@ function riskForm() {
       ]),
   )}</div><div class="mt">${act("Agregar riesgo", "risk", "secondary", "plus")}</div><details class="accordion"><summary>Revisar consistencia con el plan</summary><p>Las medidas son realizables con los recursos y plazos de la propuesta. Los riesgos se revisarán durante cada informe de seguimiento.</p></details>`;
 }
+
+/**
+ * Renderizar la sección de formulación presupuestaria plurianual (Pantalla 15).
+ * Calcula totales anuales (2027 y 2028), valida techos presupuestarios (tope ₡5M anual y beca mínima),
+ * y muestra la tabla interactiva de partidas con desglose y edición de montos.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : budgetFormHtml Marcado HTML del presupuesto.
+ */
 function budgetForm() {
+  // [Línea clave]: ¿Por qué soy importante? Valida en tiempo real los topes de convocatoria VIE. ¿Para qué? Advertir al usuario si el presupuesto excede los ₡5M/año o carece de la beca reglamentaria. ¿Dónde me usan? En la cabecera de budgetForm().
   const valid = budgetValid();
   return `<div class="grid three mb">${[
     ["2027", totalA()],
@@ -981,6 +1737,16 @@ function budgetForm() {
     ]),
   )}</div><div class="action-row mt">${act("Agregar rubro", "budget-add", "secondary", "plus")}${act("Ver reglas de presupuesto", "budget-rules", "text")}</div><details class="accordion"><summary>Justificaciones y otras fuentes</summary>${state.budget.map((r) => `<p><strong>${r.name}.</strong> ${r.detail}</p>`).join("")}${field("Financiamiento externo / contrapartida", "Sin aportes externos.", "textarea")}</details>`;
 }
+
+/**
+ * Renderizar la sección de información complementaria, TRL, PI y aspectos bioéticos (Pantalla 16).
+ * Genera selectores para nivel TRL actual/esperado, potencial de PI, activo intangible previsto
+ * y la cuadrícula de declaraciones éticas desglosadas por eje (humanos, biodiversidad, animales, pueblos indígenas).
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : complementaryHtml Marcado HTML de información complementaria y ética.
+ */
 function complementaryForm() {
   const ethics = [
     [
@@ -1002,9 +1768,29 @@ function complementaryForm() {
   ];
   return `<h3 class="mb">Madurez tecnológica y propiedad intelectual</h3><div class="field-row">${field("TRL actual", ["4", "1", "2", "3", "5", "6", "7", "8", "9"], "select", "Rango de referencia DT: 4–7.", true)}${field("TRL esperado", ["6", "1", "2", "3", "4", "5", "7", "8", "9"], "select", "Coherente con objetivos y validación.", true)}</div>${field("Potencial de propiedad intelectual", ["Sí", "No"], "select", "En desarrollo tecnológico el dictamen de Vinculación es obligatorio.", true)}${field("Activo previsto", "Software de integración y registro de mediciones ambientales.", "textarea", "Evitar divulgación previa a la valoración institucional.", true)}<details class="accordion" open><summary>Declaraciones éticas individuales</summary><p class="small muted" style="margin-top:14px">Cada aspecto se declara y justifica por separado; no se admite una respuesta general.</p><div class="ethics-grid">${ethics.map(([label, reason], i) => `<section class="ethics-item"><h3>${label}</h3>${field("¿Aplica?", ["No", "Sí"], "select", "Selecciona Sí si la actividad requiere revisión o permisos.", true, `ethics:${i}:applies`)}${field(`Justificación específica`, reason, "textarea", "Indica entidad, estado, mitigación y plazo si corresponde.", true, `ethics:${i}:reason`)}</section>`).join("")}</div></details><details class="accordion"><summary>Producción, difusión y hoja de ruta</summary><p><strong>16 h/semana:</strong> software + artículo sometido WoS/Scopus + manual técnico. Se asocian a OE2 y OE3.</p>${field("Difusión y socialización", "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.", "textarea")}${field("Hoja de ruta", "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.", "textarea")}</details>`;
 }
+
+/**
+ * Renderizar la sección de anexos y documentos probatorios adjuntos (Pantalla 17).
+ * Despliega la zona de soltar archivos (dropzone) y el listado de documentos institucionales
+ * obligatorios adjuntos (formulario oficial, plan, presupuesto, fundamentación).
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : docsFormHtml Marcado HTML de gestión documental.
+ */
 function documentsForm() {
   return `<div class="dropzone">${icon("upload")}<h3>Documentos de la propuesta</h3><p>Incorpora los archivos que respaldan esta versión.</p>${act("Adjuntar documento", "upload", "secondary", "plus")}</div><div class="mt">${doc("Formulario de proyecto · v1.pdf")}${doc("Plan de acción y riesgos · v1.xlsx")}${doc("Presupuesto 2027–2028 · v1.xlsx")}${state.attachments >= 4 ? doc("Fundamentación.pdf") : notice("Falta un documento obligatorio", "Incorpora el anexo de fundamentación antes del envío.", "warning")}</div><div class="mt">${notice("Dictámenes y acuerdos se agregan en su etapa", "El dictamen de Vinculación precede al Comité; los avales se requieren para el sometimiento formal. No se exige un documento antes de que pueda ser emitido.")}</div>`;
 }
+
+/**
+ * Renderizar la pantalla de verificación global previa al envío a revisión (Pantalla 18).
+ * Realiza un chequeo integral de completitud de secciones (datos, objetivos, plan, presupuesto, documentos),
+ * mostrando el estado de cada una y requiriendo confirmación de revisión antes de habilitar el botón de envío.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : reviewFormHtml Marcado HTML del resumen de verificación.
+ */
 function reviewForm() {
   const ok = budgetValid() && state.attachments >= 4;
   return `<div class="mb"><span class="project-code">SI-2027-014 · Desarrollo tecnológico</span><h2>Agua Inteligente: monitoreo de cuencas</h2><p class="small muted" style="margin-top:8px">2027–2028 · ${money(totalA() + totalB())} · Versión 1.0</p></div><div class="review-grid">${[
@@ -1023,6 +1809,15 @@ function reviewForm() {
       "",
     )}</div><div class="mt">${notice("Próxima etapa: Vinculación", "Esta propuesta es de desarrollo tecnológico. Se enviará primero a revisión de PI, luego al Comité Técnico.")}</div><label class="checkline mt"><input type="checkbox" id="reviewed" ${state.reviewed ? "checked" : ""}>He revisado la información y los documentos.</label>${!ok ? notice("Aún no puedes enviar", "Corrige el presupuesto y adjunta todos los documentos señalados.", "warning") : ""}`;
 }
+
+/**
+ * Renderizar la pantalla de confirmación tras registrar el envío de la propuesta (Pantalla 19).
+ * Despliega un mensaje de éxito con el código de propuesta, instancia revisora actual y fecha de radicación.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : confirmHtml Marcado HTML de confirmación.
+ */
 function confirmation() {
   return shell(
     `<div class="card card-pad" style="max-width:850px;margin:auto;padding:42px"><div style="width:56px;height:56px;border-radius:50%;background:var(--soft);display:grid;place-items:center;margin-bottom:22px">${icon("check")}</div><h2 style="font-size:28px">Tu propuesta fue enviada a revisión</h2><p class="small muted" style="margin:12px 0 30px">Se registró la versión 1.0 de SI-2027-014. Podrás consultar cada cambio desde el seguimiento.</p>${definition(
@@ -1037,6 +1832,23 @@ function confirmation() {
     "",
   );
 }
+
+/**
+ * Lista secuencial de estados que atraviesa un expediente en el SGPI.
+ * Define el ordenamiento de etapas desde 'En formulación' hasta 'Cerrada'.
+ * En tracking() para calcular la posición en la línea de progreso del expediente.
+ * atributos:
+ *     * string : 0 'En formulación'
+ *     * string : 1 'En revisión de Vinculación'
+ *     * string : 2 'En evaluación técnica'
+ *     * string : 3 'Avalada'
+ *     * string : 4 'Sometida'
+ *     * string : 5 'Dictaminada'
+ *     * string : 6 'Resuelta'
+ *     * string : 7 'Aceptada'
+ *     * string : 8 'En ejecución'
+ *     * string : 9 'Cerrada'
+ */
 const stageList = [
   "En formulación",
   "En revisión de Vinculación",
@@ -1049,6 +1861,16 @@ const stageList = [
   "En ejecución",
   "Cerrada",
 ];
+/**
+ * Renderizar la pantalla de seguimiento del ciclo de vida de la propuesta (Pantalla 20).
+ * Evalúa el estado del expediente en la máquina de estados stageList, determina la acción pendiente
+ * (someter formalmente, adjuntar carta de aceptación, subsanar observaciones, presentar informes),
+ * y muestra la línea de tiempo vertical con el actor institucional responsable de cada etapa.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : trackingHtml Marcado HTML de la vista de seguimiento.
+ */
 function tracking() {
   const ix = stageList.indexOf(state.stage),
     stateText = state.stage;
@@ -1108,6 +1930,16 @@ function tracking() {
     btn("Abrir expediente", "22", "secondary", "folder"),
   );
 }
+
+/**
+ * Renderizar la bandeja de trabajo para comisiones evaluadoras e instancias de dictamen (Pantalla 21).
+ * Despliega tarjetas métricas (Pendientes, En revisión, Finalizadas) y la tabla de expedientes asignados
+ * con enlace directo para abrir el expediente completo.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : inboxHtml Marcado HTML de la bandeja de trabajo.
+ */
 function inbox() {
   const list = top3propuestasmasrecientes || [];
   const pending = list.filter((p) => !["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"].includes(p.status));
@@ -1142,7 +1974,19 @@ function inbox() {
     "",
   );
 }
+
+/**
+ * Renderizar la vista integral del expediente digital de una propuesta (Pantalla 22).
+ * Despliega pestañas de contenido (Resumen, Documentos, Evaluaciones, Resolución, Historial),
+ * garantizando la inmutabilidad si el expediente está cerrado o resuelto y permitiendo
+ * el acceso contextual a la pantalla de dictamen correspondiente al rol autenticado.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : dossierHtml Marcado estructurado del expediente digital.
+ */
 function dossier() {
+  // [Línea clave]: ¿Por qué soy importante? Resuelve el expediente activo en memoria. ¿Para qué? Mostrar metadatos de SI-2027-014 o el expediente seleccionado desde la bandeja. ¿Dónde me usan? Al inicio de dossier().
   const code = state.viewProposal || "SI-2027-014";
   const p = (top3propuestasmasrecientes || []).find((x) => x.code === code) || {
     code: code,
@@ -1199,6 +2043,16 @@ function dossier() {
     ),
   );
 }
+
+/**
+ * Matriz estructurada de criterios de evaluación de la rúbrica oficial de Desarrollo Tecnológico.
+ * Agrupa criterios por sección temátiva con su nombre, peso porcentual (peso ponderado)
+ * y una bandera booleana indicando si es de carácter eliminatorio/obligatorio.
+ * En scoreResult() y evaluation("24") para calcular la calificación ponderada y validar umbrales mínimos.
+ * atributos:
+ *     * string : 0 Nombre del grupo temático (Equipo, Fundamentación, Metodología, etc.).
+ *     * Array<[string, number, boolean]> : 1 Lista de tuplas [nombreCriterio, peso, esObligatorio].
+ */
 const criterionGroups = [
   [
     "Equipo",
@@ -1264,6 +2118,14 @@ const criterionGroups = [
     ],
   ],
 ];
+/**
+ * Obtener la calificación asignada a un criterio específico de la rúbrica.
+ * Consulta en state.scores[name]; si no existe, asigna 10 a criterios clave o 8 por defecto.
+ * parametros:
+ *     - string : name Nombre descriptivo del criterio evaluado.
+ * return:
+ *     + number : puntaje Valor numérico de evaluación (0, 6, 8 o 10).
+ */
 const scoreValue = (name) =>
   state.scores[name] ??
   (name === "Contribución e impacto" ||
@@ -1271,6 +2133,16 @@ const scoreValue = (name) =>
   name === "Gestión de propiedad intelectual"
     ? 10
     : 8);
+
+/**
+ * Calcular la nota final ponderada de la evaluación técnica y determinar si es recomendada.
+ * Itera los grupos de criterionGroups ponderando cada nota por su peso relativo,
+ * y verifica si algún criterio obligatorio obtuvo nota menor a 8 (bloqueo automático).
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Object : resultado Objeto con { sum: number, recommended: boolean, blocked: boolean }.
+ */
 function scoreResult() {
   let sum = 0,
     blocked = false;
@@ -1278,6 +2150,7 @@ function scoreResult() {
     for (const [name, w, mandatory] of cs) {
       const val = Number(scoreValue(name));
       sum += (w * val) / 10;
+      // [Línea clave]: ¿Por qué soy importante? Regla de oro de la VIE: criterios obligatorios requieren nivel Bueno (8) o Excelente (10). ¿Para qué? Impedir recomendación si falla un requisito de fondo aunque la nota supere 70. ¿Dónde me usan? En el cálculo de scoreResult().
       if (mandatory && val < 8) blocked = true;
     }
   return {
@@ -1286,6 +2159,20 @@ function scoreResult() {
     blocked,
   };
 }
+
+/**
+ * Renderizar las pantallas de dictamen y evaluación según la instancia responsable (Pantallas 23 a 27).
+ * Genera el formulario respectivo:
+ *  - 23: Revisión de Vinculación (dictamen técnico y potencial de PI)
+ *  - 24: Comité Técnico (rúbrica con rúbricas ponderadas y validación de obligatorios)
+ *  - 25: Consejo de Escuela (acuerdo de aval con sesión y artículo)
+ *  - 26: Dirección de Investigación (verificación formal de requisitos previos)
+ *  - 27: CIE (resolución oficial aprobada/rechazada y justificación)
+ * parametros:
+ *     - string : id Identificador de pantalla de evaluación ('23', '24', '25', '26' o '27').
+ * return:
+ *     + string : evalHtml Marcado HTML de la vista de evaluación.
+ */
 function evaluation(id) {
   const names = {
     23: "Revisión de Vinculación",
@@ -1354,6 +2241,16 @@ function evaluation(id) {
     "Revisa la evidencia y registra una decisión motivada.",
   );
 }
+/**
+ * Registro cronológico demostrativo de actuaciones y transiciones de estado del expediente.
+ * Define tuplas [Fecha, Hito, Actor, Detalle/Oficio].
+ * En historyContent() y history() para reconstruir la auditoría de actuaciones.
+ * atributos:
+ *     * string : 0 Fecha de la actuación.
+ *     * string : 1 Título del hito procesal.
+ *     * string : 2 Actor institucional responsable.
+ *     * string : 3 Detalle del acuerdo o documento.
+ */
 const events = [
   [
     "21 ago 2026",
@@ -1405,10 +2302,26 @@ const events = [
   ],
 ];
 
+/**
+ * Construir el marcado visual de la línea de tiempo de auditoría histórica.
+ * Mapea la colección events a nodos de timeline con marca temporal, título, actor y resumen.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : timelineHtml Marcado HTML de los hitos del expediente.
+ */
 function historyContent() {
   return `<div class="timeline">${events.map(([d, t, a, b]) => `<div class="event"><small>${d}</small><h3>${t}</h3><p>${a}</p><p>${b}</p></div>`).join("")}</div>`;
 }
 
+/**
+ * Renderizar la pantalla completa de historial y auditoría del expediente (Pantalla 28).
+ * Encapsula historyContent() dentro del shell institucional con botón para retornar al expediente.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : historyHtml Marcado HTML de la pantalla de trazabilidad.
+ */
 function history() {
   return shell(
     `${card("SI-2027-014 · Historial de actuaciones", historyContent())}`,
@@ -1418,6 +2331,15 @@ function history() {
   );
 }
 
+/**
+ * Renderizar la pantalla de consulta y búsqueda histórica de propuestas cerradas (Pantalla 29).
+ * Construye el formulario con filtros combinados por escuela, modalidad, estado, línea de investigación
+ * y rango de años para consultar expedientes concluidos.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : searchHtml Marcado HTML de la pantalla de búsqueda histórica.
+ */
 function searchHistory() {
   const escuelasOpts = ["Todas", "Escuela de Ingeniería Ambiental", "Escuela de Ingeniería Electrónica", "Escuela de Computación", "Escuela de Biología", "Escuela de Administración de Empresas"];
   const modalidadesOpts = ["Todas", "Investigación básica, aplicada o ambas", "Desarrollo tecnológico", "Actividad de fortalecimiento"];
@@ -1431,6 +2353,14 @@ function searchHistory() {
   );
 }
 
+/**
+ * Renderizar los resultados de la consulta histórica institucional (Pantalla 30).
+ * Despliega la tabla con los expedientes coincidentes recuperados desde la base de datos o el mensaje de sin coincidencias.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : resultsHtml Marcado HTML de la lista de resultados históricos.
+ */
 function historyResults() {
   const q = (state.search || "").toLowerCase(),
     list = top3propuestasmasrecientes || [];
@@ -1441,6 +2371,14 @@ function historyResults() {
   );
 }
 
+/**
+ * Renderizar el módulo de administración de convocatorias para Dirección/VIE (Pantalla 31).
+ * Permite a la superadministración gestionar convocatorias, instrumentos, cronogramas y techos presupuestarios por modalidad.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : adminCallsHtml Marcado HTML de administración de convocatorias.
+ */
 function adminCalls() {
   return shell(
     `<div class="card mb">${table(["Convocatoria", "Ejecución", "Estado", ""], [['<strong>Fondos VIE 2027</strong><br><span class="micro muted">Disposiciones y cronograma vigentes</span>', "Desde 01 ene 2027", badge("Configurada"), act("Editar", "admin-call", "secondary compact", "edit")]])}</div><div class="grid two">${card("Cronograma de la convocatoria", table(["Etapa", "Fecha"], calendarRows), act("Editar", "admin-calendar", "text compact"))}${card(
@@ -1456,6 +2394,15 @@ function adminCalls() {
   );
 }
 
+/**
+ * Renderizar la administración de catálogos maestros, rúbricas y orden de roles (Pantalla 32).
+ * Despliega pestañas para rúbricas evaluativas, escuelas, líneas de investigación,
+ * modalidades institucionales y reordenamiento de roles para pruebas de usabilidad.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : adminCatalogsHtml Marcado HTML de soporte y catálogos.
+ */
 function adminCatalogs() {
   const selected = activeFilter === "Todas" ? "Rúbricas" : activeFilter;
   const roleRows = (state.roleOrder || Object.keys(roles))
@@ -1508,6 +2455,15 @@ function adminCatalogs() {
       : act("Agregar entrada", "catalog-edit", "secondary", "plus"),
   );
 }
+/**
+ * Renderizar la pantalla de perfil del usuario y rol activo (Pantalla 33).
+ * Despliega los datos de la cuenta activa (nombre, correo institucional, rol vigente y tema seleccionado)
+ * con accesos directos para cambiar contraseña, contactar soporte y cambiar rol en demostración.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : profileHtml Marcado HTML de la vista de cuenta y perfil.
+ */
 function profile() {
   const p = person();
   return shell(
@@ -1524,7 +2480,18 @@ function profile() {
     "Mi perfil",
   );
 }
+
+/**
+ * Salvaguardar el acceso a rutas protegidas verificando la compatibilidad con el rol activo.
+ * Evalúa el identificador de pantalla contra la tabla de permisos de roles. Retorna false
+ * si un usuario intenta navegar a una pantalla para la cual su rol no está facultado.
+ * parametros:
+ *     - string : id Identificador de pantalla a validar.
+ * return:
+ *     + boolean : autorizado Verdadero si el rol activo tiene autorización para acceder.
+ */
 function guardRoute(id) {
+  // [Línea clave]: ¿Por qué soy importante? Protección client-side de rutas por perfil de usuario. ¿Para qué? Evitar que un rol acceda a formularios de dictamen que no le competen institucionalmente. ¿Dónde me usan? Evaluado en render() antes de inyectar la vista.
   const roleByScreen = {
     23: "vinculacion",
     24: "comite",
@@ -1540,9 +2507,20 @@ function guardRoute(id) {
   if (id === "21" && state.role === "investigador") return false;
   return true;
 }
+/**
+ * Renderizar reactivamente la pantalla activa en el contenedor raíz #app.
+ * Configura atributos de tema y accesibilidad en <html>, obtiene el id del URL hash,
+ * valida autorización de sesión con guardRoute(), selecciona la función constructora correspondiente,
+ * inyecta el HTML resultante en #app y actualiza el título del documento en el navegador.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + void : undefined Muta el DOM inyectando el marcado de la pantalla actual.
+ */
 function render() {
   document.documentElement.dataset.theme = state.theme || "light";
   document.documentElement.classList.toggle("large-text", !!state.largeText);
+  // [Línea clave]: ¿Por qué soy importante? Resuelve la pantalla actual del hash en la URL. ¿Para qué? Coordinar el enrutador cliente de la SPA. ¿Dónde me usan? Al inicio de render().
   current = (location.hash.slice(1) || "01").split("?")[0];
   if (!screen(current)) current = "01";
   // Guarda de sesión: sin sesión solo existe el login; con sesión, el login redirige al inicio del rol.
@@ -1611,6 +2589,15 @@ function render() {
   document.title = (screen(current)?.title || "SGPI") + " · SGPI";
   window.scrollTo(0, 0);
 }
+
+/**
+ * Navegar programáticamente a una pantalla específica de la aplicación.
+ * Cierra modales abiertos, repliega menús de usuario, restablece filtros y asigna el nuevo hash en location.
+ * parametros:
+ *     - string : id Identificador de pantalla a la que se desea navegar (ej. '02', '15').
+ * return:
+ *     + void : undefined Dispara la navegación y hashchange.
+ */
 function go(id) {
   closeModal();
   userMenuOpen = false;
@@ -1619,6 +2606,15 @@ function go(id) {
   if (location.hash === "#" + id) render();
   else location.hash = id;
 }
+
+/**
+ * Desplegar un mensaje flotante temporal de confirmación (Toast notification).
+ * Muestra el elemento #toast con el mensaje provisto durante 4.2 segundos antes de ocultarlo.
+ * parametros:
+ *     - string : msg Texto de confirmación o alerta a desplegar.
+ * return:
+ *     + void : undefined Modifica visibilidad del nodo DOM del toast.
+ */
 function toast(msg) {
   const el = $("#toast");
   el.textContent = msg;
@@ -1626,6 +2622,15 @@ function toast(msg) {
   clearTimeout(window.toastTimer);
   window.toastTimer = setTimeout(() => (el.style.display = "none"), 4200);
 }
+
+/**
+ * Cerrar cualquier diálogo modal activo y restaurar el foco del teclado.
+ * Limpia el contenido de #modal-root, restaura el scroll en el body y enfoca el elemento previo.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + void : undefined Limpia el contenedor de modales.
+ */
 function closeModal() {
   const root = $("#modal-root");
   root.innerHTML = "";
@@ -1633,6 +2638,19 @@ function closeModal() {
   modalName = null;
   if (previousFocus?.isConnected) previousFocus.focus();
 }
+
+/**
+ * Abrir un cuadro de diálogo modal accesible con trampeo de foco.
+ * Guarda el foco actual, bloquea el scroll de la página e inyecta la ventana modal en #modal-root.
+ * parametros:
+ *     - string : title Título principal del diálogo en h2.
+ *     - string : body Contenido interno HTML del modal.
+ *     - string : actions Botones de acción del pie del modal.
+ *     - boolean : wide Si debe aplicarse el modificador visual de mayor anchura.
+ *     - string : name Identificador semántico del modal (ej. 'settings', 'roles').
+ * return:
+ *     + void : undefined Muta el DOM inyectando la estructura del diálogo modal.
+ */
 function modal(title, body, actions = "", wide = false, name = "dialog") {
   previousFocus = document.activeElement;
   modalName = name;
@@ -1641,6 +2659,16 @@ function modal(title, body, actions = "", wide = false, name = "dialog") {
   document.body.style.overflow = "hidden";
   $(".modal button,.modal input,.modal select")?.focus();
 }
+
+/**
+ * Validar la completitud y validez sintáctica de los campos requeridos en un formulario.
+ * Itera todos los elementos con atributo [required], resalta visualmente campos vacíos
+ * o inválidos mostrando mensajes de error, enfoca el primer error y lanza un toast.
+ * parametros:
+ *     - string : formId Selector CSS del formulario a validar (ej. '#login-form').
+ * return:
+ *     + boolean : esValido Verdadero si todos los campos requeridos cumplen las validaciones.
+ */
 function validate(formId) {
   const form = $(formId);
   if (!form) return true;
@@ -1666,6 +2694,15 @@ function validate(formId) {
   }
   return valid;
 }
+
+/**
+ * Desplegar el modal interactivo de selección y cambio de rol institucional en demostración.
+ * Genera botones con avatares para cada uno de los 6 roles configurados en la aplicación.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + void : undefined Abre el modal invocando modal().
+ */
 function modalRoles() {
   const ordered = (state.roleOrder || Object.keys(roles)).filter(
     (k) => roles[k],
@@ -1683,8 +2720,29 @@ function modalRoles() {
     "roles",
   );
 }
+
+/**
+ * Helper generador de botones de confirmación con icono check.
+ * Invoca act() configurando el icono 'check' y estilo primario.
+ * parametros:
+ *     - string : label Texto del botón de confirmación.
+ *     - string : action Acción a despachar al pulsar.
+ *     - string : extra Atributos HTML complementarios.
+ * return:
+ *     + string : btnHtml Marcado del botón de confirmación.
+ */
 const confirmBtn = (label, action, extra = "") =>
   act(label, action, "", "check", extra);
+
+/**
+ * Procesar la autenticación real del usuario contra el backend y cargar su entorno.
+ * Valida el formulario de acceso, envía correo/contraseña a apiLogin(), asigna la sesión en memoria,
+ * aplica el rol correspondiente, ejecuta la precarga de datos con obtenerDatosBackend() y navega al inicio.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<void> : undefined Resuelve al completar el flujo de inicio de sesión o mostrar el error.
+ */
 async function doLogin() {
   const box = $("#login-error");
   if (box) box.innerHTML = "";
@@ -1697,6 +2755,7 @@ async function doLogin() {
   b.disabled = true;
   b.lastChild.textContent = "Ingresando…";
   try {
+    // [Línea clave]: ¿Por qué soy importante? Petición de login contra el backend FastAPI. ¿Para qué? Verificar credenciales en la base de datos Supabase Postgres. ¿Dónde me usan? En el flujo de login en doLogin().
     const user = await apiLogin(correo, password);
     const key =
       user && Array.isArray(user.roles) && user.roles.length
@@ -1725,6 +2784,17 @@ async function doLogin() {
     }
   }
 }
+/**
+ * Despachador maestro de acciones interactivas y eventos del usuario en la interfaz.
+ * Evalúa mediante una estructura switch el parámetro 'action' disparado por botones [data-action],
+ * gestionando el guardado de borradores, apertura/cierre de modales, transiciones de evaluación,
+ * creación de propuestas y atajos de accesibilidad.
+ * parametros:
+ *     - string : action Identificador semántico de la acción a ejecutar.
+ *     - HTMLElement : el Elemento del DOM que detonó la acción con sus atributos data-*.
+ * return:
+ *     + Promise<void> : undefined Resuelve al concluir el manejo del evento.
+ */
 async function handleAction(action, el) {
   switch (action) {
     case "filter-calls":
@@ -1836,6 +2906,7 @@ async function handleAction(action, el) {
       break;
     }
     case "save":
+      // [Línea clave]: ¿Por qué soy importante? Persistencia reactiva del borrador. ¿Para qué? Guardar el progreso parcial del formulario sin enviarlo aún a evaluación. ¿Dónde me usan? En handleAction bajo la acción 'save'.
       save();
       toast("Borrador guardado en este navegador.");
       break;
@@ -1845,6 +2916,7 @@ async function handleAction(action, el) {
           toast("Corrige el presupuesto antes de continuar.");
           break;
         }
+        // [Línea clave]: ¿Por qué soy importante? Validación y avance de paso. ¿Para qué? Guardar los datos del paso actual y avanzar a la siguiente sección del wizard de formulación. ¿Dónde me usan? En handleAction bajo la acción 'next'.
         save();
         go(el.dataset.next);
       }
@@ -2087,6 +3159,7 @@ async function handleAction(action, el) {
       render();
       break;
     case "send":
+      // [Línea clave]: ¿Por qué soy importante? Envío formal a evaluación técnica y Vinculación. ¿Para qué? Transicionar el estado del expediente de formulación a revisión. ¿Dónde me usan? En handleAction bajo la acción 'send'.
       if (!budgetValid() || state.attachments < 4) {
         modal(
           "Corrige la propuesta antes de enviar",
@@ -2187,6 +3260,7 @@ async function handleAction(action, el) {
       break;
     }
     case "decision":
+      // [Línea clave]: ¿Por qué soy importante? Registro de dictamen de evaluadores colegiados. ¿Para qué? Avanzar el expediente en el flujo institucional guardando la evidencia. ¿Dónde me usan? En handleAction bajo la acción 'decision'.
       if (!validate("#evaluation-form")) break;
       {
         const id = el.dataset.step,
@@ -2471,6 +3545,7 @@ document.addEventListener("submit", (e) => {
   e.preventDefault();
   if (e.target.id === "login-form") handleAction("login", e.target);
 });
+// [Línea clave]: ¿Por qué soy importante? Maneja accesibilidad WCAG y trampas de foco. ¿Para qué? Cerrar modales con Escape y ciclar navegación con Tab dentro de diálogos modales. ¿Dónde me usan? En el listener global keydown del documento.
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeModal();
   if (e.key === "Tab" && modalName) {
@@ -2489,11 +3564,13 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// [Línea clave]: ¿Por qué soy importante? Enrutador cliente SPA basado en hash. ¿Para qué? Detectar cambios de ruta en la URL y actualizar la pantalla sin recargar la página. ¿Dónde me usan? En el listener global hashchange de window.
 window.addEventListener("hashchange", () => {
   render();
   loadScreenData();
 });
 
+// [Línea clave]: ¿Por qué soy importante? Punto de arranque del ciclo de vida del Frontend. ¿Para qué? Renderizar la vista inicial y sincronizar catálogos y datos desde PostgreSQL asíncronamente. ¿Dónde me usan? Al pie del archivo app.js autoejecutándose como IIFE.
 (async function initApp() {
   render();
   try {

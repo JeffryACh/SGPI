@@ -33,7 +33,7 @@ El proyecto transforma un proceso tradicionalmente fragmentado en múltiples doc
 | **Etapa 1**<br>*Arquitectura de Información* | Análisis profundo de *Disposiciones Fondos VIE 2027*, perfiles (*user personas*), *user journeys* y mapa del sitio. | Reglas de negocio, matriz de roles y trazabilidad en [`REQUISITOS_Y_TRAZABILIDAD.md`](./frontend/md/REQUISITOS_Y_TRAZABILIDAD.md). | ✅ Completado |
 | **Etapa 2**<br>*Diseño de Interfaz (UI/UX)* | Wireframes, guía de estilos institucional (`#002855`, `#EF3340`, `#FFFFFF`) y prototipo interactivo de 33 pantallas. | Prototipo navegable en [`frontend/`](./frontend/html/SGPI.html), catálogo en [`CATALOGO.md`](./frontend/md/CATALOGO.md) y plugin [`figma-import/`](./figma-import/). | ✅ Completado |
 | **Etapa 3**<br>*Base de Datos y Arquitectura* | Modelo Entidad-Relación (MER) normalizado (19 tablas), diccionario de datos y contenedorización. | Esquema DDL en [`V1__init.sql`](./Base%20de%20datos/Scripts/V1__init.sql), diccionario en [`diseño.md`](./Base%20de%20datos/Markdowns/diseño.md) y diagramas en [`Diagrama/`](./Base%20de%20datos/Diagrama/). | ✅ Completado |
-| **Etapa 4**<br>*Prototipo Funcional Full-Stack* | Integración Frontend + Backend REST + PostgreSQL con datos semilla (*seed data*) para demostrar el flujo completo. | Orquestación en [`docker-compose.yml`](./docker-compose.yml), login real en [`auth.py`](./backend/app/routers/auth.py) y evolución de routers REST. | 🔄 En transición |
+| **Etapa 4**<br>*Prototipo Funcional Full-Stack* | Integración Frontend + Backend REST + PostgreSQL con datos semilla (*seed data*) para demostrar el flujo completo. | Orquestación en [`docker-compose.yml`](./docker-compose.yml), 9 routers en [`routers/`](./backend/app/routers/) y suite automatizada [`test_endpoints.ps1`](./test_endpoints.ps1). | ✅ Completado |
 
 ---
 
@@ -97,27 +97,38 @@ flowchart LR
 
 ```text
 SGPI/
-├── docker-compose.yml                  # Orquestador de contenedores: PostgreSQL 18 + Flyway 11 + FastAPI
+├── docker-compose.yml                  # Orquestador de contenedores: FastAPI (backend) + Nginx (frontend)
+├── test_endpoints.ps1                  # Suite automatizada de pruebas de integración HTTP (12 endpoints probados)
 ├── README.md                           # Documentación arquitectónica y guía de flujo de archivos y datos
 │
-├── Base de datos/                      # Capa de Persistencia y Diseño de Datos (Etapa 3)
+├── Base de datos/                      # Capa de Persistencia y Diseño de Datos (Supabase Cloud PostgreSQL 14)
 │   ├── Scripts/
-│   │   ├── V1__init.sql                # Migración Flyway V1: DDL de las 19 tablas normalizadas y FKs
-│   │   └── V2__llenado_de_usuarios.sql # Migración Flyway V2: Seed de 6 roles, 2 escuelas y 9 usuarios (SHA-256)
+│   │   ├── V1__init.sql                # DDL de tablas relacionales iniciales y llaves foráneas
+│   │   ├── V2__llenado_de_usuarios.sql # Seed de 6 roles institucionales, escuelas y usuarios (SHA-256)
+│   │   ├── V3__catalogos_y_seed_data.sql # Seed de propuestas realistas, equipo, presupuestos y evaluaciones
+│   │   ├── V4__seed_notificaciones.sql # Catálogo y seed de notificaciones iniciales
+│   │   └── V5__triggers_funciones_politicas.sql # Triggers automáticos (SI-YYYY-NNN, historial, notificaciones) y RLS
 │   ├── Markdowns/
-│   │   └── diseño.md                   # Diccionario de datos detallado (tipos, PKs, FKs, nulabilidad)
-│   ├── Cambios.md                      # Justificación técnica de normalización y desglose de tablas
+│   │   └── diseño.md                   # Diccionario de datos exhaustivo (36 tablas, tipos, PKs, FKs)
+│   ├── Cambios.md                      # Justificación técnica de normalización y bitácora de migraciones
 │   └── Diagrama/                       # Diagramas MER y Relacional en alta resolución (.png y .svg)
 │
 ├── backend/                            # Capa de Servicios y Lógica de Negocio (API REST en FastAPI)
 │   ├── Dockerfile                      # Imagen Python 3.12-slim que expone Uvicorn en el puerto 3000 (host 3001)
 │   ├── requirements.txt                # Dependencias: fastapi, uvicorn[standard], psycopg[binary,pool]
 │   └── app/
-│       ├── main.py                     # Punto de entrada FastAPI, CORS, lifespan del pool, /health y manejo de errores SQL
-│       ├── db.py                       # Pool de conexiones PostgreSQL (psycopg_pool) y dependencia transaccional get_conn()
+│       ├── main.py                     # Punto de entrada FastAPI, CORS, lifespan del pool, /health y montaje de routers
+│       ├── db.py                       # Conexión transaccional a Supabase (psycopg_pool en AWS us-west-2:6543)
 │       └── routers/
-│           └── auth.py                 # Endpoint activo POST /auth/login (validación SHA-256 + hmac.compare_digest)
-│           # Próximos routers (Etapa 4): catalogos.py, propuestas.py, evaluaciones.py, historico.py
+│           ├── auth.py                 # Endpoint POST /auth/login (validación SHA-256 + hmac.compare_digest)
+│           ├── catalogos.py            # Endpoint GET /catalogos (catálogos unificados en una sola petición)
+│           ├── convocatorias.py        # Endpoints de convocatorias, 11 etapas y 9 instrumentos oficiales descargables
+│           ├── escuelas.py             # Endpoint GET /escuelas/totalescuelas (abierto para filtros históricos)
+│           ├── lineas_de_investigacion.py # Endpoint GET /lineas_de_investigacion/totalLineas
+│           ├── modalidades.py          # Endpoint GET /modalidades/totalmodalidades
+│           ├── notificaciones.py       # Endpoints GET /notificaciones, PATCH /leer, PATCH /leer-todas
+│           ├── propuestas.py           # Endpoints dashboard, top recientes, creación atómica, expediente y evaluaciones
+│           └── tipos_hora.py           # Endpoint GET /tipos_hora/totalTiposHora (VIE, CONS, REC, DOC, etc.)
 │
 ├── frontend/                           # Capa de Presentación e Interacción (33 Pantallas SPA Vanilla JS)
 │   ├── html/

@@ -1,3 +1,37 @@
+﻿/**
+ * ============================================================================
+ * 2.1. OBJETIVO DEL ARCHIVO:
+ * Centralizar y proveer el catálogo declarativo maestro de las 33 pantallas
+ * del SGPI, definiendo sus identificadores únicos, títulos oficiales,
+ * descripciones funcionales, módulos de pertenencia y especificaciones
+ * de campos por defecto para los formularios de formulación de propuestas.
+ *
+ * 2.2. RELACIONES:
+ * 2.2.1. De dónde obtiene datos:
+ *   - De las especificaciones formales de interfaz del modelo institucional VIE 2027.
+ * 2.2.2. A dónde envía datos:
+ *   - Al ámbito global del navegador (window.SGPI_CONTENT), donde es consumido
+ *     directamente por app.js a través del buscador helper screen(id) y por
+ *     los componentes de layout (shell, topbar, formularios dinámicos).
+ *
+ * 2.3. A GROSO MODO ¿QUÉ HACE EL ARCHIVO?:
+ * Instancia un objeto inmutable de configuración que actúa como diccionario
+ * de metadatos de la aplicación. Permite que el motor de renderizado resuelva
+ * dinámicamente títulos de páginas, migas de pan (breadcrumbs), agrupaciones
+ * modulares y estructuras de campos requeridos sin código duplicado.
+ * ============================================================================
+ */
+
+/**
+ * Estructura de diccionario maestro (SGPI_CONTENT) que reúne los metadatos de la aplicación.
+ * Define en la propiedad principal 'screens' la lista completa de descriptores de interfaz
+ * indexables por el identificador de pantalla de dos caracteres ('01' a '33').
+ * Se asigna a window.SGPI_CONTENT al inicio del ciclo de vida del frontend y es referenciada
+ * por app.js en cada cambio de ruta o renderizado de pantalla mediante screen(id).
+ * atributos:
+ *     * Array<Object> : screens Arreglo con las especificaciones y esquemas de las 33 pantallas.
+ */
+// [Línea clave]: ¿Por qué soy importante? Expone la configuración de pantallas en el ámbito global del navegador. ¿Para qué? Permitir que app.js acceda a metadatos de rutas sin necesidad de bundlers o módulos ES. ¿Dónde me usan? Consumido en app.js por screen(id) y los renderizadores de vistas.
 window.SGPI_CONTENT = {
   screens: [
     {

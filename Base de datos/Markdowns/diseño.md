@@ -501,3 +501,216 @@ Detalle de la evaluación cuando el evaluador es el Comité de Ética Institucio
     - fk: si (referencia a resoluciones_cie.id_resolucion)
     - nullable: no
     - descripcion: resolucion emitida por el CIE
+
+
+### Notifications
+Registro persistente de notificaciones dirigidas a usuarios sobre trámites, convocatorias y actualizaciones de estado de propuestas.
+
+- id_notificacion:
+    - tipo: serial (identity)
+    - pk: si
+    - descripcion: identificador unico de la notificacion
+- id_usuario:
+    - tipo: integer
+    - fk: si (referencia a usuarios.id_usuario)
+    - nullable: no
+    - descripcion: usuario receptor de la notificacion
+- id_propuesta:
+    - tipo: integer
+    - fk: si (referencia a propuestas.id_propuesta)
+    - nullable: si
+    - descripcion: propuesta vinculada al tramite
+- tipo:
+    - tipo: varchar(20)
+    - nullable: no
+    - descripcion: categoria (tramite, convocatoria, seguimiento, sistema)
+- titulo:
+    - tipo: varchar(150)
+    - nullable: no
+    - descripcion: encabezado breve de la notificacion
+- mensaje:
+    - tipo: text
+    - nullable: no
+    - descripcion: detalle explicativo del evento
+- fecha_creacion:
+    - tipo: timestamp
+    - nullable: no
+    - descripcion: momento de generacion de la notificacion
+- leida:
+    - tipo: boolean
+    - nullable: no
+    - descripcion: estado de lectura por el usuario
+- fecha_lectura:
+    - tipo: timestamp
+    - nullable: si
+    - descripcion: momento en que el usuario marco la notificacion como leida
+
+### Convocatorias
+Registro de convocatorias institucionales con plazos oficiales de postulación y ejecución.
+
+- id_convocatoria:
+    - tipo: serial (identity)
+    - pk: si
+    - descripcion: identificador unico de la convocatoria
+- nombre:
+    - tipo: varchar(200)
+    - nullable: no
+    - descripcion: nombre oficial de la convocatoria (ej. Fondos VIE 2027)
+- descripcion:
+    - tipo: text
+    - nullable: si
+    - descripcion: justificacion y normativa base
+- fecha_inicio:
+    - tipo: date
+    - nullable: no
+    - descripcion: fecha de apertura de postulacion
+- fecha_cierre:
+    - tipo: date
+    - nullable: no
+    - descripcion: fecha límite de sometimiento
+- fecha_inicio_ejecucion:
+    - tipo: date
+    - nullable: no
+    - descripcion: fecha oficial de inicio de actividades aprobadas
+- activo:
+    - tipo: boolean
+    - nullable: no
+    - descripcion: bandera de vigencia
+
+### ConvocatoriaEtapas
+Las 11 etapas cronológicas oficiales de la convocatoria Fondos VIE 2027.
+
+- id_etapa:
+    - tipo: serial (identity)
+    - pk: si
+- id_convocatoria:
+    - tipo: integer
+    - fk: si (referencia a convocatorias.id_convocatoria)
+    - nullable: no
+- nombre_etapa:
+    - tipo: varchar(200)
+    - nullable: no
+- responsable:
+    - tipo: varchar(100)
+    - nullable: no
+- fecha_inicio:
+    - tipo: date
+    - nullable: no
+- fecha_fin:
+    - tipo: date
+    - nullable: no
+- orden:
+    - tipo: integer
+    - nullable: no
+
+### ConvocatoriaDocumentos
+Los 9 instrumentos oficiales descargables de la convocatoria.
+
+- id_documento_conv:
+    - tipo: serial (identity)
+    - pk: si
+- id_convocatoria:
+    - tipo: integer
+    - fk: si (referencia a convocatorias.id_convocatoria)
+    - nullable: no
+- nombre_documento:
+    - tipo: varchar(250)
+    - nullable: no
+- nombre_archivo:
+    - tipo: varchar(250)
+    - nullable: no
+- tipo_instrumento:
+    - tipo: varchar(80)
+    - nullable: no
+- extension:
+    - tipo: varchar(15)
+    - nullable: no
+- file_url:
+    - tipo: varchar(500)
+    - nullable: no
+- orden:
+    - tipo: integer
+    - nullable: no
+
+### ProposalObjectives
+Objetivos generales y específicos definidos para la propuesta.
+
+- id_objetivo:
+    - tipo: serial (identity)
+    - pk: si
+- id_propuesta:
+    - tipo: integer
+    - fk: si (referencia a propuestas.id_propuesta)
+    - nullable: no
+- codigo_objetivo:
+    - tipo: varchar(10)
+    - nullable: no
+    - descripcion: codigo nemotecnico (OG, OE1, OE2, etc.)
+- descripcion:
+    - tipo: text
+    - nullable: no
+- orden:
+    - tipo: integer
+    - nullable: no
+
+### AcademicProductCommitments
+Compromisos de productos académicos vinculados a los objetivos y calculados por cuota horaria.
+
+- id_producto:
+    - tipo: serial (identity)
+    - pk: si
+- id_propuesta:
+    - tipo: integer
+    - fk: si (referencia a propuestas.id_propuesta)
+    - nullable: no
+- id_objetivo:
+    - tipo: integer
+    - fk: si (referencia a proposal_objectives.id_objetivo)
+    - nullable: si
+- tipo_producto:
+    - tipo: varchar(100)
+    - nullable: no
+- descripcion:
+    - tipo: text
+    - nullable: no
+- meta_esperada:
+    - tipo: varchar(200)
+    - nullable: no
+- categoria:
+    - tipo: varchar(100)
+    - nullable: no
+- es_obligatorio:
+    - tipo: boolean
+    - nullable: no
+- cumplido:
+    - tipo: boolean
+    - nullable: no
+
+### ProposalEthicsDeclarations
+Declaraciones de aspectos bioéticos y ambientales de la propuesta.
+
+- id_etica:
+    - tipo: serial (identity)
+    - pk: si
+- id_propuesta:
+    - tipo: integer
+    - fk: si (referencia a propuestas.id_propuesta)
+    - nullable: no
+- tipo_aspecto:
+    - tipo: varchar(100)
+    - nullable: no
+- aplica:
+    - tipo: boolean
+    - nullable: no
+- justificacion_exencion:
+    - tipo: text
+    - nullable: si
+- ente_regulatorio:
+    - tipo: varchar(150)
+    - nullable: si
+- numero_permiso:
+    - tipo: varchar(100)
+    - nullable: si
+- estado_tramite:
+    - tipo: varchar(50)
+    - nullable: si

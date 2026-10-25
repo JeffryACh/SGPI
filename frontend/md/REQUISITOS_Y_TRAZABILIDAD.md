@@ -59,71 +59,20 @@ No inventar matriz numérica de probabilidad/impacto como requisito instituciona
 
 Plantilla anual: objeto de gasto (OG), detalle, total y justificación. Totales por servicios, materiales y suministros, becas asistentes y equipo; resumen por año de operativo, bienes duraderos, total. Fuentes adicionales: financiamiento externo, contrapartida, cofinanciamiento, años y oficio/entidad respaldo.
 
-Reglas: bienes duraderos y licencias software se formulan en año 1; excepción requiere justificación aprobada CIE. Compras internacionales/equipo se gestionan primer semestre. Transporte institucional no se presupuesta. Viáticos TEC en Viáticos; alimentación/hospedaje estudiantes en Becas estudiante asistente especial. Básica/aplicada/DT deben incluir al menos 10 h/semana de beca asistente especial; tarifa ₡2.400/h, máximo 10 meses/año. Contratación profesional externa solo tareas puntuales, con perfil/justificación, ≤30% presupuesto operativo, no aplica fortalecimiento. No inventar redondeos meses→semanas para montos de beca: indicar horas totales anuales o el supuesto explícitamente.
+## Matriz de Cobertura de Requisitos vs. Implementación Full-Stack
 
-Rubros reales útiles: 1-04-01-01 Servicios médicos y de laboratorio; 1-05-01-01 Transporte dentro del país; 1-05-02-01 Viáticos dentro del país; 2-03-04-01 Materiales y productos eléctricos/telefónicos/cómputo; 2-04-02-01 Repuestos y accesorios; 6-02-02-08 Becas estudiante asistente especial; 5-01-05-01 Equipo y programas de cómputo; 5-01-06-01 Equipo sanitario, de laboratorio e investigación.
-
-## PI, TRL y ética
-
-Toda iniciativa identifica potencial PI y posibles activos (§2.10.3.1); si tiene potencial debe contar con dictamen Vinculación (§2.10.3.3). Para DT siempre obligatorio (§5.3). Toda propuesta indica TRL actual y esperado (§2.10.3.4). Rangos DE REFERENCIA (§2.10.3.5): básica 1–3; aplicada 3–5; DT 4–7. No confundir TRL con innovación. La tabla del formulario presenta la escala 1–9, pero las disposiciones exigen consistencia con modalidad y objetivos.
-
-Declaración ética obligatoria en todos los casos: humanos; biodiversidad/recursos genéticos; animales; territorios/pueblos indígenas. Si todas No, justificación escrita de exención. Si Sí, entidad, estado del trámite, medidas de mitigación y tiempo previstos. La fase experimental no puede iniciar sin autorización. El formulario identifica CEC/CONIS, CONAGEBIO, CICUA/COBAB y consulta/aval ADI según caso; estas son etiquetas de fuente para el prototipo, no asesoría jurídica actualizada.
-
-## Rúbrica técnica oficial
-
-Las 3 hojas usan niveles `K1:L4`: Deficiente 0, Regular 6, Bueno 8, Excelente 10. Puntos ponderados = peso × nivel/10. Resultado escala 0–1: ≥0,70 recomienda, <0,70 no recomienda. **Un criterio marcado obligatorio calificado Deficiente o Regular obliga a no recomendar aunque total ≥0,70** (`A7` en las tres hojas). Productos son sección no sumativa y también bloquean recomendación si no cumplen. Requerir justificación en criterios obligatorios.
-
-| Sección | Fortalecimiento | Básica/aplicada | DT |
-|---|---:|---:|---:|
-| Equipo | 20% | 20% | 15% |
-| Fundamentación | 15% | 12% | 12% |
-| Metodología | — | 15% | 15% |
-| Plan/cronograma | 15% | 13% | 13% |
-| Presupuesto | 8% | 10% | 10% |
-| Riesgos | 10% | 8% | 8% |
-| Ética (DT incluye PI) | 7% | 7% | 10% |
-| Pertinencia/impacto | 25% | 15% | 17% |
-
-DT criterios/peso exactos: composición disciplinaria 3%, experiencia 3%, articulación 3%, vinculación externa 2%, trayectoria coordinación 2%, participación estudiantil 2%; problema 4%, coherencia objetivos 4%, diagnóstico/vacío 4%; rigor desarrollo 8%, usuarios/validación 7%; claridad actividades 4%, giras/pasantías/congresos 4%, trazabilidad 5%; coherencia presupuesto 4%, equipamiento 4%, otros fondos 2%; identificación riesgos 4%, mitigación 4%; ética 4%, gestión PI 6%; contribución/impacto 10%, innovación 7%.
-
-Obligatorios DT: participación estudiantil; revisión estado arte previa; metodología explícita; usuarios/validación; ejecución/apoyo/supervisión por actividad; giras o no requerimiento constatado; resultado/plazo por actividad; topes presupuesto; equipamiento año 1 o excepción válida; riesgo/mitigación por actividad; mitigación viable; declaración ética justificada; dictamen Vinculación. Productos según horas como control aparte.
-
-Dirección checklist: morosidad/al día, riesgos por actividad y coherencia de mitigación, participación estudiantil, ética, documentación general. CIE: cumplimiento proceso/normativa, morosidad ante Investigación/Extensión/Cooperación, interés estratégico y recursos. No duplicar otra rúbrica inventada en Dirección o CIE.
-
-## Cronograma real Fondos VIE 2027
-
-Fechas de preparación/aprobación 2026, ejecución comienza 2027. Comunicación 20–27 julio; formulación 28 julio–21 agosto; Vinculación 24–28 agosto; Comité 31 agosto–11 septiembre; avales 14–25 septiembre; recepción/sometimiento en Orión **28 septiembre**; Dirección 29 septiembre–12 octubre; CIE 13–23 octubre; comunicación 26–30 octubre; carta aceptación 2–6 noviembre; ejecución 1 enero 2027. No admitir documentación extemporánea (§2.3.2). Prototipo usa escenarios de esas etapas, no estado vivo del día actual.
-
-Cierre: informe final y productos máximo 6 meses tras finalización; DT necesita oficio final de Vinculación. Ausencia final de potencial PI no impide por sí sola cierre si productos/resultados se cumplieron. Certificación final Dirección. Seguimiento anual y semestral, seguimiento de publicaciones hasta 2 años tras cierre/fin según modalidad.
-
-## Trazabilidad a las 33 pantallas
-
-| Pantallas | Fuentes/casos de uso que deben cubrir |
-|---|---|
-| 01–03 Acceso/Inicio/Notificaciones, 33 Perfil | Roles IA §3.3.2; tareas y avisos según rol, cambio de contexto de demo, sin inventar 2FA |
-| 04–05 Convocatorias | Disposiciones §§2,6; plazos, requisitos, instrumentos vigentes |
-| 06–12 Mis propuestas a Metodología | IA mapa; formulario original preguntas generales/equipo/problema/objetivos/estado arte/metodología |
-| 13–14 Plan/Riesgos | Plantilla 5 B16:K16; al menos 1 riesgo por actividad y responsables |
-| 15 Presupuesto | Plantilla 6; validación tope/anual, equipo año 1, beca mínima |
-| 16 Complementaria | PI/TRL, ética, producción, divulgación, hoja ruta/referencias |
-| 17–19 Anexos/Revisión/Confirmación | Disposiciones §§2.3,2.6,2.7; envío evaluación con dictamen condicional, controles incompletos |
-| 20 Seguimiento | IA estados; aval → acción investigador Someter → Dirección; aceptación y cierre accesibles como estados/overlays |
-| 21–24 Bandeja/Expediente/Vinculación/Comité | Roles, dictamen PI y rúbrica oficial con bloqueos |
-| 25 Consejo | Formatos 7–8 y §2.7; datos sesión/artículo/oficio, ratificar nota, horas y presupuesto |
-| 26 Dirección | §2.11.1.b checklist; dictamen y observaciones |
-| 27 CIE | §2.11.1.c; aprobar/rechazar/observar, acuerdo y condiciones |
-| 28–30 Historial/Consulta/Resultados | IA mapa; estados/actor/fecha/versiones y filtros facetados |
-| 31–32 Administración | IA mapa: cronograma, líneas, escuelas, modalidades, rúbrica vigente y disposiciones |
-
-## Rúbrica académica del prototipo y evidencia de entrega
-
-Secuencia lógica 10%; ortografía 10%; tecnología 5%; máximo 3 colores 10%; botones coherentes 10%; uso espacio 10%; idioma único 5%; módulos 10%; casos uso 10%; interacción/navegabilidad completa 10%; información coherente 10%. Total 100%.
-
-Evidencia a entregar: enlaces diseño y prototipo con visualización; catálogo/capturas de pantallas principales, componentes reutilizables y justificación espacial; mapa de navegación y flujo de estados; pasos del camino principal y alternativos; descripción módulos; tecnologías/versiones previstas. **No hay decisión de implementación/versiones del equipo confirmada**. Documentar la limitación explícitamente o presentar una propuesta técnica como propuesta, nunca como decisión ya acordada. Figma es la tecnología real del prototipo; no confundir con stack futuro.
-
-## Brechas e inconsistencias de las fuentes
-
-- Falta formulario oficial de Actividad de Fortalecimiento en el ZIP recuperado. Sí están rúbrica y disposiciones suficientes para representar su selección y controles generales; no afirmar que su formulario completo fue transcrito.
-- Formulario indica TRL bajo DT; disposiciones y arquitectura exigen actual/esperado en toda propuesta. Seguir estas últimas y conservar referencia en documentación.
-- Rúbrica DT contiene referencias a §5.4 donde disposiciones enumeran productos en §5.5 y su segundo producto puede describirse como PI/adicional; para coherencia usar combinación inequívoca **1 PI + opciones académicas por horas**, satisface disposiciones y formulario.
-- No se realizaron entrevistas ni pruebas con usuarios reales. Una validación documental/de navegación no debe presentarse como estudio empírico.
+| Pantallas | Requisito Oficial VIE 2027 | Implementación en Backend API | Tabla de Base de Datos (Supabase) |
+|---|---|---|---|
+| **01–03** | Acceso, Inicio, Notificaciones | `POST /auth/login`, `GET /dashboardpropuestas`, `PATCH /notificaciones/leer` | `usuarios`, `roles`, `notificaciones` |
+| **04–05** | Convocatorias y Plazos Oficiales | `GET /convocatorias/totalConvocatorias`, `/documentos_convocatoria` | `convocatorias`, `convocatoria_documentos` |
+| **06–12** | Asistente de Formulación y Equipo | `GET /catalogos`, `GET /escuelas/totalescuelas`, `GET /tipos_hora` | `modalidades`, `escuelas`, `tipos_hora`, `lineas_investigacion` |
+| **13–14** | Plan de Acción y Riesgos | `POST /propuestas` (bloque `plan_accion` y `riesgos`) | `action_plans`, `risks`, `niveles_riesgo` |
+| **15** | Presupuesto Anualizado y Bienes Duraderos Año 1 | `POST /propuestas` (validación Sección 2.3.9) | `proposal_budget`, `rubros_presupuesto` |
+| **16–18** | Ética, Propiedad Intelectual y Pre-envío | `POST /propuestas` (bloque `declaraciones_eticas` y productos) | `proposal_ethics_declarations`, `academic_product_commitments` |
+| **19–20** | Envío, Código Único y Seguimiento | Generación trigger `SI-YYYY-NNN`, `GET /propuestas/{id}` | `propuestas` (trigger `trg_generate_proposal_code`), `proposal_state_history` |
+| **21–24** | Bandeja de Trabajo y Rúbrica Técnica | `POST /propuestas/{id}/evaluaciones` (puntaje 0-100) | `evaluations`, `technical_committee_evaluations` |
+| **25** | Aval del Consejo de Escuela | `PATCH /propuestas/{id}/estado` (Estado Avalada) | `propuestas`, `proposal_state_history` (trigger automático) |
+| **26** | Dictamen Dirección de Investigación | `POST /propuestas/{id}/evaluaciones` | `vie_dictamen_verifications` |
+| **27** | Resolución del CIE | `POST /propuestas/{id}/evaluaciones` (resolución colegiada) | `cie_resolution_evaluations`, `resoluciones_cie` |
+| **28–30** | Historial y Consulta Facetada | `GET /propuestas` con filtros por escuela, línea y estado | Vista consolidada y auditoría inmutable |
+| **31–32** | Administración de Convocatorias | `GET /convocatorias/etapas_convocatorias` | `convocatoria_etapas` |
