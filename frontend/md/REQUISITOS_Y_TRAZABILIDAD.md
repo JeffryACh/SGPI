@@ -59,6 +59,8 @@ No inventar matriz numérica de probabilidad/impacto como requisito instituciona
 
 Plantilla anual: objeto de gasto (OG), detalle, total y justificación. Totales por servicios, materiales y suministros, becas asistentes y equipo; resumen por año de operativo, bienes duraderos, total. Fuentes adicionales: financiamiento externo, contrapartida, cofinanciamiento, años y oficio/entidad respaldo.
 
+---
+
 ## Matriz de Cobertura de Requisitos vs. Implementación Full-Stack
 
 | Pantallas | Requisito Oficial VIE 2027 | Implementación en Backend API | Tabla de Base de Datos (Supabase) |
@@ -69,10 +71,24 @@ Plantilla anual: objeto de gasto (OG), detalle, total y justificación. Totales 
 | **13–14** | Plan de Acción y Riesgos | `POST /propuestas` (bloque `plan_accion` y `riesgos`) | `action_plans`, `risks`, `niveles_riesgo` |
 | **15** | Presupuesto Anualizado y Bienes Duraderos Año 1 | `POST /propuestas` (validación Sección 2.3.9) | `proposal_budget`, `rubros_presupuesto` |
 | **16–18** | Ética, Propiedad Intelectual y Pre-envío | `POST /propuestas` (bloque `declaraciones_eticas` y productos) | `proposal_ethics_declarations`, `academic_product_commitments` |
+| **18 $\rightarrow$ 19** | Pre-evaluación con IA al Enviar a Revisión | `POST /ia/evaluar-borrador` (Gemini Free Tier) | `ai_preliminary_evaluations` |
 | **19–20** | Envío, Código Único y Seguimiento | Generación trigger `SI-YYYY-NNN`, `GET /propuestas/{id}` | `propuestas` (trigger `trg_generate_proposal_code`), `proposal_state_history` |
-| **21–24** | Bandeja de Trabajo y Rúbrica Técnica | `POST /propuestas/{id}/evaluaciones` (puntaje 0-100) | `evaluations`, `technical_committee_evaluations` |
+| **21–24** | Bandeja de Trabajo y Rúbrica Técnica Asistida por IA | `POST /propuestas/{id}/evaluaciones`, `GET /ia/evaluacion-preliminar/{id}` | `evaluations`, `technical_committee_evaluations`, `ai_preliminary_evaluations` |
 | **25** | Aval del Consejo de Escuela | `PATCH /propuestas/{id}/estado` (Estado Avalada) | `propuestas`, `proposal_state_history` (trigger automático) |
-| **26** | Dictamen Dirección de Investigación | `POST /propuestas/{id}/evaluaciones` | `vie_dictamen_verifications` |
-| **27** | Resolución del CIE | `POST /propuestas/{id}/evaluaciones` (resolución colegiada) | `cie_resolution_evaluations`, `resoluciones_cie` |
+| **26** | Dictamen Dirección de Investigación | `POST /propuestas/{id}/evaluaciones` (Checklist VIE asistido por IA) | `vie_dictamen_verifications` |
+| **27** | Resolución del CIE | `POST /propuestas/{id}/evaluaciones` (resolución colegiada asistida por IA) | `cie_resolution_evaluations`, `resoluciones_cie` |
 | **28–30** | Historial y Consulta Facetada | `GET /propuestas` con filtros por escuela, línea y estado | Vista consolidada y auditoría inmutable |
-| **31–32** | Administración de Convocatorias | `GET /convocatorias/etapas_convocatorias` | `convocatoria_etapas` |
+| **31–32** | Administración de Convocatorias y Criterios | `GET /convocatorias/etapas_convocatorias`, `GET /ia/criterios` | `convocatoria_etapas` |
+
+---
+
+## Trazabilidad de la Evaluación Preliminar Asistida por IA (Google Gemini Free Tier)
+
+| Componente Normativo VIE 2027 | Parámetros Verificados por la IA | Mapeo en el Backend (`routers/ia.py`) | Mapeo en Base de Datos |
+| :--- | :--- | :--- | :--- |
+| **Rúbrica de 19 Criterios (Escala 0/6/8/10)** | Calificación preliminar y cálculo ponderado sobre 100%. | `CRITERIOS_OFICIALES_VIE_2027`, `_calcular_puntaje_rubrica()` | `ai_preliminary_evaluations.criterios_sugeridos` (JSONB) |
+| **Regla de Bloqueo por Criterio Obligatorio** | Si algún criterio obligatorio obtiene 0 o 6, el estado cambia a *No Recomendada*. | `tiene_bloqueo_obligatorio` | `ai_preliminary_evaluations.tiene_bloqueo_obligatorio` (BOOLEAN) |
+| **Sección 2.3.9 (Equipo en Año 1)** | Partidas de bienes duraderos deben ser ₡0 a partir del Año 2. | `_auditar_reglas_v2027()` | `ai_preliminary_evaluations.alertas_normativas` |
+| **Sección 2.4.1 (Cuota de Productos)** | Cumplimiento del mínimo de productos académicos según horas y modalidad. | `_auditar_reglas_v2027()` | `ai_preliminary_evaluations.referencia_comite_tecnico` |
+| **Topes Presupuestarios por Modalidad** | Respeto a los techos anuales (₡2M fortalecimiento, ₡4M básica/aplicada, ₡5M DT). | `_auditar_reglas_v2027()` | `ai_preliminary_evaluations.referencia_direccion_vie` |
+| **5 Instancias Evaluadoras** | Dictámenes diferenciados para Vinculación, Comité Técnico, Escuela, VIE y CIE. | `_generar_payload_ia_evaluacion()` | Columnas JSONB dedicadas en `ai_preliminary_evaluations` |

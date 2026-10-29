@@ -41,7 +41,7 @@ Este documento registra la evolución del modelo de base de datos relacional par
 - Tabla asociativa entre propuestas y usuarios que registra el equipo investigador completo, con horas asignadas y tipo de hora por persona (`id_tipo_hora`), validando el mínimo de 4 horas semanales por investigador.
 
 ### ProposalBudget (`proposal_budget`):
-- Desglose del presupuesto de una propuesta por rubro y año de ejecución (`anio`). Permite calcular el monto total derivado con `SUM()` y validar que equipos duraderos se presupuesten solo en el Año 1.
+- Desglose del presupuesto de una propuesta por rubro y año de ejecución (`anio`). Permite calcular el monto total derivado con `SUM()` y validar que equipos duraderos se presupuesten solo en el Año 1 (Sección 2.3.9).
 
 ### ActionPlans (`action_plans`):
 - Cronograma de actividades de la propuesta con fecha de inicio, fecha fin y miembro del equipo responsable, obligatorio por normativa VIE.
@@ -83,9 +83,37 @@ Este documento registra la evolución del modelo de base de datos relacional par
 
 ---
 
-## 4. Infraestructura en la Nube (Supabase)
+## 4. Migración V6 — Integración de Evaluación Preliminar IA (Google Gemini Free Tier)
+
+### Script: `Base de datos/Scripts/V6__evaluacion_preliminar_ia.sql`
+- **Tabla:** `public.ai_preliminary_evaluations`
+- **Propósito:** Almacenar de forma persistente la evaluación preliminar no vinculante generada por **Google Gemini IA (Plan Gratuito: `gemini-2.5-flash`)** cuando una persona investigadora o grupo somete su propuesta a revisión.
+- **Estructura y Campos:**
+  - `id_evaluacion_ia`: Llave primaria autoincremental (`BIGINT GENERATED ALWAYS AS IDENTITY`).
+  - `id_propuesta`: Llave foránea hacia `propuestas(id_propuesta)` con restricción `UNIQUE` y borrado en cascada (`ON DELETE CASCADE`), garantizando una única evaluación activa por propuesta.
+  - `modelo_ia`: Identificador del modelo Gemini utilizado (`gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash`).
+  - `modo_generacion`: Trazabilidad del origen (`gemini_online` o `motor_normativo_respaldo`).
+  - `puntaje_preliminar`: Calificación cuantitativa $0\text{–}100$ derivada de la rúbrica oficial.
+  - `recomendacion_global`: Estado preliminar (*Recomendada*, *No Recomendada*, *Requiere ajustes*).
+  - `tiene_bloqueo_obligatorio`: Booleano que se activa si algún criterio obligatorio tiene nota $< 8$.
+  - `resumen_ejecutivo`: Síntesis textual del dictamen para lectura rápida de evaluadores.
+  - **Columnas JSONB estructuradas por instancia evaluadora:**
+    - `referencia_vinculacion`: Análisis de propiedad intelectual (PI), madurez tecnológica (TRL 4 a 7) y resguardo de confidencialidad previo a publicación.
+    - `referencia_comite_tecnico`: Desglose cuantitativo, cumplimiento del umbral de 70 puntos y justificación de rúbrica.
+    - `referencia_consejo_escuela`: Análisis de viabilidad de dedicación horaria semanal ($\ge 4\text{ h/sem}$ por persona) y pertinencia con líneas de escuela.
+    - `referencia_direccion_vie`: Checklist automatizado de los 5 puntos normativos de admisibilidad VIE.
+    - `referencia_cie`: Borrador motivado de acuerdo colegiado y valoración de impacto estratégico institucional.
+    - `criterios_sugeridos`: Calificación sugerida en escala cerrada `0 / 6 / 8 / 10` para los **19 criterios oficiales** de la convocatoria.
+    - `fortalezas` y `alertas_normativas`: Listados de hallazgos positivos e incumplimientos o riesgos detectados.
+  - `fecha_generacion`: Timestamp con zona horaria (`TIMESTAMPTZ DEFAULT NOW()`).
+- **Seguridad y Políticas RLS:** Habilitación de Row Level Security con políticas de lectura pública y escritura restringida al servicio backend autenticado.
+- **Auto-Aprovisionamiento Idempotente:** El backend incluye la rutina `_asegurar_tabla_ia()` que crea la tabla con `CREATE TABLE IF NOT EXISTS` en Supabase al arrancar el servicio si no fue ejecutada manualmente.
+
+---
+
+## 5. Infraestructura en la Nube (Supabase)
 
 - **Instancia:** PostgreSQL 14.17 alojada en AWS región `us-west-2` (Oregon).
 - **Project Ref:** `pxlrplbyggoywqbcgjdu`.
 - **Pooler:** Supavisor IPv4 en `aws-0-us-west-2.pooler.supabase.com:6543`.
-- **Total de tablas activas:** 36 tablas relacionales con integridad referencial y Row Level Security (RLS).
+- **Total de tablas activas:** 37 tablas relacionales con integridad referencial, triggers automáticos y Row Level Security (RLS).

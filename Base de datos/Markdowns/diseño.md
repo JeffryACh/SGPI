@@ -714,3 +714,92 @@ Declaraciones de aspectos bioéticos y ambientales de la propuesta.
 - estado_tramite:
     - tipo: varchar(50)
     - nullable: si
+
+
+### AIPreliminaryEvaluations (`ai_preliminary_evaluations`)
+Almacena el dictamen preliminar no vinculante generado automáticamente por la IA de Google Gemini (Plan Gratuito: gemini-2.5-flash) estructurado en 5 niveles para asistir a los evaluadores institucionales de Fondos VIE 2027.
+
+- id_evaluacion_ia:
+    - tipo: bigint generated always as identity
+    - pk: si
+    - descripcion: identificador único de la evaluación de IA
+- id_propuesta:
+    - tipo: integer
+    - fk: si (referencia a propuestas.id_propuesta con ON DELETE CASCADE)
+    - unique: si
+    - nullable: no
+    - descripcion: propuesta evaluada
+- modelo_ia:
+    - tipo: varchar(100)
+    - nullable: no
+    - default: 'gemini-2.5-flash'
+    - descripcion: modelo de Gemini utilizado
+- modo_generacion:
+    - tipo: varchar(50)
+    - nullable: no
+    - default: 'gemini_online'
+    - descripcion: modo de generación ('gemini_online' o 'motor_normativo_respaldo')
+- puntaje_preliminar:
+    - tipo: numeric(5, 2)
+    - nullable: no
+    - default: 0.00
+    - descripcion: calificación global sobre 100 calculada según la rúbrica ponderada
+- recomendacion_global:
+    - tipo: varchar(50)
+    - nullable: no
+    - default: 'Pendiente'
+    - descripcion: recomendación preliminar ('Recomendada', 'No Recomendada', 'Requiere ajustes')
+- tiene_bloqueo_obligatorio:
+    - tipo: boolean
+    - nullable: no
+    - default: false
+    - descripcion: true si algún criterio obligatorio obtuvo calificación menor a 8 (0 o 6)
+- resumen_ejecutivo:
+    - tipo: text
+    - nullable: si
+    - descripcion: síntesis ejecutiva del dictamen preliminar
+- referencia_vinculacion:
+    - tipo: jsonb
+    - nullable: no
+    - default: '{}'
+    - descripcion: dictamen para Vinculación (potencial de PI, coherencia TRL 4-7, cláusula de confidencialidad)
+- referencia_comite_tecnico:
+    - tipo: jsonb
+    - nullable: no
+    - default: '{}'
+    - descripcion: dictamen para Comité Técnico (puntaje ponderado, cumplimiento de umbral 70 y justificación de rúbrica)
+- referencia_consejo_escuela:
+    - tipo: jsonb
+    - nullable: no
+    - default: '{}'
+    - descripcion: dictamen para Consejo de Escuela (viabilidad horaria, pertinencia con programas y presupuesto a avalar)
+- referencia_direccion_vie:
+    - tipo: jsonb
+    - nullable: no
+    - default: '{}'
+    - descripcion: dictamen para Dirección de Investigación VIE (checklist normativo de 5 puntos de admisibilidad)
+- referencia_cie:
+    - tipo: jsonb
+    - nullable: no
+    - default: '{}'
+    - descripcion: dictamen para CIE (resolución sugerida, borrador de acuerdo de aprobación e impacto estratégico)
+- criterios_sugeridos:
+    - tipo: jsonb
+    - nullable: no
+    - default: '{}'
+    - descripcion: desglose de calificaciones 0/6/8/10 para los 19 criterios oficiales de la convocatoria
+- fortalezas:
+    - tipo: jsonb
+    - nullable: no
+    - default: '[]'
+    - descripcion: lista de fortalezas detectadas en la propuesta
+- alertas_normativas:
+    - tipo: jsonb
+    - nullable: no
+    - default: '[]'
+    - descripcion: advertencias normativas o bloqueos detectados según las Disposiciones VIE 2027
+- fecha_generacion:
+    - tipo: timestamptz
+    - nullable: no
+    - default: now()
+    - descripcion: marca temporal de generación o actualización del dictamen
