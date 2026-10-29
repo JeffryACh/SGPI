@@ -149,6 +149,21 @@ if ($creacion -and $creacion.propuesta) {
 # 12. Notificaciones: marcar como leída
 $notifs = Test-Endpoint -Name "Marcar Notificaciones como Leídas" -Method "PATCH" -Endpoint "/notificaciones/leer-todas?id_usuario=1"
 
+# 13. Estado del Servicio de IA Online (Google Gemini Free Tier)
+$iaEstado = Test-Endpoint -Name "Estado de Configuración IA (Gemini Free Tier)" -Endpoint "/ia/estado"
+if ($iaEstado) {
+    Write-Host "  -> Modelo: $($iaEstado.modelo_principal) | Modo: $($iaEstado.modo_actual)" -ForegroundColor Gray
+}
+
+# 14. Catálogo de Criterios y Parámetros de Evaluación IA por Nivel
+$iaCriterios = Test-Endpoint -Name "Catálogo de Criterios IA (5 Niveles VIE 2027)" -Endpoint "/ia/criterios"
+
+# 15. Evaluación Preliminar de IA para Propuesta 1
+$iaEval = Test-Endpoint -Name "Evaluación Preliminar IA de Propuesta 1" -Endpoint "/ia/evaluacion-preliminar/1"
+if ($iaEval) {
+    Write-Host "  -> Puntaje Preliminar IA: $($iaEval.puntaje_preliminar)/100 | Recomendación: $($iaEval.recomendacion_global)" -ForegroundColor Cyan
+}
+
 Write-Host "`n==========================================================" -ForegroundColor Cyan
 Write-Host "             PRUEBAS FINALIZADAS CON EXITO                " -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan

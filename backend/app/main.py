@@ -1,4 +1,4 @@
-﻿"""
+"""
 ========================================================================================
 ARCHIVO: backend/app/main.py
 ========================================================================================
@@ -47,6 +47,7 @@ from .routers import (
     convocatorias,
     tipos_hora,
     catalogos,
+    ia,
 )
 
 
@@ -96,6 +97,8 @@ app.include_router(convocatorias.router)
 app.include_router(tipos_hora.router)
 # [Línea clave]: Monta el router de catálogos consolidados en una única petición HTTP.
 app.include_router(catalogos.router)
+# [Línea clave]: Monta el router de Inteligencia Artificial (Gemini Free Tier) para evaluaciones preliminares de referencia.
+app.include_router(ia.router)
 
 
 @app.get("/health")

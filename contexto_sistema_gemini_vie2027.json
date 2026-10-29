@@ -1,0 +1,190 @@
+{
+  "metadata": {
+    "sistema": "SGPI - Sistema de Gestión de Propuestas de Investigación (ITCR)",
+    "convocatoria": "Fondos Concursables VIE 2027",
+    "proveedor_ia": "Google Gemini API (Google AI Studio - Plan Gratuito / Free Tier)",
+    "arquitectura_despliegue": {
+      "frontend": {
+        "plataforma": "Vercel",
+        "plan": "Hobby (Gratuito)",
+        "directorio_raiz": "frontend",
+        "archivo_configuracion": "vercel.json"
+      },
+      "backend": {
+        "plataforma": "Render",
+        "plan": "Free Web Service (Docker)",
+        "region": "oregon (us-west-2)",
+        "archivo_configuracion": "render.yaml",
+        "variables_entorno_requeridas": [
+          "DATABASE_URL",
+          "GEMINI_API_KEY",
+          "GEMINI_MODEL"
+        ]
+      },
+      "base_de_datos": {
+        "plataforma": "Supabase (PostgreSQL 15+)",
+        "proyecto_id": "pxlrplbyggoywqbcgjdu",
+        "region": "us-west-2",
+        "tabla_evaluacion_ia": "public.ai_preliminary_evaluations",
+        "script_migracion": "Base de datos/Scripts/V6__evaluacion_preliminar_ia.sql"
+      }
+    }
+  },
+  "modelos_gemini_free_tier": [
+    {
+      "id": "gemini-2.5-flash",
+      "prioridad": 1,
+      "rpm": 10,
+      "rpd": 250,
+      "tpm": 250000,
+      "costo_usd": 0.0,
+      "uso": "Modelo primario para evaluación preliminar estructurada en JSON"
+    },
+    {
+      "id": "gemini-2.5-flash-lite",
+      "prioridad": 2,
+      "rpm": 15,
+      "rpd": 1000,
+      "tpm": 250000,
+      "costo_usd": 0.0,
+      "uso": "Primer respaldo automático ante cuota o latencia en el modelo primario"
+    },
+    {
+      "id": "gemini-2.0-flash",
+      "prioridad": 3,
+      "rpm": 15,
+      "rpd": 1500,
+      "tpm": 1000000,
+      "costo_usd": 0.0,
+      "uso": "Segundo respaldo automático dentro del plan gratuito de Google AI Studio"
+    }
+  ],
+  "reglas_globales_convocatoria_vie_2027": {
+    "escala_calificacion_permitida": [0, 6, 8, 10],
+    "significado_escala": {
+      "10": "Excelente",
+      "8": "Bueno (Umbral mínimo para criterios obligatorios)",
+      "6": "Regular (Dispara bloqueo automático si el criterio es obligatorio)",
+      "0": "Deficiente (Dispara bloqueo automático si el criterio es obligatorio)"
+    },
+    "puntaje_minimo_aprobacion": 70.0,
+    "regla_bloqueo_obligatorio": "Todo criterio con es_obligatorio=true requiere calificación >= 8 (8 o 10). Obtener 0 o 6 en cualquier criterio obligatorio descalifica o devuelve la propuesta automáticamente.",
+    "regla_seccion_2_3_9_equipo_anio_1": "Las partidas de Equipo e Instrumentación científica (6-01 / 6-02 / 5-01) solo pueden presupuestarse y ejecutarse durante el Año 1. Montos > 0 en Año 2 generan bloqueo normativo.",
+    "regla_seccion_2_4_1_productos_academicos": "Los proyectos de 13 a 24 meses requieren al menos 2 productos académicos comprometidos; los proyectos de hasta 12 meses requieren al menos 1 producto académico."
+  },
+  "topes_presupuestarios_modalidades_crc": [
+    {
+      "patron_modalidad": "Fondo Semilla",
+      "monto_maximo_anual_crc": 4000000,
+      "monto_maximo_total_crc": 4000000,
+      "duracion_maxima_meses": 12
+    },
+    {
+      "patron_modalidad": "Básica y Aplicada",
+      "monto_maximo_anual_crc": 8500000,
+      "monto_maximo_total_crc": 17000000,
+      "duracion_maxima_meses": 24
+    },
+    {
+      "patron_modalidad": "Desarrollo Tecnológico",
+      "monto_maximo_anual_crc": 15000000,
+      "monto_maximo_total_crc": 30000000,
+      "duracion_maxima_meses": 24
+    },
+    {
+      "patron_modalidad": "Sector Productivo",
+      "monto_maximo_anual_crc": 12500000,
+      "monto_maximo_total_crc": 25000000,
+      "duracion_maxima_meses": 24
+    },
+    {
+      "patron_modalidad": "Red Temática",
+      "monto_maximo_anual_crc": 5000000,
+      "monto_maximo_total_crc": 10000000,
+      "duracion_maxima_meses": 24
+    }
+  ],
+  "niveles_evaluacion_sgpi": [
+    {
+      "nivel": 1,
+      "codigo": "referencia_vinculacion",
+      "nombre": "Centro de Vinculación",
+      "pantalla_frontend": "screen-23-eval-vinculacion",
+      "tipo_dictamen": "Pase / No Pase (Trámite de Propiedad Intelectual y Transferencia)",
+      "enfoque_ia": [
+        "Identificación de activos protegibles (software, patentes, secretos industriales, diseños)",
+        "Revisión de compromisos o cofinanciamiento con empresas externas",
+        "Verificación de ausencia de conflictos de titularidad de PI previa"
+      ]
+    },
+    {
+      "nivel": 2,
+      "codigo": "referencia_comite_tecnico",
+      "nombre": "Comité Técnico Asesor",
+      "pantalla_frontend": "screen-24-eval-comite-tecnico",
+      "tipo_dictamen": "Calificación Ponderada 0-100 (Escala 0, 6, 8, 10 en 8 secciones y 19 criterios)",
+      "enfoque_ia": [
+        "Sugerencia de calificación preliminar por cada uno de los 19 criterios",
+        "Cálculo de puntaje ponderado preliminar sobre 100%",
+        "Detección de bloqueos en los 9 criterios obligatorios (< 8)"
+      ]
+    },
+    {
+      "nivel": 3,
+      "codigo": "referencia_consejo_escuela",
+      "nombre": "Consejo de Escuela",
+      "pantalla_frontend": "screen-25-eval-consejo-escuela",
+      "tipo_dictamen": "Aval de Carga Académica y Recursos de Escuela",
+      "enfoque_ia": [
+        "Consistencia de horas semanales solicitadas por el coordinador y coinvestigadores",
+        "Pertinencia disciplinar con las líneas de la Escuela o Centro de Investigación",
+        "Disponibilidad de laboratorios y equipo existente"
+      ]
+    },
+    {
+      "nivel": 4,
+      "codigo": "referencia_direccion_vie",
+      "nombre": "Dirección de Investigación VIE",
+      "pantalla_frontend": "screen-26-eval-direccion-vie",
+      "tipo_dictamen": "Auditoría Financiera, Presupuestaria y Normativa",
+      "enfoque_ia": [
+        "Verificación de topes presupuestarios anuales y totales según modalidad",
+        "Cumplimiento estricto de Sección 2.3.9 (Equipo = ₡0 en Año 2)",
+        "Cumplimiento de Sección 2.4.1 (Cuota mínima de productos académicos)"
+      ]
+    },
+    {
+      "nivel": 5,
+      "codigo": "referencia_cie",
+      "nombre": "Comité Institucional de Ética (CIE)",
+      "pantalla_frontend": "screen-27-eval-cie",
+      "tipo_dictamen": "Aprobado / Exento / Solicitud de Enmiendas Éticas",
+      "enfoque_ia": [
+        "Detección de participación de seres humanos, encuestas, datos clínicos o muestras biológicas",
+        "Evaluación de uso de animales de experimentación o recursos de biodiversidad (CONAGEBIO)",
+        "Determinación preliminar de exención o requerimiento de consentimiento informado"
+      ]
+    }
+  ],
+  "rubrica_comite_tecnico_19_criterios": [
+    { "seccion": 1, "nombre_seccion": "Relevancia y Pertinencia", "peso_seccion": 15, "codigo": "1.1", "criterio": "Pertinencia con áreas estratégicas ITCR / VIE y ODS", "es_obligatorio": true },
+    { "seccion": 1, "nombre_seccion": "Relevancia y Pertinencia", "peso_seccion": 15, "codigo": "1.2", "criterio": "Novedad científica o tecnológica y aporte al estado del arte", "es_obligatorio": true },
+    { "seccion": 1, "nombre_seccion": "Relevancia y Pertinencia", "peso_seccion": 15, "codigo": "1.3", "criterio": "Impacto potencial académico, productivo, social o ambiental", "es_obligatorio": false },
+    { "seccion": 2, "nombre_seccion": "Definición del Problema", "peso_seccion": 15, "codigo": "2.1", "criterio": "Claridad y delimitación del problema o pregunta de investigación", "es_obligatorio": true },
+    { "seccion": 2, "nombre_seccion": "Definición del Problema", "peso_seccion": 15, "codigo": "2.2", "criterio": "Actualidad y rigurosidad de los antecedentes y marco teórico", "es_obligatorio": true },
+    { "seccion": 2, "nombre_seccion": "Definición del Problema", "peso_seccion": 15, "codigo": "2.3", "criterio": "Articulación lógica entre justificación, antecedentes y brecha científica", "es_obligatorio": false },
+    { "seccion": 3, "nombre_seccion": "Objetivos del Proyecto", "peso_seccion": 15, "codigo": "3.1", "criterio": "Claridad, viabilidad y alcance medible del Objetivo General", "es_obligatorio": true },
+    { "seccion": 3, "nombre_seccion": "Objetivos del Proyecto", "peso_seccion": 15, "codigo": "3.2", "criterio": "Coherencia de Objetivos Específicos con metas, entregables e indicadores", "es_obligatorio": true },
+    { "seccion": 4, "nombre_seccion": "Metodología Científica", "peso_seccion": 20, "codigo": "4.1", "criterio": "Rigor del diseño metodológico, técnicas experimentales y análisis de datos", "es_obligatorio": true },
+    { "seccion": 4, "nombre_seccion": "Metodología Científica", "peso_seccion": 20, "codigo": "4.2", "criterio": "Adecuación de fases metodológicas para alcanzar cada objetivo específico", "es_obligatorio": true },
+    { "seccion": 4, "nombre_seccion": "Metodología Científica", "peso_seccion": 20, "codigo": "4.3", "criterio": "Identificación de riesgos técnicos/operativos y plan de mitigación", "es_obligatorio": false },
+    { "seccion": 5, "nombre_seccion": "Plan de Trabajo y Cronograma", "peso_seccion": 10, "codigo": "5.1", "criterio": "Secuencia lógica, factibilidad temporal y distribución de actividades (Año 1 / Año 2)", "es_obligatorio": true },
+    { "seccion": 5, "nombre_seccion": "Plan de Trabajo y Cronograma", "peso_seccion": 10, "codigo": "5.2", "criterio": "Definición de hitos verificables y productos académicos (Sección 2.4.1)", "es_obligatorio": false },
+    { "seccion": 6, "nombre_seccion": "Conformación del Equipo y Estudiantes", "peso_seccion": 10, "codigo": "6.1", "criterio": "Idoneidad, complementariedad y carga académica del equipo investigador", "es_obligatorio": false },
+    { "seccion": 6, "nombre_seccion": "Conformación del Equipo y Estudiantes", "peso_seccion": 10, "codigo": "6.2", "criterio": "Participación formativa de personas estudiantes asistentes y tesistas", "es_obligatorio": false },
+    { "seccion": 7, "nombre_seccion": "Presupuesto y Uso de Recursos", "peso_seccion": 10, "codigo": "7.1", "criterio": "Racionalidad, justificación de partidas y respeto a topes de la modalidad", "es_obligatorio": false },
+    { "seccion": 7, "nombre_seccion": "Presupuesto y Uso de Recursos", "peso_seccion": 10, "codigo": "7.2", "criterio": "Cumplimiento estricto de Sección 2.3.9 (Equipo e instrumentación = 0 en Año 2)", "es_obligatorio": false },
+    { "seccion": 8, "nombre_seccion": "Sostenibilidad, Ética y Propiedad Intelectual", "peso_seccion": 5, "codigo": "8.1", "criterio": "Consideraciones éticas (CIE), ambientales, bioseguridad y permisos", "es_obligatorio": false },
+    { "seccion": 8, "nombre_seccion": "Sostenibilidad, Ética y Propiedad Intelectual", "peso_seccion": 5, "codigo": "8.2", "criterio": "Estrategia de protección de propiedad intelectual y transferencia (Vinculación)", "es_obligatorio": false }
+  ]
+}

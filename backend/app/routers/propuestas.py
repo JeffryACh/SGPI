@@ -1,4 +1,4 @@
-﻿"""
+"""
 ========================================================================================
 ARCHIVO: backend/app/routers/propuestas.py
 ========================================================================================
@@ -43,6 +43,7 @@ from psycopg import Connection
 from pydantic import BaseModel, Field
 
 from ..db import get_conn
+from .ia import generar_y_guardar_evaluacion_ia, obtener_evaluacion_ia_guardada
 
 # [Línea clave]: Declara el router bajo el prefijo /propuestas para agrupar las operaciones centrales de expedientes.
 router = APIRouter(prefix="/propuestas", tags=["propuestas"])
@@ -928,6 +929,13 @@ def obtener_dossier_propuesta(
         except Exception:
             pass
 
+    # [Línea clave]: Incluye la evaluación preliminar generada por Gemini IA para apoyo de los 5 niveles evaluadores.
+    evaluacion_ia = None
+    try:
+        evaluacion_ia = obtener_evaluacion_ia_guardada(id_propuesta, conn, autogenerar=True)
+    except Exception:
+        pass
+
     return {
         **prop,
         "equipo": equipo,
@@ -939,6 +947,7 @@ def obtener_dossier_propuesta(
         "declaraciones_eticas": eticas,
         "historial": historial,
         "evaluaciones": evaluaciones,
+        "evaluacion_ia": evaluacion_ia,
     }
 
 
@@ -1234,10 +1243,18 @@ def crear_propuesta(
         )
         propuesta_creada = cur.fetchone()
 
+    # [Línea clave]: Genera automáticamente la evaluación preliminar con Gemini IA al registrar/enviar la propuesta.
+    evaluacion_preliminar_ia = None
+    try:
+        evaluacion_preliminar_ia = generar_y_guardar_evaluacion_ia(id_propuesta, conn)
+    except Exception:
+        pass
+
     return {
         "ok": True,
         "mensaje": "Propuesta creada exitosamente con todos sus componentes institucionales.",
         "propuesta": propuesta_creada,
+        "evaluacion_preliminar_ia": evaluacion_preliminar_ia,
     }
 
 
@@ -1299,11 +1316,25 @@ def actualizar_estado_propuesta(
         cur.execute("SELECT nombre_estado FROM estados WHERE id_estado = %s", (payload.id_nuevo_estado,))
         estado_nombre = cur.fetchone()
 
+    nombre_estado_str = estado_nombre["nombre_estado"] if estado_nombre else "Desconocido"
+
+    # [Línea clave]: Cuando la propuesta es enviada a revisión o evaluación, dispara la evaluación preliminar de Gemini IA.
+    evaluacion_preliminar_ia = None
+    if any(
+        palabra in nombre_estado_str.lower()
+        for palabra in ("revisión", "revision", "evaluación", "evaluacion", "sometida", "vinculación", "comité")
+    ):
+        try:
+            evaluacion_preliminar_ia = generar_y_guardar_evaluacion_ia(id_propuesta, conn)
+        except Exception:
+            pass
+
     return {
         "ok": True,
         "id_propuesta": actualizado["id_propuesta"],
         "estado_actual": actualizado["estado_actual"],
-        "nombre_estado": estado_nombre["nombre_estado"] if estado_nombre else "Desconocido",
+        "nombre_estado": nombre_estado_str,
+        "evaluacion_preliminar_ia": evaluacion_preliminar_ia,
     }
 
 

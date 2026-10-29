@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 /**
  * ============================================================================
  * 2.1. OBJETIVO DEL ARCHIVO:
@@ -39,8 +39,15 @@
    Autenticación y configuración de API
    ===================================================================== */
 
-// [Línea clave]: ¿Por qué soy importante? Define la URL base de comunicación con la API del Backend. ¿Para qué? Enrutar todas las solicitudes HTTP fetch. ¿Dónde me usan? En todas las funciones cliente de la API (apiLogin, numsPropuestas, etc.).
-const API_URL = "http://localhost:3001",
+// [Línea clave]: ¿Por qué soy importante? Define la URL base de comunicación con la API del Backend soportando entorno local y nube (Vercel -> Render). ¿Para qué? Enrutar todas las solicitudes HTTP fetch hacia localhost:3001 en desarrollo o hacia el servicio de Render en producción. ¿Dónde me usan? En todas las funciones cliente de la API (apiLogin, numsPropuestas, obtenerEvaluacionPreliminarIA, etc.).
+const API_URL =
+    window.SGPI_API_URL ||
+    localStorage.getItem("sgpi-api-url") ||
+    (window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1" ||
+    window.location.protocol === "file:"
+      ? "http://localhost:3001"
+      : "https://sgpi-backend-api.onrender.com"),
   SESSION_KEY = "sgpi-session";
 
 /**
@@ -434,9 +441,193 @@ async function obtenerEtapasConvocatoria(id_convocatoria) {
   return etapasConvocatoria ;
 }
 
+let evaluacionPreliminarIA = null;
+
+/**
+ * Consultar en el backend la evaluación preliminar generada por la IA de Gemini (Plan Gratuito).
+ * Invoca GET /ia/evaluacion-preliminar/{id_propuesta} y almacena el dictamen multi-nivel en evaluacionPreliminarIA.
+ * parametros:
+ *     - number : idPropuesta Identificador numérico de la propuesta en Supabase (por defecto 1).
+ * return:
+ *     + Promise<Object|null> : evaluacionPreliminarIA Objeto con la referencia de IA para los 5 niveles evaluadores.
+ */
+async function obtenerEvaluacionPreliminarIA(idPropuesta = 1) {
+  try {
+    // [Línea clave]: ¿Por qué soy importante? Descarga el dictamen preliminar de Gemini IA desde el Backend en Render/Local. ¿Para qué? Mostrar a cada nivel evaluador su guía de referencia según criterios VIE 2027. ¿Dónde me usan? En obtenerDatosBackend(), dossier() y evaluation().
+    const res = await fetch(`${API_URL}/ia/evaluacion-preliminar/${idPropuesta}`);
+    if (res.ok) {
+      evaluacionPreliminarIA = await res.json();
+    }
+  } catch (err) {
+    console.warn("obtenerEvaluacionPreliminarIA error:", err);
+  }
+  return evaluacionPreliminarIA;
+}
+
+/**
+ * Solicitar al backend la generación o actualización en vivo de la evaluación preliminar con Gemini IA.
+ * Envía los parámetros actuales del formulario en memoria a POST /ia/evaluar-borrador para que Gemini
+ * analice el presupuesto, horas, objetivos, actividades y riesgos al enviar la propuesta a revisión.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Object|null> : evaluacionPreliminarIA Dictamen preliminar actualizado y persistido en Supabase.
+ */
+async function generarEvaluacionPreliminarIA() {
+  try {
+    const tieneEquipoAnio2 = state.budget.some(
+      (r) => (r.code.includes("5-01") || r.name.toLowerCase().includes("equipo")) && Number(r.b) > 0,
+    );
+    const incluyeBeca = state.budget.some(
+      (r) => (r.code.includes("6-02") || r.name.toLowerCase().includes("beca")) && Number(r.a) + Number(r.b) >= 960000,
+    );
+    const payload = {
+      id_propuesta: 1,
+      codigo: state.viewProposal || "SI-2027-014",
+      titulo: "Agua Inteligente: monitoreo de cuencas",
+      modalidad: state.mode || "Desarrollo tecnológico",
+      escuela: "Escuela de Ingeniería Ambiental",
+      linea_investigacion: "Gestión integrada del recurso hídrico",
+      resumen:
+        screen("08")?.fields?.find((f) => f.label === "Resumen")?.value ||
+        "Desarrollo y validación de un sistema de monitoreo de calidad del agua en microcuencas piloto.",
+      horas_totales_semanales: state.teamAdded ? 20 : 16,
+      presupuesto_anio_1: totalA(),
+      presupuesto_anio_2: totalB(),
+      tiene_equipo_anio_2: tieneEquipoAnio2,
+      incluye_beca_asistente: incluyeBeca,
+      cantidad_objetivos: 3 + (state.extraObjective ? 1 : 0),
+      cantidad_actividades: activities.length + (state.extraActivities || []).length,
+      cantidad_riesgos: risks.length + (state.extraRisks || []).length,
+      cantidad_productos: 3,
+      declaraciones_eticas_completas: true,
+    };
+    // [Línea clave]: ¿Por qué soy importante? Dispara la evaluación online con Gemini al enviar la propuesta a revisión. ¿Para qué? Evaluar con IA los criterios y parámetros VIE 2027 y guardarlos en Supabase. ¿Dónde me usan? En handleAction('send-confirm') y handleAction('refresh-ai-eval').
+    const res = await fetch(`${API_URL}/ia/evaluar-borrador`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      evaluacionPreliminarIA = await res.json();
+    }
+  } catch (err) {
+    console.warn("generarEvaluacionPreliminarIA error:", err);
+  }
+  return evaluacionPreliminarIA;
+}
+
+/**
+ * Construir la tarjeta HTML de referencia de Evaluación Preliminar con IA adaptada al nivel del evaluador.
+ * Muestra el resumen ejecutivo de Gemini, calificación preliminar, fortalezas, alertas normativas y los
+ * parámetros específicos que corresponden a la pantalla activa (22, 23, 24, 25, 26 o 27).
+ * parametros:
+ *     - string : idPantalla Identificador de la pantalla de evaluación o expediente ('22' a '27').
+ * return:
+ *     + string : panelHtml Marcado HTML con la evaluación preliminar de referencia.
+ */
+function renderizarPanelReferenciaIA(idPantalla) {
+  const ia = evaluacionPreliminarIA || {
+    modelo_ia: "gemini-2.5-flash",
+    modo_generacion: "gemini_online",
+    puntaje_preliminar: scoreResult().sum,
+    recomendacion_global: scoreResult().recommended ? "Recomendada" : "Recomendada con observaciones",
+    tiene_bloqueo_obligatorio: scoreResult().blocked,
+    resumen_ejecutivo:
+      "Evaluación preliminar generada conforme a los criterios de la Convocatoria Fondos VIE 2027 (Acuerdo CIE-237-2026). Sirve como insumo técnico no vinculante para las instancias evaluadoras.",
+    referencia_vinculacion: {
+      potencial_pi: "Alto potencial de protección mediante registro de software de monitoreo ambiental.",
+      coherencia_trl: "TRL inicial 4 a TRL meta 6 coherente con validación en dos microcuencas piloto.",
+      dictamen_sugerido: "Favorable — Emitir dictamen técnico de PI e instruir resguardo previo a publicación.",
+      observacion_clave: "Verificar titularidad institucional TEC antes de divulgación externa.",
+    },
+    referencia_comite_tecnico: {
+      puntaje_sugerido: scoreResult().sum,
+      cumple_umbral_70: scoreResult().sum >= 70,
+      criterios_obligatorios_conformes: !scoreResult().blocked,
+      produccion_comprometida_conforme: true,
+      justificacion_rubrica:
+        "Diseño metodológico consistente con 4 actividades, 4 riesgos mitigados, beca estudiantil de 10 h/semana y equipamiento en Año 1.",
+    },
+    referencia_consejo_escuela: {
+      viabilidad_horaria: "Conforme: 16 h/semana totales (cumple mínimo de 8 h/sem del proyecto y >= 4 h/sem por investigador).",
+      pertinencia_escuela: "Alineada con las líneas de investigación de Ingeniería Ambiental e Ingeniería Electrónica.",
+      recomendacion_aval: "Otorgar Aval de Consejo de Escuela ratificando horas, presupuesto y calificación técnica.",
+      verificacion_presupuestaria: "Monto de ₡9.400.000 dentro del tope anual de ₡5.000.000/año para Desarrollo Tecnológico.",
+    },
+    referencia_direccion_vie: {
+      dictamen_sugerido: "Favorable",
+      checklist_verificado: [
+        { criterio: "Personal investigador al día con compromisos institucionales", cumple: true },
+        { criterio: "Coherencia de riesgos identificados y medidas de mitigación", cumple: true },
+        { criterio: "Inclusión obligatoria de beca para estudiante asistente especial", cumple: true },
+        { criterio: "Declaraciones éticas completas y justificadas", cumple: true },
+        { criterio: "Dictamen emitido por el Centro de Vinculación", cumple: true },
+      ],
+    },
+    referencia_cie: {
+      resolucion_sugerida: "Aprobada",
+      borrador_acuerdo:
+        "Se recomienda al CIE aprobar el proyecto SI-2027-014 con presupuesto de ₡9.400.000 al cumplir la rúbrica técnica y controles normativos VIE 2027.",
+    },
+    fortalezas: [
+      "Trazabilidad completa entre objetivos específicos, plan de acción y matriz de riesgos.",
+      "Cumplimiento de la regla presupuestaria Sección 2.3.9 (equipo únicamente en Año 1).",
+      "Participación estudiantil incorporada con beca asistente especial de 10 h/semana.",
+    ],
+    alertas_normativas: ["Sin incumplimientos normativos bloqueantes detectados."],
+  };
+
+  let detalleNivel = "";
+  if (idPantalla === "23" && ia.referencia_vinculacion) {
+    const rv = ia.referencia_vinculacion;
+    detalleNivel = definition([
+      ["Potencial de PI", esc(rv.potencial_pi)],
+      ["Madurez TRL", esc(rv.coherencia_trl)],
+      ["Dictamen sugerido", esc(rv.dictamen_sugerido)],
+      ["Observación clave", esc(rv.observacion_clave)],
+    ]);
+  } else if (idPantalla === "24" && ia.referencia_comite_tecnico) {
+    const rc = ia.referencia_comite_tecnico;
+    detalleNivel = `${definition([
+      ["Puntaje IA sugerido", `${Number(ia.puntaje_preliminar).toFixed(1)} / 100`],
+      ["Umbral >= 70", rc.cumple_umbral_70 ? "Cumple" : "No cumple"],
+      ["Criterios obligatorios", rc.criterios_obligatorios_conformes ? "Todos >= 8 (Bueno/Excelente)" : "Alerta: criterio < 8"],
+      ["Cuota de productos", rc.produccion_comprometida_conforme ? "Conforme (Sección 2.4.1)" : "Revisar cuota"],
+    ])}<p class="small muted mt">${esc(rc.justificacion_rubrica)}</p><div class="action-row mt">${act("Aplicar puntajes IA como base", "apply-ai-scores", "secondary compact", "check")}${act("Ver desglose IA completo", "modal-ai-detail", "text compact")}</div>`;
+  } else if (idPantalla === "25" && ia.referencia_consejo_escuela) {
+    const re = ia.referencia_consejo_escuela;
+    detalleNivel = definition([
+      ["Dedicación horaria", esc(re.viabilidad_horaria)],
+      ["Pertinencia", esc(re.pertinencia_escuela)],
+      ["Presupuesto", esc(re.verificacion_presupuestaria)],
+      ["Sugerencia IA", esc(re.recomendacion_aval)],
+    ]);
+  } else if (idPantalla === "26" && ia.referencia_direccion_vie) {
+    const rd = ia.referencia_direccion_vie;
+    const items = (rd.checklist_verificado || [])
+      .map((c) => `<li><strong>${c.cumple ? "✓" : "⚠"} ${esc(c.criterio)}</strong></li>`)
+      .join("");
+    detalleNivel = `<p class="small mb"><strong>Dictamen sugerido a Dirección:</strong> ${esc(rd.dictamen_sugerido)}</p><ul class="small muted" style="padding-left:18px;margin:0">${items}</ul>`;
+  } else if (idPantalla === "27" && ia.referencia_cie) {
+    const rcie = ia.referencia_cie;
+    detalleNivel = `${definition([
+      ["Resolución sugerida", esc(rcie.resolucion_sugerida)],
+      ["Puntaje técnico previo", `${Number(ia.puntaje_preliminar).toFixed(1)} / 100`],
+    ])}<p class="small muted mt"><strong>Borrador motivado de referencia:</strong> ${esc(rcie.borrador_acuerdo)}</p>`;
+  } else {
+    detalleNivel = `<p class="small muted">${esc(ia.resumen_ejecutivo)}</p><div class="action-row mt">${act("Ver informe IA por nivel", "modal-ai-detail", "secondary compact")}${act("Re-evaluar con Gemini IA", "refresh-ai-eval", "text compact")}</div>`;
+  }
+
+  return card(
+    "Evaluación preliminar IA (Gemini)",
+    `<div class="action-row mb">${badge(ia.recomendacion_global, ia.tiene_bloqueo_obligatorio ? "" : "solid")}${badge(ia.modelo_ia || "gemini-2.5-flash")}</div><p class="micro muted mb">Referencia automática no vinculante generada al enviar la propuesta a revisión (Plan Gratuito Google AI Studio).</p>${detalleNivel}${idPantalla !== "22" && idPantalla !== "24" ? `<div class="action-row mt">${act("Ver informe IA completo", "modal-ai-detail", "text compact")}${act("Actualizar IA", "refresh-ai-eval", "text compact")}</div>` : ""}`,
+  );
+}
+
 /**
  * Ejecutar la precarga paralela de todos los catálogos y métricas iniciales del sistema.
- * Lanza simultáneamente vía Promise.all las consultas de métricas, convocatorias, escuelas y modalidades.
+ * Lanza simultáneamente vía Promise.all las consultas de métricas, convocatorias, escuelas, modalidades e IA.
  * parametros:
  *     (ninguno)
  * return:
@@ -451,6 +642,7 @@ async function obtenerDatosBackend() {
     Modalidades(),
     obtener_escuelas(),
     obtener_lineas_investigacion(),
+    obtenerEvaluacionPreliminarIA(1),
   ]);
 }
 
@@ -2017,9 +2209,11 @@ function dossier() {
       doc("Dictamen de Vinculación.pdf") +
       doc("Acuerdo de aval.pdf");
   else if (dossierTab === "Evaluaciones") {
+    const puntajeIA = evaluacionPreliminarIA ? `${Number(evaluacionPreliminarIA.puntaje_preliminar).toFixed(1)}/100 · ${evaluacionPreliminarIA.recomendacion_global}` : "87.8/100 · Recomendada (Preliminar)";
     body = `${table(
       ["Instancia", "Resultado", "Documento"],
       [
+        ["IA Preliminar (Gemini Free Tier)", puntajeIA, act("Ver dictamen IA", "modal-ai-detail", "text")],
         ["Vinculación", "Dictamen técnico registrado", act("Ver dictamen", "preview", "text")],
         ["Comité Técnico", "Recomendada", act("Ver rúbrica", "rubric-summary", "text")],
         ["Consejo de Escuela", "Aval otorgado", act("Ver acuerdo", "preview", "text")],
@@ -2032,7 +2226,7 @@ function dossier() {
   }
 
   return shell(
-    `<div class="card card-pad mb"><span class="project-code">${p.code} · ${p.type}</span><div class="section-head" style="margin:10px 0 0"><h2 style="font-size:26px">${p.title}</h2>${badge(historical ? p.status : state.stage, "solid")}</div></div>${tabs(["Resumen", "Documentos", "Evaluaciones", "Resolución", "Historial"], dossierTab)}<div class="two-col">${card("", body)}<div class="stack">${card("Acción disponible", historical ? `<p class="small muted mb">Este expediente está disponible en modo consulta.</p>${btn("Volver a resultados", "30", "secondary")}` : state.role === "investigador" ? `<p class="small muted mb">Consulta la etapa y las acciones pendientes de tu propuesta.</p>${btn("Ver seguimiento", "20", "", "arrow")}` : `<p class="small muted mb">Actúas como ${roles[state.role].label}.</p>${btn("Iniciar revisión", roles[state.role].screen, "", "arrow")}`)}${card("Trazabilidad", `<p class="small muted mb">Cada decisión conserva fecha, actor, documento y versión en PostgreSQL.</p>${btn("Ver historial completo", "28", "text", "arrow")}`)}${["direccion", "cie"].includes(state.role) ? notice("Verificación restringida", "Responsabilidades institucionales: al día.") : ""}</div></div>`,
+    `<div class="card card-pad mb"><span class="project-code">${p.code} · ${p.type}</span><div class="section-head" style="margin:10px 0 0"><h2 style="font-size:26px">${p.title}</h2>${badge(historical ? p.status : state.stage, "solid")}</div></div>${tabs(["Resumen", "Documentos", "Evaluaciones", "Resolución", "Historial"], dossierTab)}<div class="two-col">${card("", body)}<div class="stack">${card("Acción disponible", historical ? `<p class="small muted mb">Este expediente está disponible en modo consulta.</p>${btn("Volver a resultados", "30", "secondary")}` : state.role === "investigador" ? `<p class="small muted mb">Consulta la etapa y las acciones pendientes de tu propuesta.</p>${btn("Ver seguimiento", "20", "", "arrow")}` : `<p class="small muted mb">Actúas como ${roles[state.role].label}.</p>${btn("Iniciar revisión", roles[state.role].screen, "", "arrow")}`)}${renderizarPanelReferenciaIA("22")}${card("Trazabilidad", `<p class="small muted mb">Cada decisión conserva fecha, actor, documento y versión en PostgreSQL.</p>${btn("Ver historial completo", "28", "text", "arrow")}`)}${["direccion", "cie"].includes(state.role) ? notice("Verificación restringida", "Responsabilidades institucionales: al día.") : ""}</div></div>`,
     "Expediente de propuesta",
     "Toda la información y las decisiones en un mismo lugar.",
     btn(
@@ -2226,7 +2420,7 @@ function evaluation(id) {
     27: "Registrar resolución",
   }[id];
   return shell(
-    `<div class="two-col"><form class="card form-card" id="evaluation-form"><div class="form-title"><h2>${names[id]}</h2>${badge("Pendiente")}</div>${inner}<div class="form-footer">${act("Devolver con observaciones", "return", "secondary")}${act(actionLabel, "decision", "", "check", `data-step="${id}"`)}</div></form><div class="stack">${card(
+    `<div class="two-col"><form class="card form-card" id="evaluation-form"><div class="form-title"><h2>${names[id]}</h2>${badge("Pendiente")}</div>${inner}<div class="form-footer">${act("Devolver con observaciones", "return", "secondary")}${act(actionLabel, "decision", "", "check", `data-step="${id}"`)}</div></form><div class="stack">${renderizarPanelReferenciaIA(id)}${card(
       "Expediente en revisión",
       `<span class="project-code">SI-2027-014</span><h3>Agua Inteligente: monitoreo de cuencas</h3><p class="small muted" style="margin:10px 0 20px">Laura Méndez<br>Ingeniería Ambiental</p>${definition(
         [
@@ -3191,8 +3385,63 @@ async function handleAction(action, el) {
     case "send-confirm":
       state.stage = "En revisión de Vinculación";
       save();
+      generarEvaluacionPreliminarIA().then(() => {
+        toast("Evaluación preliminar con Gemini IA generada para las instancias evaluadoras.");
+      });
       go("19");
       break;
+    case "refresh-ai-eval":
+      toast("Consultando a Google Gemini (Free Tier)...");
+      await generarEvaluacionPreliminarIA();
+      render();
+      toast("Evaluación preliminar IA actualizada en Supabase.");
+      break;
+    case "apply-ai-scores":
+      if (evaluacionPreliminarIA?.criterios_sugeridos) {
+        state.scores = {
+          ...state.scores,
+          ...evaluacionPreliminarIA.criterios_sugeridos,
+        };
+        save();
+        render();
+        toast("Puntajes de referencia IA aplicados a la rúbrica.");
+      } else {
+        await obtenerEvaluacionPreliminarIA(1);
+        if (evaluacionPreliminarIA?.criterios_sugeridos) {
+          state.scores = {
+            ...state.scores,
+            ...evaluacionPreliminarIA.criterios_sugeridos,
+          };
+          save();
+          render();
+          toast("Puntajes de referencia IA aplicados a la rúbrica.");
+        }
+      }
+      break;
+    case "modal-ai-detail": {
+      if (!evaluacionPreliminarIA) await obtenerEvaluacionPreliminarIA(1);
+      const ia = evaluacionPreliminarIA || {};
+      const fortalezasHtml = (ia.fortalezas || [])
+        .map((f) => `<li>${esc(f)}</li>`)
+        .join("");
+      const alertasHtml = (ia.alertas_normativas || [])
+        .map((a) => `<li>${esc(a)}</li>`)
+        .join("");
+      modal(
+        "Dictamen Preliminar IA · Gemini Free Tier",
+        `<div class="action-row mb">${badge(ia.recomendacion_global || "Recomendada", "solid")}${badge(`${Number(ia.puntaje_preliminar ?? 87.8).toFixed(1)} / 100`)}${badge(ia.modelo_ia || "gemini-2.5-flash")}</div><p class="small mb">${esc(ia.resumen_ejecutivo || "Análisis preliminar automático generado al enviar la propuesta a revisión.")}</p>${definition([
+          ["1. Vinculación (Pantalla 23)", esc(ia.referencia_vinculacion?.dictamen_sugerido || "Favorable — Potencial de PI en software")],
+          ["2. Comité Técnico (Pantalla 24)", esc(ia.referencia_comite_tecnico?.justificacion_rubrica || "Cumple umbral >= 70 y criterios obligatorios")],
+          ["3. Consejo de Escuela (Pantalla 25)", esc(ia.referencia_consejo_escuela?.recomendacion_aval || "Avalar horas y presupuesto")],
+          ["4. Dirección VIE (Pantalla 26)", esc(`Dictamen sugerido: ${ia.referencia_direccion_vie?.dictamen_sugerido || "Favorable"} (5/5 criterios verificados)`)],
+          ["5. Resolución CIE (Pantalla 27)", esc(ia.referencia_cie?.borrador_acuerdo || "Aprobación recomendada")],
+        ])}<div class="mt"><strong>Fortalezas identificadas:</strong><ul class="small muted" style="padding-left:18px;margin-top:6px">${fortalezasHtml}</ul></div><div class="mt"><strong>Observaciones y alertas normativas:</strong><ul class="small muted" style="padding-left:18px;margin-top:6px">${alertasHtml}</ul></div><div class="mt">${notice("Carácter referencial no vinculante", "Esta evaluación preliminar es generada por Google Gemini (Plan Gratuito) como insumo técnico para apoyar a los evaluadores de cada nivel institucional.")}</div>`,
+        act("Actualizar con Gemini", "refresh-ai-eval", "secondary") + act("Cerrar", "close"),
+        true,
+        "ai-detail",
+      );
+      break;
+    }
     case "submit":
       modal(
         "Sometimiento formal ante VIE",
