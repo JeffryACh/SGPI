@@ -6,29 +6,40 @@ ARCHIVO: backend/app/routers/convocatorias.py
 2.1. OBJETIVO DEL ARCHIVO:
     Gestionar la información de las convocatorias institucionales de la Vicerrectoría
     de Investigación y Extensión (VIE), incluyendo sus cronogramas por etapas y los
-    instrumentos oficiales descargables (Disposiciones, Rúbricas, Formularios, Acuerdos).
+    instrumentos oficiales (Disposiciones, Rúbricas, Formularios, Acuerdos) almacenados
+    en Supabase Storage.
 
 2.2. RELACIONES CON OTRAS PARTES DEL SISTEMA:
     2.2.1. De dónde obtiene datos:
-           - Consulta las tablas 'convocatorias', 'convocatoria_etapas' y 'convocatoria_documentos' en Supabase.
-           - Cuenta con una constante interna 'DOCUMENTOS_OFICIALES_FALLBACK' con los 9 instrumentos
-             oficiales de la Convocatoria Fondos VIE 2027 como mecanismo de alta disponibilidad.
-           - Utiliza la conexión activa de 'app.db.get_conn'.
+           - Consulta las tablas 'convocatorias', 'convocatoria_etapas' y 'convocatoria_documentos'
+             en Supabase mediante la conexión de 'app.db.get_conn'.
+           - Los archivos físicos viven en el bucket 'convocatorias' de Supabase Storage, organizados
+             en una carpeta por convocatoria: convocatorias/<carpeta_storage>/<archivo>.
     2.2.2. A dónde envía datos:
            - Envía listas estructuradas hacia el Frontend para poblar las pantallas 04 (Convocatorias),
-             05 (Detalle de Convocatoria Fondos VIE 2027) y 31 (Administración de Convocatorias).
+             05 (Detalle de Convocatoria) y 31 (Administración de Convocatorias).
+           - Sube los archivos recibidos a Supabase Storage y registra sus metadatos en la base de datos.
 
 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
-    Expone tres endpoints REST principales: '/totalConvocatorias' para listar los períodos de concurso,
-    '/etapas_convocatorias' para mostrar las 11 etapas cronológicas del proceso, y
-    '/documentos_convocatoria' para proveer los enlaces y metadatos de los instrumentos oficiales.
+    Expone cuatro endpoints REST: GET '/totalConvocatorias' (períodos de concurso),
+    GET '/etapas_convocatorias' (cronograma por etapas), GET '/documentos_convocatoria'
+    (instrumentos oficiales con su URL pública) y POST '/documentos_convocatoria' (subida de un
+    instrumento a Storage + registro en la tabla).
+
+2.4. CONFIGURACIÓN REQUERIDA:
+    Variables de entorno del backend: SUPABASE_URL y SUPABASE_SERVICE_KEY (service role, solo servidor).
+    Dependencias: httpx y python-multipart (necesaria para recibir archivos con Form/UploadFile).
 ========================================================================================
 """
 
+import os
+import re
+import unicodedata
 from datetime import date, datetime
 from typing import Optional, Union
 
-from fastapi import APIRouter, Depends, Query
+import httpx
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from psycopg import Connection
 from pydantic import BaseModel
 
@@ -36,6 +47,26 @@ from ..db import get_conn
 
 # [Línea clave]: Declara el router bajo el prefijo /convocatorias para agrupar las rutas de concursos institucionales.
 router = APIRouter(prefix="/convocatorias", tags=["convocatorias"])
+
+# Bucket de Supabase Storage que actúa como carpeta raíz "convocatorias/".
+BUCKET = "convocatorias"
+
+# Tamaño máximo por archivo (debe coincidir con el límite configurado en el bucket).
+MAX_BYTES = 20 * 1024 * 1024
+
+# [Línea clave]: Formatos permitidos. El MIME se deduce de la extensión (no del navegador) para que
+# coincida siempre con los 'Allowed MIME types' del bucket.
+MIME_POR_EXTENSION = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+
+# ----------------------------------------------------------------------------------------
+# Modelos de respuesta
+# ----------------------------------------------------------------------------------------
 
 
 class ConvocatoriaOut(BaseModel):
@@ -79,7 +110,7 @@ class ConvocatoriaEtapaOut(BaseModel):
         * str : responsable Instancia o rol universitario a cargo de ejecutar o evaluar la etapa.
         * Union[date, datetime, str] : fecha_inicio Fecha de apertura de la fase.
         * Union[date, datetime, str] : fecha_fin Fecha de conclusión de la fase.
-        * int : orden Posición secuencial ordinal (1 a 11) dentro del proceso de concurso.
+        * int : orden Posición secuencial ordinal dentro del proceso de concurso.
     """
     id_etapa: int
     id_convocatoria: int
@@ -92,21 +123,24 @@ class ConvocatoriaEtapaOut(BaseModel):
 
 class ConvocatoriaDocumentoOut(BaseModel):
     """
-    Modelo de respuesta para los instrumentos y documentos normativos descargables de la convocatoria.
+    Modelo de respuesta para los instrumentos y documentos normativos de la convocatoria.
 
-    Expone nombre, archivo, categoría, extensión y URL de descarga para cada instrumento oficial.
+    Expone nombre, archivo, categoría, extensión, URL pública y metadatos de cada instrumento.
 
-    Se utiliza como response_model en el endpoint GET /convocatorias/documentos_convocatoria.
+    Se utiliza como response_model en GET y POST /convocatorias/documentos_convocatoria.
 
     atributos:
         * int : id_documento_conv Identificador único del registro de documento.
         * int : id_convocatoria Identificador de la convocatoria asociada.
         * str : nombre_documento Título legible para mostrar en la interfaz de usuario.
-        * str : nombre_archivo Nombre físico del archivo en el sistema de almacenamiento.
+        * str : nombre_archivo Nombre físico del archivo en Storage (slug, sin tildes ni espacios).
         * str : tipo_instrumento Categoría (Disposiciones, Rúbrica, Formulario, Plantilla, Formato Aval).
-        * str : extension Extensión del archivo (pdf, docx, xlsx).
-        * str : file_url Ruta o URL pública de descarga del archivo.
+        * str : extension Extensión del archivo (pdf, docx, xlsx, pptx).
+        * str : file_url URL pública del archivo en Supabase Storage.
         * int : orden Posición ordinal recomendada para el despliegue en la interfaz.
+        * str : version Versión del instrumento (por defecto '1.0').
+        * Optional[int] : tamano_bytes Tamaño del archivo en bytes.
+        * Optional[str] : mime_type Tipo MIME del archivo.
     """
     id_documento_conv: int
     id_convocatoria: int
@@ -116,101 +150,108 @@ class ConvocatoriaDocumentoOut(BaseModel):
     extension: str
     file_url: str
     orden: int
+    version: str = "1.0"
+    tamano_bytes: Optional[int] = None
+    mime_type: Optional[str] = None
 
 
-# [Línea clave]: Fallback estático con los 9 instrumentos oficiales aprobados mediante acuerdo CIE-237-2026.
-DOCUMENTOS_OFICIALES_FALLBACK = [
-    {
-        "id_documento_conv": 1,
-        "id_convocatoria": 1,
-        "nombre_documento": "Oficio de Aprobación CIE-237-2026",
-        "nombre_archivo": "CIE_237_2026_S_E_24_2026_art_1_Aprobacion_de_disposiciones_e_instrumentos.pdf",
-        "tipo_instrumento": "Oficio",
-        "extension": "pdf",
-        "file_url": "/docs/CIE_237_2026.pdf",
-        "orden": 1,
-    },
-    {
-        "id_documento_conv": 2,
-        "id_convocatoria": 1,
-        "nombre_documento": "1. Disposiciones Convocatoria Fondos VIE 2027",
-        "nombre_archivo": "1-Disposiciones Convocatoria Fondos VIE 2027.pdf",
-        "tipo_instrumento": "Disposiciones",
-        "extension": "pdf",
-        "file_url": "/docs/1-Disposiciones Convocatoria Fondos VIE 2027.pdf",
-        "orden": 2,
-    },
-    {
-        "id_documento_conv": 3,
-        "id_convocatoria": 1,
-        "nombre_documento": "2. Rúbricas de Investigación 2027",
-        "nombre_archivo": "2-Rúbricas_Investigación_2027__Fondos_VIE.xlsx",
-        "tipo_instrumento": "Rúbrica",
-        "extension": "xlsx",
-        "file_url": "/docs/2-Rubricas_Investigacion_2027.xlsx",
-        "orden": 3,
-    },
-    {
-        "id_documento_conv": 4,
-        "id_convocatoria": 1,
-        "nombre_documento": "3. Formulario Actividad de Fortalecimiento 2027",
-        "nombre_archivo": "3- Formulario Actividad Fortalecimiento Fondos VIE 2027.docx",
-        "tipo_instrumento": "Formulario",
-        "extension": "docx",
-        "file_url": "/docs/3-Formulario_Fortalecimiento.docx",
-        "orden": 4,
-    },
-    {
-        "id_documento_conv": 5,
-        "id_convocatoria": 1,
-        "nombre_documento": "4. Formulario Proyecto de Investigación 2027",
-        "nombre_archivo": "4- Formulario Proyecto Investigacion Fondos VIE 2027.docx",
-        "tipo_instrumento": "Formulario",
-        "extension": "docx",
-        "file_url": "/docs/4-Formulario_Proyecto_Investigacion.docx",
-        "orden": 5,
-    },
-    {
-        "id_documento_conv": 6,
-        "id_convocatoria": 1,
-        "nombre_documento": "5. Plan de Acción y Gestión del Riesgo 2027",
-        "nombre_archivo": "5- Plan de Acción y Gestión del Riesgo Fondos VIE 2027.xlsx",
-        "tipo_instrumento": "Plantilla",
-        "extension": "xlsx",
-        "file_url": "/docs/5-Plan_Accion_y_Riesgo.xlsx",
-        "orden": 6,
-    },
-    {
-        "id_documento_conv": 7,
-        "id_convocatoria": 1,
-        "nombre_documento": "6. Plantilla de Presupuesto Convocatoria 2027",
-        "nombre_archivo": "6- Plantilla Presupuesto Convocatoria Fondos VIE 2027.xlsx",
-        "tipo_instrumento": "Plantilla",
-        "extension": "xlsx",
-        "file_url": "/docs/6-Plantilla_Presupuesto.xlsx",
-        "orden": 7,
-    },
-    {
-        "id_documento_conv": 8,
-        "id_convocatoria": 1,
-        "nombre_documento": "7. Formato de Acuerdo Instancia Coordinadora",
-        "nombre_archivo": "7- Formato de acuerdo instancia coordinadora Fondos VIE 2027.docx",
-        "tipo_instrumento": "Formato Aval",
-        "extension": "docx",
-        "file_url": "/docs/7-Acuerdo_Instancia_Coordinadora.docx",
-        "orden": 8,
-    },
-    {
-        "id_documento_conv": 9,
-        "id_convocatoria": 1,
-        "nombre_documento": "8. Formato de Acuerdo Instancia Participante",
-        "nombre_archivo": "8- Formato de acuerdo instancia participante Fondos VIE 2027.docx",
-        "tipo_instrumento": "Formato Aval",
-        "extension": "docx",
-        "file_url": "/docs/8-Acuerdo_Instancia_Participante.docx",
-        "orden": 9,
-    },
-]
+# ----------------------------------------------------------------------------------------
+# Utilidades internas (Storage y carpetas)
+# ----------------------------------------------------------------------------------------
+
+
+def _slugify(texto: str) -> str:
+    """
+    Convertir un texto en un identificador seguro para rutas de Storage.
+
+    Elimina tildes, pasa a minúsculas y reemplaza cualquier secuencia no alfanumérica por un guion.
+    Ejemplo: 'Fondos VIE 2027' -> 'fondos-vie-2027'.
+
+    parametros:
+        - str : texto Texto original (título de convocatoria o nombre de archivo).
+
+    return:
+        + str : slug Texto normalizado ('sin-nombre' si queda vacío).
+    """
+    t = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode()
+    t = re.sub(r"[^a-zA-Z0-9]+", "-", t.lower()).strip("-")
+    return t or "sin-nombre"
+
+
+def _nombre_archivo_seguro(nombre: str) -> str:
+    """
+    Normalizar el nombre de un archivo conservando su extensión.
+
+    parametros:
+        - str : nombre Nombre original del archivo subido (ej. 'Formulario Final.DOCX').
+
+    return:
+        + str : nombre_seguro Nombre en formato slug (ej. 'formulario-final.docx').
+    """
+    stem, ext = os.path.splitext(nombre or "")
+    return f"{_slugify(stem)}{ext.lower()}"
+
+
+def _config_storage() -> tuple[str, str]:
+    """
+    Leer la configuración de Supabase Storage desde las variables de entorno.
+
+    return:
+        + tuple[str, str] : (url, service_key) URL base del proyecto y service role key.
+
+    Lanza HTTPException 500 si falta alguna variable (evita tumbar todo el backend al arrancar).
+    """
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        raise HTTPException(500, "Supabase Storage no está configurado en el servidor.")
+    return url, key
+
+
+def _carpeta_unica(cur, nombre: str) -> str:
+    """
+    Calcular una carpeta de Storage única para una convocatoria a partir de su título.
+
+    Si el slug ya está en uso por otra convocatoria, agrega un sufijo numérico (-2, -3, ...).
+
+    parametros:
+        - cursor : cur Cursor activo de la transacción.
+        - str : nombre Título de la convocatoria.
+
+    return:
+        + str : carpeta Nombre de carpeta disponible.
+    """
+    base = _slugify(nombre)
+    carpeta, n = base, 2
+    while True:
+        cur.execute(
+            "SELECT 1 FROM convocatorias WHERE carpeta_storage = %s", (carpeta,)
+        )
+        if not cur.fetchone():
+            return carpeta
+        carpeta = f"{base}-{n}"
+        n += 1
+
+
+def _borrar_de_storage(url: str, key: str, storage_path: str) -> None:
+    """
+    Eliminar un archivo de Storage (limpieza si falla el registro en la base de datos).
+
+    Es un intento de mejor esfuerzo: si falla, no propaga el error.
+    """
+    try:
+        httpx.delete(
+            f"{url}/storage/v1/object/{BUCKET}/{storage_path}",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=30,
+        )
+    except httpx.HTTPError:
+        pass
+
+
+# ----------------------------------------------------------------------------------------
+# Endpoints
+# ----------------------------------------------------------------------------------------
 
 
 @router.get("/totalConvocatorias", response_model=list[ConvocatoriaOut])
@@ -257,7 +298,7 @@ def obtener_etapas_por_convocatoria(
     Consultar el cronograma oficial de etapas de una convocatoria específica.
 
     Filtra la tabla 'convocatoria_etapas' por el ID de la convocatoria y las retorna ordenadas
-    por la columna 'orden' para reflejar la secuencia cronológica de 11 etapas.
+    por la columna 'orden' para reflejar la secuencia cronológica del proceso.
 
     parametros:
         - int : id_convocatoria Identificador de la convocatoria a consultar.
@@ -294,46 +335,164 @@ def obtener_etapas_por_convocatoria(
 
 @router.get("/documentos_convocatoria", response_model=list[ConvocatoriaDocumentoOut])
 def obtener_documentos_convocatoria(
-    id_convocatoria: int = Query(1, description="ID de la convocatoria"),
+    id_convocatoria: int = Query(..., description="ID de la convocatoria"),
     conn: Connection = Depends(get_conn),
 ):
     """
-    Proveer los instrumentos y documentos normativos oficiales de la convocatoria para su descarga.
+    Listar los instrumentos y documentos normativos activos de una convocatoria.
 
-    Consulta en primera instancia la tabla 'convocatoria_documentos' en Supabase. Si la tabla aún
-    no contiene registros o se encuentra en transición, recurre de forma resiliente a la lista
-    DOCUMENTOS_OFICIALES_FALLBACK con los 9 instrumentos normativos aprobados para Fondos VIE 2027.
+    Lee la tabla 'convocatoria_documentos' (única fuente de verdad). Cada registro incluye la URL
+    pública del archivo en Supabase Storage, lista para el visor del frontend. Si la convocatoria no
+    tiene documentos devuelve una lista vacía.
 
     parametros:
-        - int : id_convocatoria Identificador de la convocatoria (por defecto 1 = Fondos VIE 2027).
+        - int : id_convocatoria Identificador de la convocatoria a consultar.
         - Connection : conn Conexión transaccional inyectada por FastAPI desde el pool de Supabase.
 
     return:
-        + list[ConvocatoriaDocumentoOut] : documentos Lista de los instrumentos oficiales con URLs de descarga.
+        + list[ConvocatoriaDocumentoOut] : documentos Instrumentos ordenados para la Pantalla 05.
     """
-    try:
-        with conn.cursor() as cur:
-            # [Línea clave]: Intenta consultar los instrumentos oficiales persistidos en la base de datos de Supabase.
+    with conn.cursor() as cur:
+        # [Línea clave]: Solo documentos activos; los reemplazados se marcan activo = false en vez de borrarse.
+        cur.execute(
+            """
+            SELECT id_documento_conv, id_convocatoria, nombre_documento,
+                   nombre_archivo, tipo_instrumento, extension, file_url, orden,
+                   version, tamano_bytes, mime_type
+            FROM convocatoria_documentos
+            WHERE id_convocatoria = %s AND activo
+            ORDER BY orden ASC, id_documento_conv ASC
+            """,
+            (id_convocatoria,),
+        )
+        filas = cur.fetchall()
+
+    return [ConvocatoriaDocumentoOut(**f) for f in filas]
+
+
+@router.post(
+    "/documentos_convocatoria",
+    response_model=ConvocatoriaDocumentoOut,
+    status_code=201,
+)
+def subir_documento_convocatoria(
+    id_convocatoria: int = Form(...),
+    nombre_documento: str = Form(...),
+    tipo_instrumento: str = Form(...),
+    orden: Optional[int] = Form(None),
+    version: str = Form("1.0"),
+    archivo: UploadFile = File(...),
+    conn: Connection = Depends(get_conn),
+):
+    """
+    Subir un instrumento a Supabase Storage y registrarlo en 'convocatoria_documentos'.
+
+    El archivo se guarda en convocatorias/<carpeta_storage>/<nombre-archivo-seguro>. Si la convocatoria
+    todavía no tiene carpeta asignada, se calcula a partir de su título y se persiste. Si el registro en
+    la base de datos falla después de subir el archivo, este se elimina de Storage para no dejar huérfanos.
+
+    parametros:
+        - int : id_convocatoria Convocatoria a la que pertenece el documento.
+        - str : nombre_documento Título legible para la interfaz.
+        - str : tipo_instrumento Categoría (Disposiciones, Rúbrica, Formulario, Plantilla, Formato Aval).
+        - Optional[int] : orden Posición en la lista; si se omite se agrega al final.
+        - str : version Versión del instrumento (por defecto '1.0').
+        - UploadFile : archivo Archivo a subir (pdf, docx, xlsx o pptx, máximo 20 MB).
+        - Connection : conn Conexión transaccional inyectada por FastAPI.
+
+    return:
+        + ConvocatoriaDocumentoOut : documento Registro creado, con su URL pública.
+    """
+    # 1) Validar formato y tamaño antes de tocar Storage
+    nombre_archivo = _nombre_archivo_seguro(archivo.filename or "")
+    extension = os.path.splitext(nombre_archivo)[1].lstrip(".")
+    mime = MIME_POR_EXTENSION.get(extension)
+    if not mime:
+        raise HTTPException(400, "Formato no permitido. Usa PDF, DOCX, XLSX o PPTX.")
+
+    contenido = archivo.file.read(MAX_BYTES + 1)
+    if not contenido:
+        raise HTTPException(400, "El archivo está vacío.")
+    if len(contenido) > MAX_BYTES:
+        raise HTTPException(413, f"El archivo supera el máximo de {MAX_BYTES // 1048576} MB.")
+
+    url, key = _config_storage()
+
+    with conn.cursor() as cur:
+        # 2) Resolver la carpeta de la convocatoria (se asigna una sola vez)
+        cur.execute(
+            "SELECT nombre, carpeta_storage FROM convocatorias WHERE id_convocatoria = %s",
+            (id_convocatoria,),
+        )
+        conv = cur.fetchone()
+        if not conv:
+            raise HTTPException(404, "Convocatoria no encontrada.")
+
+        carpeta = conv["carpeta_storage"]
+        if not carpeta:
+            carpeta = _carpeta_unica(cur, conv["nombre"])
             cur.execute(
-                """
-                SELECT id_documento_conv, id_convocatoria, nombre_documento,
-                       nombre_archivo, tipo_instrumento, extension, file_url, orden
-                FROM convocatoria_documentos
-                WHERE id_convocatoria = %s
-                ORDER BY orden ASC
-                """,
+                "UPDATE convocatorias SET carpeta_storage = %s WHERE id_convocatoria = %s",
+                (carpeta, id_convocatoria),
+            )
+
+        if orden is None:
+            cur.execute(
+                "SELECT COALESCE(MAX(orden), 0) + 1 AS siguiente "
+                "FROM convocatoria_documentos WHERE id_convocatoria = %s",
                 (id_convocatoria,),
             )
-            filas = cur.fetchall()
-            if filas:
-                return [ConvocatoriaDocumentoOut(**f) for f in filas]
-    except Exception:
-        # [Línea clave]: Captura cualquier contingencia para activar el mecanismo de alta disponibilidad por fallback.
-        pass
+            orden = cur.fetchone()["siguiente"]
 
-    # [Línea clave]: Retorna los 9 instrumentos oficiales garantizados cumpliendo el Requerimiento 6 de Fondos VIE 2027.
-    return [
-        ConvocatoriaDocumentoOut(**doc)
-        for doc in DOCUMENTOS_OFICIALES_FALLBACK
-        if doc["id_convocatoria"] == id_convocatoria or id_convocatoria == 1
-    ]
+        storage_path = f"{carpeta}/{nombre_archivo}"
+        file_url = f"{url}/storage/v1/object/public/{BUCKET}/{storage_path}"
+
+        # 3) Subir el archivo (x-upsert=false: nunca pisa un archivo existente)
+        try:
+            r = httpx.post(
+                f"{url}/storage/v1/object/{BUCKET}/{storage_path}",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": mime,
+                    "x-upsert": "false",
+                },
+                content=contenido,
+                timeout=60,
+            )
+        except httpx.HTTPError:
+            conn.rollback()
+            raise HTTPException(502, "No se pudo contactar a Supabase Storage.")
+
+        if r.status_code >= 400:
+            conn.rollback()
+            if "Duplicate" in r.text or r.status_code == 409:
+                raise HTTPException(
+                    409, f"Ya existe un archivo llamado '{nombre_archivo}' en esta convocatoria."
+                )
+            raise HTTPException(502, f"Storage rechazó el archivo: {r.text}")
+
+        # 4) Registrar la fila; si falla, se limpia el archivo recién subido
+        try:
+            cur.execute(
+                """
+                INSERT INTO convocatoria_documentos
+                  (id_convocatoria, nombre_documento, nombre_archivo, tipo_instrumento,
+                   extension, storage_path, file_url, orden, mime_type, tamano_bytes, version)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id_documento_conv, id_convocatoria, nombre_documento,
+                          nombre_archivo, tipo_instrumento, extension, file_url, orden,
+                          version, tamano_bytes, mime_type
+                """,
+                (
+                    id_convocatoria, nombre_documento, nombre_archivo, tipo_instrumento,
+                    extension, storage_path, file_url, orden, mime, len(contenido), version,
+                ),
+            )
+            nuevo = cur.fetchone()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            _borrar_de_storage(url, key, storage_path)
+            raise HTTPException(500, "No se pudo registrar el documento en la base de datos.")
+
+    return ConvocatoriaDocumentoOut(**nuevo)

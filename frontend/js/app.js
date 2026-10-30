@@ -187,7 +187,11 @@ const LOGIN_ERRORS = {
  */
 const SCREEN_LOADERS = {
   "04": obtener_convocatorias,
-  "05": () => obtenerEtapasConvocatoria(state.viewCall),
+  "05": () =>
+    Promise.all([
+      obtenerEtapasConvocatoria(state.viewCall),
+      obtenerDocumentosConvocatoria(state.viewCall),
+    ]),
 };
 
 /**
@@ -439,6 +443,21 @@ async function obtenerEtapasConvocatoria(id_convocatoria) {
     console.warn("obtenerEtapasConvocatoria error:", err);
   }
   return etapasConvocatoria ;
+}
+
+let documentosConvocatoria = null;
+async function obtenerDocumentosConvocatoria(id_convocatoria) {
+  documentosConvocatoria = null; // null = cargando
+  try {
+    const res = await fetch(
+      `${API_URL}/convocatorias/documentos_convocatoria?id_convocatoria=${id_convocatoria}`,
+    );
+    documentosConvocatoria = res.ok ? await res.json() : [];
+  } catch (err) {
+    console.warn("obtenerDocumentosConvocatoria error:", err);
+    documentosConvocatoria = [];
+  }
+  return documentosConvocatoria;
 }
 
 let evaluacionPreliminarIA = null;
@@ -1213,6 +1232,52 @@ function doc(name, meta = "Versión 1.0", action = "preview") {
   return `<div class="doc-row"><span class="doc-icon">${/xlsx/i.test(name) ? "XLSX" : "PDF"}</span><div class="grow"><strong>${esc(name)}</strong><small>${esc(meta)}</small></div>${act("Ver", action, "text compact", "file", `data-doc="${esc(name)}"`)}</div>`;
 }
 
+/** Formatear bytes a texto legible (KB / MB). */
+function formatBytes(b) {
+  if (!b) return "";
+  return b < 1048576 ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`;
+}
+
+/**
+ * Fila de documento proveniente de la base de datos (a diferencia de doc(), que es estática).
+ * Usa la extensión real (PDF / DOCX / XLSX) en la insignia.
+ */
+function docRemoto(d) {
+  const ext = String(d.extension || "pdf").replace(".", "").toUpperCase();
+  const meta = [`Versión ${d.version ?? "1.0"}`, formatBytes(d.tamano_bytes)]
+    .filter(Boolean)
+    .join(" · ");
+  return `<div class="doc-row"><span class="doc-icon">${esc(ext)}</span><div class="grow"><strong>${esc(d.nombre_documento)}</strong><small>${esc(meta)}</small></div>${act("Ver", "preview-remote", "text compact", "file", `data-doc-id="${d.id_documento_conv}"`)}</div>`;
+}
+
+/** Lista de instrumentos de la convocatoria con estados de carga y vacío. */
+function instrumentosConvocatoria() {
+  if (documentosConvocatoria === null)
+    return `<p class="small muted">Cargando instrumentos…</p>`;
+  if (!documentosConvocatoria.length)
+    return `<p class="small muted">Esta convocatoria aún no tiene instrumentos publicados.</p>`;
+  return documentosConvocatoria.map(docRemoto).join("");
+}
+
+/** Contenido del visor según el tipo de archivo. */
+function visorHtml(d) {
+  const url = d.file_url;
+  const ext = String(d.extension || "").toLowerCase().replace(".", "");
+  const frame =
+    "width:100%;height:70vh;border:0;border-radius:8px;background:#f4f4f4";
+
+  // PDF: lo muestra el visor nativo del navegador
+  if (ext === "pdf")
+    return `<iframe title="${esc(d.nombre_documento)}" src="${esc(url)}#toolbar=1" style="${frame}"></iframe>`;
+
+  // Word / Excel / PowerPoint: visor embebido de Office Online (requiere URL pública)
+  if (["docx", "xlsx", "pptx"].includes(ext))
+    return `<iframe title="${esc(d.nombre_documento)}" src="https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}" style="${frame}"></iframe>`;
+
+  // Cualquier otro formato: sin vista previa
+  return `<div class="notice">${icon("file")}<div><strong>Sin vista previa</strong><p>Este formato no se puede mostrar aquí. Usa «Descargar».</p></div></div>`;
+}
+
 /**
  * Formatear una colección de propuestas para renderizarlas como filas de tabla institucional.
  * Transforma cada propuesta en una tupla con código, título, periodo, badge de estado, monto y botón de acción.
@@ -1512,7 +1577,7 @@ function callDetail() {
         ["Modalidad", "Duración inicial", "Tope"],
         (modalidades ?? []).map((m) => [esc(m.titulo), esc(m.duracion), money(m.monto)]),
       )}`,
-    )}${card("Instrumentos de la convocatoria", doc("Disposiciones Fondos VIE 2027.pdf") + doc("Formulario de proyecto de investigación.docx") + doc("Plan de acción y gestión del riesgo.xlsx") + doc("Presupuesto Fondos VIE 2027.xlsx") + doc("Rúbricas de evaluación 2027.xlsx"))}${notice("No omitas las etapas previas", "Enviar a evaluación y someter ante VIE son acciones distintas. El investigador realiza el sometimiento formal después de obtener los avales.")}</div>${card("Calendario", `<div class="timeline">${etapasRows().map(([a, b], i) => `<div class="event ${i === 0 ? "current" : ""}"><h3>${esc(a)}</h3><p>${esc(b)}</p></div>`).join("")}</div>`)}</div>`,
+    )}${card("Instrumentos de la convocatoria", instrumentosConvocatoria())}${notice("No omitas las etapas previas", "Enviar a evaluación y someter ante VIE son acciones distintas. El investigador realiza el sometimiento formal después de obtener los avales.")}</div>${card("Calendario", `<div class="timeline">${etapasRows().map(([a, b], i) => `<div class="event ${i === 0 ? "current" : ""}"><h3>${esc(a)}</h3><p>${esc(b)}</p></div>`).join("")}</div>`)}</div>`,
     conv?.nombre ?? "Convocatoria",
     `Convocatoria de investigación · Inicio de ejecución: ${inicioEjecucion}`,
     btn("Crear propuesta", "07", "", "plus"),
@@ -3173,6 +3238,24 @@ async function handleAction(action, el) {
         "document",
       );
       break;
+    case "preview-remote": {
+      const d = (documentosConvocatoria ?? []).find(
+        (x) => x.id_documento_conv === Number(el.dataset.docId),
+      );
+      if (!d) {
+        toast("No se encontró el documento.");
+        break;
+      }
+      modal(
+        esc(d.nombre_documento),
+        visorHtml(d),
+        `<a class="btn secondary" href="${esc(d.file_url)}" target="_blank" rel="noopener" download>Descargar</a>` +
+          act("Cerrar visor", "close", "secondary"),
+        true, // modal ancho
+        "document",
+      );
+      break;
+    }
     case "team":
       modal(
         "Participante del equipo",
