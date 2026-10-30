@@ -623,7 +623,7 @@ function renderizarPanelReferenciaIA(idPantalla) {
         "Diseño metodológico consistente con 4 actividades, 4 riesgos mitigados, beca estudiantil de 10 h/semana y equipamiento en Año 1.",
     },
     referencia_consejo_escuela: {
-      viabilidad_horaria: "Conforme: 16 h/semana totales (cumple mínimo de 8 h/sem del proyecto y >= 4 h/sem por investigador).",
+      viabilidad_horaria: `Conforme: ${totalHorasEquipo()} h/semana totales (cumple mínimo de 8 h/sem del proyecto y >= 4 h/sem por investigador).`,
       pertinencia_escuela: "Alineada con las líneas de investigación de Ingeniería Ambiental e Ingeniería Electrónica.",
       recomendacion_aval: "Otorgar Aval de Consejo de Escuela ratificando horas, presupuesto y calificación técnica.",
       verificacion_presupuestaria: "Monto de ₡9.400.000 dentro del tope anual de ₡5.000.000/año para Desarrollo Tecnológico.",
@@ -1730,12 +1730,6 @@ const PROPOSAL_DEFAULTS = {
   "ethics:3:applies": "No",
   "ethics:3:reason": "Los sitios piloto no se ubican en territorios indígenas; cualquier cambio requerirá consulta y autorización previa.",
 };
-const DEFAULT_TEAM = [
-  { nombre: "Laura Méndez", correo: "laura.mendez@example.com", escuela: "Ingeniería Ambiental" },
-  { nombre: "Andrés Rojas", correo: "andres.rojas@example.com", escuela: "Ingeniería Electrónica" },
-  { nombre: "Sofía Vega", correo: "sofia.vega@example.com", escuela: "Ingeniería Ambiental" },
-];
-
 function currentProposalId() {
   return Number(state.created?.id) || 1;
 }
@@ -1807,28 +1801,26 @@ function rubroParaPartida(partida) {
 }
 
 function proposalTeamMembers() {
-  const equipo = [];
-  const vistos = new Set();
-  const agregar = (nombre, correo, tipo, horas, rol, escuela) => {
-    const clave = String(correo ?? "").trim().toLowerCase();
-    if (!clave || vistos.has(clave)) return;
-    vistos.add(clave);
-    equipo.push({ nombre, correo: clave, tipo, horas, rol, escuela });
-  };
-  if (session?.user) {
-    agregar(
-      session.user.nombre,
-      session.user.correo,
-      "VIE",
-      8,
-      "Coordinador/a",
-      escuelas?.[0]?.nombre || "Instancia coordinadora",
-    );
-  }
-  DEFAULT_TEAM.forEach((persona) =>
-    agregar(persona.nombre, persona.correo, "REC", 4, "Investigador/a", persona.escuela),
-  );
-  return equipo;
+  const correo = String(session?.user?.correo ?? "").trim().toLowerCase();
+  if (!correo) return [];
+  return [
+    {
+      nombre: session.user.nombre,
+      correo,
+      tipo: "VIE",
+      horas: 8,
+      rol: "Coordinador/a",
+      escuela: escuelas?.[0]?.nombre || "Instancia coordinadora",
+    },
+  ];
+}
+
+function totalHorasEquipo() {
+  return proposalTeamMembers().reduce((total, persona) => total + Number(persona.horas || 0), 0);
+}
+
+function nombreResponsableActual() {
+  return session?.user?.nombre || "Coordinador/a";
 }
 
 function proposalDocuments() {
@@ -2264,7 +2256,7 @@ function dataForm() {
  */
 function teamForm() {
   const equipo = proposalTeamMembers();
-  const totalHoras = equipo.reduce((total, persona) => total + Number(persona.horas || 0), 0);
+  const totalHoras = totalHorasEquipo();
   const externo = state.externalCollaborator;
   return `${notice(`Dedicación total: ${totalHoras} horas semanales`, "El equipo se registra mediante correos de usuarios institucionales activos; el backend valida cada cuenta.")}<div class="mt">${table(
     ["Persona / instancia", "Rol", "Horas", "Correo"],
@@ -2330,7 +2322,8 @@ function objectiveForm() {
  *     + string : methodologyHtml Marcado HTML de metodología.
  */
 function methodologyForm() {
-  return `${field("Enfoque y diseño metodológico", screen("12").fields[0].value, "textarea", "Describe enfoque, alcance y diseño.", true)}${field("Procedimientos y técnicas", screen("12").fields[1].value, "textarea", "Incluye instrumentos, variables y procedimientos de medición.", true)}${field("Usuarios y validación", "Personas responsables de la gestión de dos microcuencas piloto. La validación compara mediciones de pH, temperatura y conductividad con instrumentos de referencia; se documentan concordancia, cobertura temporal y limitaciones.", "textarea", "Justifica la selección de sitios y cómo se comprobará el desempeño.", true)}${field("Análisis de resultados", screen("12").fields[2].value, "textarea", "", true)}<details class="accordion"><summary>Productos y difusión</summary><p>Productos comprometidos para 16 h: software (activo de PI), artículo sometido WoS/Scopus y manual técnico. La validación de PI corresponde a Vinculación.</p></details>`;
+  const totalHoras = totalHorasEquipo();
+  return `${field("Enfoque y diseño metodológico", screen("12").fields[0].value, "textarea", "Describe enfoque, alcance y diseño.", true)}${field("Procedimientos y técnicas", screen("12").fields[1].value, "textarea", "Incluye instrumentos, variables y procedimientos de medición.", true)}${field("Usuarios y validación", "Personas responsables de la gestión de dos microcuencas piloto. La validación compara mediciones de pH, temperatura y conductividad con instrumentos de referencia; se documentan concordancia, cobertura temporal y limitaciones.", "textarea", "Justifica la selección de sitios y cómo se comprobará el desempeño.", true)}${field("Análisis de resultados", screen("12").fields[2].value, "textarea", "", true)}<details class="accordion"><summary>Productos y difusión</summary><p>Productos comprometidos para ${totalHoras} h: software (activo de PI), artículo sometido WoS/Scopus y manual técnico. La validación de PI corresponde a Vinculación.</p></details>`;
 }
 
 /**
@@ -2341,7 +2334,7 @@ function methodologyForm() {
  *     * Array<string> : 0 Código del objetivo específico (OE1, OE2, OE3).
  *     * string : 1 Descripción de la actividad.
  *     * string : 2 Producto o entregable esperado.
- *     * string : 3 Iniciales y rol del responsable.
+ *     * string : 3 Rol del responsable; el nombre se resuelve desde la sesión.
  *     * string : 4 Rango de meses de ejecución.
  */
 const activities = [
@@ -2349,28 +2342,28 @@ const activities = [
     "OE1",
     "Definir requerimientos y sitios",
     "Especificación de requerimientos",
-    "LM · Ejecuta",
+    "Ejecuta",
     "1–6",
   ],
   [
     "OE2",
     "Integrar y calibrar el prototipo",
     "Prototipo integrado",
-    "AR · Ejecuta",
+    "Ejecuta",
     "7–12",
   ],
   [
     "OE2",
     "Validar en dos microcuencas",
     "Datos de validación",
-    "SV · Ejecuta",
+    "Ejecuta",
     "13–20",
   ],
   [
     "OE3",
     "Evaluar desempeño y documentar",
     "Informe y manual técnico",
-    "LM · Supervisa",
+    "Supervisa",
     "21–24",
   ],
 ];
@@ -2392,7 +2385,7 @@ function planForm() {
       .map((r) => [
         `<span class="project-code">${r[0]}</span><strong>${r[1]}</strong>`,
         r[2],
-        r[3],
+        `<strong>${esc(nombreResponsableActual())}</strong><br><span class="micro muted">${esc(responsableDeActividad(r[3]).rol)}</span>`,
         r[4],
       ]),
   )}</div><div class="action-row mt mb">${act("Agregar actividad", "activity", "secondary", "plus")}${btn("Revisar riesgos", "14", "text", "arrow")}</div><h3 class="mb">Cronograma · 24 meses</h3><div class="gantt"><div>Actividad</div>${["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8"].map((x) => `<div>${x}</div>`).join("")}${activities.map((r, i) => `<div>${r[1]}</div>${Array.from({ length: 8 }, (_, j) => `<div ${j >= i * 2 && j < i * 2 + 2 ? 'class="bar"' : ""}></div>`).join("")}`).join("")}</div><details class="accordion"><summary>Giras e informes de seguimiento</summary><p>Se planifican giras de campo durante meses 13–20, informes semestrales en meses 6, 12, 18 y 24 e informes anuales en meses 12 y 24. La coordinación supervisa su entrega.</p></details>`;
@@ -2413,25 +2406,25 @@ const risks = [
     "Definir requerimientos",
     "Acceso limitado a sitios",
     "Acordar accesos y sitios alternos antes de las visitas.",
-    "Laura Méndez",
+    "Coordinador/a",
   ],
   [
     "Integrar y calibrar",
     "Retraso de componentes",
     "Verificar disponibilidad y opciones compatibles en el primer semestre.",
-    "Andrés Rojas",
+    "Coordinador/a",
   ],
   [
     "Validar en campo",
     "Crecidas en microcuencas",
     "Programar ventanas alternas y puntos seguros de medición.",
-    "Sofía Vega",
+    "Coordinador/a",
   ],
   [
     "Evaluar y documentar",
     "Pérdida de registros",
     "Respaldar y verificar integridad semanalmente.",
-    "Laura Méndez",
+    "Coordinador/a",
   ],
 ];
 
@@ -2452,7 +2445,7 @@ function riskForm() {
       .map((r) => [
         `<span class="project-code">${r[0]}</span><strong>${r[1]}</strong>`,
         r[2],
-        r[3],
+        `<strong>${esc(nombreResponsableActual())}</strong>`,
       ]),
   )}</div><div class="mt">${act("Agregar riesgo", "risk", "secondary", "plus")}</div><details class="accordion"><summary>Revisar consistencia con el plan</summary><p>Las medidas son realizables con los recursos y plazos de la propuesta. Los riesgos se revisarán durante cada informe de seguimiento.</p></details>`;
 }
@@ -2504,6 +2497,7 @@ function budgetForm() {
  *     + string : complementaryHtml Marcado HTML de información complementaria y ética.
  */
 function complementaryForm() {
+  const totalHoras = totalHorasEquipo();
   const ethics = [
     [
       "Participación de seres humanos",
@@ -2522,7 +2516,7 @@ function complementaryForm() {
       "Los sitios piloto no se ubican en territorios indígenas; cualquier cambio requerirá consulta y autorización previa.",
     ],
   ];
-  return `<h3 class="mb">Madurez tecnológica y propiedad intelectual</h3><div class="field-row">${field("TRL actual", ["4", "1", "2", "3", "5", "6", "7", "8", "9"], "select", "Rango de referencia DT: 4–7.", true)}${field("TRL esperado", ["6", "1", "2", "3", "4", "5", "7", "8", "9"], "select", "Coherente con objetivos y validación.", true)}</div>${field("Potencial de propiedad intelectual", ["Sí", "No"], "select", "En desarrollo tecnológico el dictamen de Vinculación es obligatorio.", true)}${field("Activo previsto", "Software de integración y registro de mediciones ambientales.", "textarea", "Evitar divulgación previa a la valoración institucional.", true)}<details class="accordion" open><summary>Declaraciones éticas individuales</summary><p class="small muted" style="margin-top:14px">Cada aspecto se declara y justifica por separado; no se admite una respuesta general.</p><div class="ethics-grid">${ethics.map(([label, reason], i) => `<section class="ethics-item"><h3>${label}</h3>${field("¿Aplica?", ["No", "Sí"], "select", "Selecciona Sí si la actividad requiere revisión o permisos.", true, `ethics:${i}:applies`)}${field(`Justificación específica`, reason, "textarea", "Indica entidad, estado, mitigación y plazo si corresponde.", true, `ethics:${i}:reason`)}</section>`).join("")}</div></details><details class="accordion"><summary>Producción, difusión y hoja de ruta</summary><p><strong>16 h/semana:</strong> software + artículo sometido WoS/Scopus + manual técnico. Se asocian a OE2 y OE3.</p>${field("Difusión y socialización", "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.", "textarea")}${field("Hoja de ruta", "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.", "textarea")}</details>`;
+  return `<h3 class="mb">Madurez tecnológica y propiedad intelectual</h3><div class="field-row">${field("TRL actual", ["4", "1", "2", "3", "5", "6", "7", "8", "9"], "select", "Rango de referencia DT: 4–7.", true)}${field("TRL esperado", ["6", "1", "2", "3", "4", "5", "7", "8", "9"], "select", "Coherente con objetivos y validación.", true)}</div>${field("Potencial de propiedad intelectual", ["Sí", "No"], "select", "En desarrollo tecnológico el dictamen de Vinculación es obligatorio.", true)}${field("Activo previsto", "Software de integración y registro de mediciones ambientales.", "textarea", "Evitar divulgación previa a la valoración institucional.", true)}<details class="accordion" open><summary>Declaraciones éticas individuales</summary><p class="small muted" style="margin-top:14px">Cada aspecto se declara y justifica por separado; no se admite una respuesta general.</p><div class="ethics-grid">${ethics.map(([label, reason], i) => `<section class="ethics-item"><h3>${label}</h3>${field("¿Aplica?", ["No", "Sí"], "select", "Selecciona Sí si la actividad requiere revisión o permisos.", true, `ethics:${i}:applies`)}${field(`Justificación específica`, reason, "textarea", "Indica entidad, estado, mitigación y plazo si corresponde.", true, `ethics:${i}:reason`)}</section>`).join("")}</div></details><details class="accordion"><summary>Producción, difusión y hoja de ruta</summary><p><strong>${totalHoras} h/semana:</strong> software + artículo sometido WoS/Scopus + manual técnico. Se asocian a OE2 y OE3.</p>${field("Difusión y socialización", "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.", "textarea")}${field("Hoja de ruta", "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.", "textarea")}</details>`;
 }
 
 /**
@@ -2695,7 +2689,7 @@ function tracking() {
   const trackCode = creada.code || state.viewProposal || "SI-2027-014";
   const trackTitle = creada.title || draftValue("08:Título de la propuesta", PROPOSAL_DEFAULTS["08:Título de la propuesta"]);
   const trackAmount = Number(creada.amount) || totalA() + totalB();
-  const trackHours = state.created ? proposalTeamMembers().reduce((total, m) => total + Number(m.horas || 0), 0) : 16;
+  const trackHours = totalHorasEquipo();
   return shell(
     `<div class="two-col"><div class="stack">${card(esc(trackTitle), `<span class="project-code">${esc(trackCode)} · Versión 1.0</span><div class="action-row mt mb">${badge(stateText, "solid")}${badge(state.mode || "Desarrollo tecnológico")}</div>${action}<div class="stat-strip"><div><strong>${money(trackAmount)}</strong><span>Monto solicitado</span></div><div><strong>24 meses</strong><span>Enero 2027 – diciembre 2028</span></div><div><strong>${trackHours} h</strong><span>Dedicación semanal</span></div></div>`)}${card("Documentos de la etapa", doc(ix >= 3 ? "Acuerdo de aval · IA-014-2026.pdf" : `Registro de envío · ${esc(trackCode)}.pdf`) + doc(`Propuesta · ${esc(trackCode)}.pdf`))}</div>${card("Ruta del expediente", `<div class="timeline">${stageList.map((s, i) => `<div class="event ${s === state.stage ? "current" : ""}"><h3>${i < ix ? "✓ " : ""}${s}</h3><p>${["Investigador", "Vinculación", "Comité Técnico", "Consejos de Escuela", "Investigador → VIE", "Dirección de Investigación", "CIE", "Investigador", "Equipo investigador", "Dirección de Investigación"][i]}</p></div>`).join("")}</div>`)}</div>`,
     "Seguimiento de propuesta",
@@ -2985,7 +2979,7 @@ function evaluation(id) {
       )
       .join(
         "",
-      )}</div><label class="checkline"><input type="checkbox" id="products-ok" ${!state.notRecommended ? "checked" : ""}>Producción no sumativa conforme: software + artículo WoS/Scopus + manual técnico para 16 h.</label>${field("Justificación de criterios obligatorios", "La propuesta identifica responsables, plazos, beca, riesgos y declaración ética; consta dictamen de Vinculación.", "textarea", "Justifica los criterios obligatorios con referencia a la evidencia.", true)}<div id="score-result" class="notice ${sc.recommended ? "" : "warning"}"><div><strong>${sc.sum.toFixed(1)} / 100 · ${sc.recommended ? "Recomendada" : "No recomendada"}</strong><p>${sc.blocked ? "Hay un criterio obligatorio con nivel insuficiente." : "La recomendación depende de la nota y de los requisitos obligatorios."}</p></div></div>`;
+      )}</div><label class="checkline"><input type="checkbox" id="products-ok" ${!state.notRecommended ? "checked" : ""}>Producción no sumativa conforme: software + artículo WoS/Scopus + manual técnico para ${totalHorasEquipo()} h.</label>${field("Justificación de criterios obligatorios", "La propuesta identifica responsables, plazos, beca, riesgos y declaración ética; consta dictamen de Vinculación.", "textarea", "Justifica los criterios obligatorios con referencia a la evidencia.", true)}<div id="score-result" class="notice ${sc.recommended ? "" : "warning"}"><div><strong>${sc.sum.toFixed(1)} / 100 · ${sc.recommended ? "Recomendada" : "No recomendada"}</strong><p>${sc.blocked ? "Hay un criterio obligatorio con nivel insuficiente." : "La recomendación depende de la nota y de los requisitos obligatorios."}</p></div></div>`;
   }
   if (id === "25")
     inner = `${notice("El aval no somete automáticamente", "Después del acuerdo, el investigador realiza el sometimiento formal ante VIE.")}<div class="mt">${field("Instancia", ["Escuela de Ingeniería Ambiental · Coordinadora", "Escuela de Ingeniería Electrónica · Participante"], "select", "Cada consejo avala a su propio personal.", true)}<div class="field-row">${field("Sesión y artículo", "18-2026 · Artículo 4", "text", "", true)}${field("Fecha del acuerdo", "2026-09-17", "date", "", true)}</div>${field("Oficio", "IA-AVAL-014-2026", "text", "", true)}${["Aval de la propuesta y presupuesto de ₡9.400.000", "Participación y horas del personal de la instancia", "Ratificación de la calificación del Comité Técnico"].map((t) => `<label class="checkline"><input type="checkbox" checked required>${t}</label>`).join("")}${doc("Acuerdo firmado de la coordinadora.pdf")}${doc("Acuerdo firmado de instancia participante.pdf")}</div>`;
@@ -3008,7 +3002,7 @@ function evaluation(id) {
           ["Modalidad", "Desarrollo tecnológico"],
           ["Total", money(9400000)],
           ["Período", "2027–2028"],
-          ["Dedicación", "16 h/semana"],
+          ["Dedicación", `${totalHorasEquipo()} h/semana`],
         ],
       )}<div class="mt">${btn("Consultar expediente", "22", "secondary", "folder")}</div>`,
     )}${id === "24" ? card("Resultado ponderado", `<div class="score" id="score-number">${scoreResult().sum.toFixed(1)}<small> / 100</small></div><p class="small muted" style="margin:12px 0">Umbral de recomendación: 70.</p><div class="scorebar"><span style="width:${scoreResult().sum}%"></span></div><p class="micro muted" style="margin-top:16px">La producción y los requisitos obligatorios también deben cumplir.</p>`) : card("Trazabilidad", `<p class="small muted mb">La decisión quedará asociada a la persona, la fecha, el documento y la versión revisada.</p>${btn("Consultar historial", "28", "text", "arrow")}`)}</div></div>`,
@@ -3832,7 +3826,7 @@ async function handleAction(action, el) {
     case "activity":
       modal(
         "Agregar actividad",
-        `${field("Objetivo específico", ["OE1", "OE2", "OE3"], "select", "", true, "modal:objective-code")}${field("Actividad", "Entregar informe semestral de avance", "text", "", true, "modal:activity")}${field("Resultado esperado", "Informe semestral registrado", "text", "", true, "modal:result")}<div class="field-row">${field("Responsable", "Laura Méndez", "text", "Ejecuta / Supervisa / Participa.", true, "modal:owner")}${field("Mes inicial / duración", "6 / 1", "text", "Meses correlativos.", true, "modal:period")}</div>`,
+        `${field("Objetivo específico", ["OE1", "OE2", "OE3"], "select", "", true, "modal:objective-code")}${field("Actividad", "Entregar informe semestral de avance", "text", "", true, "modal:activity")}${field("Resultado esperado", "Informe semestral registrado", "text", "", true, "modal:result")}<div class="field-row">${field("Responsable", nombreResponsableActual(), "text", "Ejecuta / Supervisa / Participa.", true, "modal:owner")}${field("Mes inicial / duración", "6 / 1", "text", "Meses correlativos.", true, "modal:period")}</div>`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar actividad", "save-extra", 'data-kind="activity"'),
         false,
@@ -3842,7 +3836,7 @@ async function handleAction(action, el) {
     case "risk":
       modal(
         "Agregar riesgo",
-        `${field("Actividad", ["Definir requerimientos", "Integrar y calibrar", "Validar en campo", "Evaluar y documentar"], "select", "", true, "modal:riskactivity")}${field("Riesgo", "Indisponibilidad temporal de un sitio piloto.", "textarea", "", true, "modal:risk")}${field("Mitigación", "Acordar un sitio alternativo antes del inicio de la validación.", "textarea", "", true, "modal:mitigation")}${field("Responsable", "Sofía Vega", "text", "", true, "modal:riskowner")}`,
+        `${field("Actividad", ["Definir requerimientos", "Integrar y calibrar", "Validar en campo", "Evaluar y documentar"], "select", "", true, "modal:riskactivity")}${field("Riesgo", "Indisponibilidad temporal de un sitio piloto.", "textarea", "", true, "modal:risk")}${field("Mitigación", "Acordar un sitio alternativo antes del inicio de la validación.", "textarea", "", true, "modal:mitigation")}${field("Responsable", nombreResponsableActual(), "text", "", true, "modal:riskowner")}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar riesgo", "save-extra", 'data-kind="risk"'),
         false,
