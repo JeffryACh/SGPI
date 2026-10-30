@@ -159,6 +159,42 @@ async function apiLogin(correo, password) {
 }
 
 /**
+ * Registrar la propuesta completa en el backend mediante una única transacción.
+ * Envía el payload consolidado a POST /propuestas y propaga el mensaje de error del servidor.
+ * parametros:
+ *     - Object : payload Estructura completa construida por buildProposalPayload().
+ * return:
+ *     + Promise<Object> : respuesta Resultado con id, código y evaluación preliminar IA.
+ */
+async function crearPropuestaBackend(payload) {
+  let res;
+  try {
+    res = await fetch(`${API_URL}/propuestas`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    throw new Error("No se pudo conectar con el servidor. Verifica que el backend esté disponible.");
+  }
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {}
+  if (!res.ok) {
+    const detalle = data?.detail;
+    throw new Error(
+      typeof detalle === "string"
+        ? detalle
+        : Array.isArray(detalle)
+          ? detalle.map((d) => d.msg || JSON.stringify(d)).join(" · ")
+          : "El servidor no pudo registrar la propuesta.",
+    );
+  }
+  return data;
+}
+
+/**
  * Diccionario de mensajes de error de autenticación amigables para el usuario.
  * Mapea códigos de AuthError a textos explicativos en español.
  * En el bloque catch de doLogin() para alimentar la alerta de error.
@@ -405,6 +441,7 @@ async function obtener_lineas_investigacion() {
 }
 
 let convocatorias = null;
+let catalogos = null;
 
 /**
  * Descargar el listado maestro de convocatorias institucionales registradas en el SGPI.
@@ -422,6 +459,24 @@ async function obtener_convocatorias() {
     console.warn("obtener_convocatorias error:", err);
   }
   return convocatorias;
+}
+
+/**
+ * Descargar en una sola llamada todos los catálogos institucionales consolidados.
+ * Se usa para resolver rubros, tipos de hora, niveles de riesgo y estados con sus IDs reales.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Object|null> : catalogos Catálogos institucionales consolidados.
+ */
+async function obtenerCatalogos() {
+  try {
+    const res = await fetch(`${API_URL}/catalogos`);
+    if (res.ok) catalogos = await res.json();
+  } catch (err) {
+    console.warn("obtenerCatalogos error:", err);
+  }
+  return catalogos;
 }
 
 let etapasConvocatoria = null;
@@ -500,17 +555,16 @@ async function generarEvaluacionPreliminarIA() {
     const incluyeBeca = state.budget.some(
       (r) => (r.code.includes("6-02") || r.name.toLowerCase().includes("beca")) && Number(r.a) + Number(r.b) >= 960000,
     );
+    const equipoActual = proposalTeamMembers();
     const payload = {
-      id_propuesta: 1,
-      codigo: state.viewProposal || "SI-2027-014",
-      titulo: "Agua Inteligente: monitoreo de cuencas",
+      id_propuesta: currentProposalId(),
+      codigo: state.created?.code || state.viewProposal || "SI-2027-014",
+      titulo: draftValue("08:Título de la propuesta", screenDefault("08", "Título de la propuesta")),
       modalidad: state.mode || "Desarrollo tecnológico",
-      escuela: "Escuela de Ingeniería Ambiental",
-      linea_investigacion: "Gestión integrada del recurso hídrico",
-      resumen:
-        screen("08")?.fields?.find((f) => f.label === "Resumen")?.value ||
-        "Desarrollo y validación de un sistema de monitoreo de calidad del agua en microcuencas piloto.",
-      horas_totales_semanales: state.teamAdded ? 20 : 16,
+      escuela: escuelas?.[0]?.nombre || "Instancia coordinadora",
+      linea_investigacion: lineas_investigacion?.[0]?.nombre || "Línea institucional",
+      resumen: draftValue("08:Resumen", screenDefault("08", "Resumen")),
+      horas_totales_semanales: equipoActual.reduce((total, m) => total + Number(m.horas || 0), 0),
       presupuesto_anio_1: totalA(),
       presupuesto_anio_2: totalB(),
       tiene_equipo_anio_2: tieneEquipoAnio2,
@@ -661,7 +715,9 @@ async function obtenerDatosBackend() {
     Modalidades(),
     obtener_escuelas(),
     obtener_lineas_investigacion(),
-    obtenerEvaluacionPreliminarIA(1),
+    obtener_convocatorias(),
+    obtenerCatalogos(),
+    obtenerEvaluacionPreliminarIA(currentProposalId()),
   ]);
 }
 
@@ -829,6 +885,12 @@ const defaultState = {
   stage: "En formulación",
   read: false,
   mode: "Desarrollo tecnológico",
+  modeId: 3,
+  clientUuid: null,
+  convocatoriaId: null,
+  externalCollaborator: null,
+  proposalDocs: [],
+  created: null,
   theme: "light",
   largeText: false,
   roleOrder: [
@@ -961,7 +1023,7 @@ const homeFor = () => (state.role === "investigador" ? "02" : "21");
  */
 function applyRole(key) {
   state.role = key;
-  state.viewProposal = "SI-2027-014";
+  state.viewProposal = state.created?.code || "SI-2027-014";
   state.stage = {
     investigador: state.stage,
     vinculacion: "En revisión de Vinculación",
@@ -1171,7 +1233,15 @@ function field(
 ) {
   // [Línea clave]: ¿Por qué soy importante? Genera una clave persistente única para el campo. ¿Para qué? Recuperar y almacenar borradores parciales en state.saved. ¿Dónde me usan? En el binding de valores de todos los formularios.
   const k = key || `${current}:${label}`,
-    val = state.saved[k] ?? value,
+    opts =
+      kind === "select"
+        ? (Array.isArray(value) ? value : [value]).map((v) =>
+            v && typeof v === "object"
+              ? { value: String(v.value), label: String(v.label ?? v.value) }
+              : { value: String(v), label: String(v) },
+          )
+        : [],
+    val = state.saved[k] ?? (kind === "select" ? opts[0]?.value ?? "" : value),
     id = "f-" + k.replace(/[^\w]/g, "-"),
     req = required ? "required" : "",
     attr = `id="${id}" data-field="${esc(k)}" ${req}`;
@@ -1179,8 +1249,7 @@ function field(
   if (kind === "textarea")
     control = `<textarea ${attr} rows="3">${esc(val)}</textarea>`;
   else if (kind === "select") {
-    const opts = Array.isArray(value) ? value : [value];
-    control = `<select ${attr}>${opts.map((v) => `<option ${v === val ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>`;
+    control = `<select ${attr}>${opts.map((o) => `<option value="${esc(o.value)}" ${o.value === String(val) ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
   } else if (kind === "checkbox")
     return `<label class="checkline"><input type="checkbox" ${attr} ${val === true ? "checked" : ""}>${esc(label)}</label>`;
   else if (kind === "file")
@@ -1621,12 +1690,452 @@ function myProposals() {
  * return:
  *     + string : newProposalHtml Marcado HTML del paso inicial de creación.
  */
+
+/* =====================================================================
+   Integración del asistente de propuestas con la API
+   ===================================================================== */
+
+const PROPOSAL_SCREENS = ["08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18"];
+const PROPOSAL_DEFAULTS = {
+  "08:Título de la propuesta": "Agua Inteligente: monitoreo de cuencas",
+  "08:Resumen": "Desarrollo y validación de un sistema de monitoreo que integra mediciones de calidad del agua para apoyar decisiones en dos microcuencas piloto.",
+  "08:Palabras clave": "Calidad del agua; monitoreo; cuencas; sensores",
+  "08:Resumen en inglés": "Development and validation of a water-quality monitoring system in two pilot watersheds.",
+  "08:Palabras clave en inglés": "Water quality; monitoring; watersheds; sensors",
+  "08:Prioridad nacional y ODS": "Gestión del recurso hídrico · ODS 6",
+  "08:Continuidad y financiamiento previo": "No corresponde a una continuación; no tiene financiamiento externo.",
+  "08:Instrumento jurídico / convenio": "No aplica.",
+  "08:Vinculación con posgrado": "No aplica.",
+  "08:Información sensible": "Documentación técnica del software, sujeta a valoración de Vinculación.",
+  "10:Problema e importancia": "La información sobre calidad del agua en las microcuencas piloto se obtiene mediante mediciones aisladas. Esta discontinuidad limita la identificación oportuna de variaciones y dificulta comparar condiciones entre sitios.",
+  "10:Justificación": "Un sistema de monitoreo continuo y validado permitirá reconocer variaciones en la calidad del agua y brindar evidencia útil a las personas responsables de su gestión.",
+  "10:Estado del arte y vacío identificado": "Revisión previa documentada: los sistemas comparados presentan limitaciones de continuidad de mediciones e integración de datos en las microcuencas del caso. El prototipo aborda ese vacío mediante calibración comparativa y registro continuo.",
+  "10:Antecedentes": "El equipo dispone de una prueba de concepto en laboratorio. La propuesta integra medición, registro y visualización para avanzar hacia su validación en condiciones relevantes.",
+  "12:Enfoque y diseño metodológico": "Desarrollo experimental en tres fases: definición de requerimientos, integración del prototipo y validación comparativa en campo.",
+  "12:Procedimientos y técnicas": "Se definirán puntos de medición en dos microcuencas; se calibrarán los instrumentos; se compararán registros del prototipo con mediciones de referencia; y se documentarán desempeño y limitaciones.",
+  "12:Usuarios y validación": "Personas responsables de la gestión de dos microcuencas piloto. La validación compara mediciones de pH, temperatura y conductividad con instrumentos de referencia; se documentan concordancia, cobertura temporal y limitaciones.",
+  "12:Análisis de resultados": "Se evaluarán integridad de registros, concordancia de las mediciones y disponibilidad del sistema durante el período piloto.",
+  "16:TRL actual": "4",
+  "16:TRL esperado": "6",
+  "16:Potencial de propiedad intelectual": "Sí",
+  "16:Activo previsto": "Software de integración y registro de mediciones ambientales.",
+  "16:Difusión y socialización": "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.",
+  "16:Hoja de ruta": "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.",
+  "ethics:0:applies": "No",
+  "ethics:0:reason": "No se recopilan datos de personas ni se realizan intervenciones con participantes humanos.",
+  "ethics:1:applies": "No",
+  "ethics:1:reason": "No se recolectan especímenes ni material genético; solo se registran parámetros físico-químicos del agua.",
+  "ethics:2:applies": "No",
+  "ethics:2:reason": "No se utilizan animales ni se realizan procedimientos sobre fauna.",
+  "ethics:3:applies": "No",
+  "ethics:3:reason": "Los sitios piloto no se ubican en territorios indígenas; cualquier cambio requerirá consulta y autorización previa.",
+};
+const DEFAULT_TEAM = [
+  { nombre: "Laura Méndez", correo: "laura.mendez@example.com", escuela: "Ingeniería Ambiental" },
+  { nombre: "Andrés Rojas", correo: "andres.rojas@example.com", escuela: "Ingeniería Electrónica" },
+  { nombre: "Sofía Vega", correo: "sofia.vega@example.com", escuela: "Ingeniería Ambiental" },
+];
+
+function currentProposalId() {
+  return Number(state.created?.id) || 1;
+}
+
+function draftValue(key, fallback = "") {
+  const value = state.saved?.[key];
+  if (value !== undefined && value !== null) return value;
+  return PROPOSAL_DEFAULTS[key] ?? fallback;
+}
+
+function screenDefault(id, label, fallback = "") {
+  return screen(id)?.fields?.find((field) => field.label === label)?.value ?? fallback;
+}
+
+function convocatoriaActivaId() {
+  return (convocatorias ?? []).find((c) => c.activo)?.id_convocatoria ?? 1;
+}
+
+function nuevoClientUuid() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+function normalizarTexto(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function tipoHoraId(nombre, fallback) {
+  return (
+    (catalogos?.tipos_hora ?? []).find(
+      (t) => normalizarTexto(t.nombre_tipo_hora) === normalizarTexto(nombre),
+    )?.id_tipo_hora ?? fallback
+  );
+}
+
+function catalogoId(value, lista = [], fallback = 1) {
+  const numero = Number(value);
+  if (Number.isFinite(numero) && lista.some((item) => Number(item.id) === numero)) return numero;
+  const porNombre = lista.find((item) => normalizarTexto(item.nombre) === normalizarTexto(value));
+  return Number(porNombre?.id) || Number(lista[0]?.id) || fallback;
+}
+
+function rubroParaPartida(partida) {
+  const rubros = catalogos?.rubros_presupuesto ?? [];
+  const texto = normalizarTexto(`${partida.name} ${partida.code}`);
+  const reglas = [
+    { claves: ["beca", "asistente"], destino: ["beca"] },
+    { claves: ["equipo", "equipamiento"], destino: ["equipamiento"] },
+    { claves: ["material", "suministro", "reactivo"], destino: ["material"] },
+    { claves: ["servicio", "consultoria"], destino: ["servicio"] },
+    { claves: ["viatico", "gira", "campo"], destino: ["viatico", "campo"] },
+    { claves: ["publicacion", "difusion", "divulgacion"], destino: ["publicacion", "difusion"] },
+    { claves: ["capacitacion", "evento", "taller"], destino: ["capacitacion", "evento"] },
+  ];
+  for (const regla of reglas) {
+    if (!regla.claves.some((clave) => texto.includes(clave))) continue;
+    const rubro = rubros.find((r) =>
+      regla.destino.some((destino) => normalizarTexto(r.nombre_rubro).includes(destino)),
+    );
+    if (rubro) return rubro;
+  }
+  return rubros.find((r) => normalizarTexto(r.nombre_rubro) === normalizarTexto(partida.name)) ?? null;
+}
+
+function proposalTeamMembers() {
+  const equipo = [];
+  const vistos = new Set();
+  const agregar = (nombre, correo, tipo, horas, rol, escuela) => {
+    const clave = String(correo ?? "").trim().toLowerCase();
+    if (!clave || vistos.has(clave)) return;
+    vistos.add(clave);
+    equipo.push({ nombre, correo: clave, tipo, horas, rol, escuela });
+  };
+  if (session?.user) {
+    agregar(
+      session.user.nombre,
+      session.user.correo,
+      "VIE",
+      8,
+      "Coordinador/a",
+      escuelas?.[0]?.nombre || "Instancia coordinadora",
+    );
+  }
+  DEFAULT_TEAM.forEach((persona) =>
+    agregar(persona.nombre, persona.correo, "REC", 4, "Investigador/a", persona.escuela),
+  );
+  return equipo;
+}
+
+function proposalDocuments() {
+  const names = [
+    "Formulario de proyecto · v1.pdf",
+    "Plan de acción y riesgos · v1.xlsx",
+    "Presupuesto 2027–2028 · v1.xlsx",
+    "Fundamentación.pdf",
+    ...(state.proposalDocs || []),
+  ];
+  return [...new Set(names)].map((name) => {
+    const extension = name.includes(".") ? name.split(".").pop().toLowerCase() : "pdf";
+    const tipo = /presupuesto/i.test(name)
+      ? "Presupuesto"
+      : /plan/i.test(name)
+        ? "Plan de acción"
+        : /fundament/i.test(name)
+          ? "Fundamentación"
+          : /formulario/i.test(name)
+            ? "Formulario oficial"
+            : "Anexo";
+    return {
+      nombre_archivo: name,
+      tipo_documento: tipo,
+      extension,
+      file_path: `propuestas/metadatos/${name}`,
+      tamano_bytes: 0,
+    };
+  });
+}
+
+function fechaIso(value, fallback) {
+  const texto = String(value ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(texto)) return texto.slice(0, 10);
+  const partes = texto.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (partes) return `${partes[3]}-${partes[2].padStart(2, "0")}-${partes[1].padStart(2, "0")}`;
+  return fallback;
+}
+
+function fechaDeMes(fechaInicio, mes, finDeMes = false) {
+  const [anio, mesBase] = String(fechaInicio || "2027-01-01")
+    .split("-")
+    .map(Number);
+  const fecha = new Date(Date.UTC(anio, (mesBase || 1) - 1 + (Number(mes) - 1), 1));
+  if (finDeMes) {
+    fecha.setUTCMonth(fecha.getUTCMonth() + 1);
+    fecha.setUTCDate(0);
+  }
+  return fecha.toISOString().slice(0, 10);
+}
+
+function rangoMeses(periodo) {
+  const texto = String(periodo ?? "").replace(/[–—]/g, "-");
+  if (texto.includes("/")) {
+    const [inicio, duracion] = texto.split("/").map((n) => Number(n.trim()));
+    return [inicio || 1, (inicio || 1) + (duracion || 1) - 1];
+  }
+  const [inicio, fin] = texto.split("-").map((n) => Number(n.trim()));
+  return [inicio || 1, fin || inicio || 1];
+}
+
+function responsableDeActividad(texto) {
+  const equipo = proposalTeamMembers();
+  const iniciales = String(texto ?? "").split("·")[0].trim();
+  const porIniciales = equipo.find((m) => initials(m.nombre) === iniciales);
+  const porNombre = equipo.find((m) => normalizarTexto(texto).includes(normalizarTexto(m.nombre)));
+  const persona = porIniciales || porNombre || equipo[0];
+  const rol = /supervisa/i.test(texto) ? "Supervisa" : /participa/i.test(texto) ? "Participa" : "Ejecuta";
+  return { correo: persona?.correo || session?.user?.correo || "", rol };
+}
+
+function buildProposalPayload() {
+  const fechaInicio = fechaIso(draftValue("08:Fecha de inicio", "2027-01-01"), "2027-01-01");
+  const fechaFin = fechaIso(draftValue("08:Fecha de finalización", "2028-12-31"), "2028-12-31");
+  const equipo = proposalTeamMembers();
+  const objetivos = [
+    {
+      codigo_objetivo: "OG",
+      descripcion: draftValue("11:Objetivo general", screenDefault("11", "Objetivo general")),
+      orden: 1,
+    },
+    ...screen("11").rows.map((row, index) => ({
+      codigo_objetivo: row.code,
+      descripcion: draftValue(`11:${row.code}`, row.text),
+      orden: index + 2,
+    })),
+  ];
+  if (state.extraObjective) {
+    objetivos.push({
+      codigo_objetivo: "OE4",
+      descripcion: draftValue("11:OE4", state.extraObjective),
+      orden: objetivos.length + 1,
+    });
+  }
+
+  const todosLosProductos = [
+    {
+      codigo_objetivo: "OE2",
+      tipo_producto: "Software",
+      categoria: "Activo de propiedad intelectual",
+      descripcion: "Software de integración, registro y visualización de mediciones ambientales.",
+      meta_esperada: "Versión validada y documentada del software.",
+      es_obligatorio: true,
+    },
+    {
+      codigo_objetivo: "OE3",
+      tipo_producto: "Artículo científico",
+      categoria: "Publicación científica",
+      descripcion: "Artículo con los resultados de calibración y validación en las microcuencas piloto.",
+      meta_esperada: "Manuscrito sometido a una revista WoS/Scopus.",
+      es_obligatorio: true,
+    },
+    {
+      codigo_objetivo: "OE3",
+      tipo_producto: "Manual técnico",
+      categoria: "Transferencia",
+      descripcion: "Manual de uso, mantenimiento y condiciones de operación del sistema.",
+      meta_esperada: "Manual entregado y socializado con las personas usuarias.",
+      es_obligatorio: true,
+    },
+  ];
+
+  const todasLasActividades = activities.concat(state.extraActivities || []);
+  const plan = todasLasActividades.map((actividad, index) => {
+    const [mesInicio, mesFin] = rangoMeses(actividad[4]);
+    const responsable = responsableDeActividad(actividad[3]);
+    return {
+      codigo_objetivo: actividad[0],
+      descripcion_actividad: actividad[1],
+      resultado_esperado: actividad[2],
+      correo_responsable: responsable.correo,
+      rol_responsable: responsable.rol,
+      mes_inicio: mesInicio,
+      mes_fin: mesFin,
+      fecha_inicio: fechaDeMes(fechaInicio, mesInicio),
+      fecha_fin: fechaDeMes(fechaInicio, mesFin, true),
+    };
+  });
+
+  const todosLosRiesgos = risks.concat(state.extraRisks || []);
+  const riesgos = todosLosRiesgos.map((riesgo) => {
+    const responsable = responsableDeActividad(riesgo[3]);
+    return {
+      descripcion_riesgo: riesgo[1],
+      medida_mitigacion: riesgo[2],
+      correo_responsable: responsable.correo,
+      id_nivel_probabilidad: 2,
+      id_nivel_impacto: 2,
+    };
+  });
+
+  const presupuesto = state.budget.flatMap((partida) => {
+    const rubro = rubroParaPartida(partida);
+    if (!rubro) return [];
+    return [
+      { id_rubro: rubro.id_rubro, monto: Number(partida.a) || 0, anio: 1, justificacion: partida.detail || "" },
+      { id_rubro: rubro.id_rubro, monto: Number(partida.b) || 0, anio: 2, justificacion: partida.detail || "" },
+    ].filter((item) => item.monto > 0);
+  });
+
+  const secciones = [
+    ["problema", "Problema e importancia", draftValue("10:Problema e importancia", screenDefault("10", "Problema de investigación"))],
+    ["justificacion", "Justificación", draftValue("10:Justificación", screenDefault("10", "Justificación"))],
+    ["estado_arte", "Estado del arte y vacío identificado", draftValue("10:Estado del arte y vacío identificado", "")],
+    ["antecedentes", "Antecedentes", draftValue("10:Antecedentes", screenDefault("10", "Antecedentes"))],
+    ["metodologia", "Enfoque y diseño metodológico", draftValue("12:Enfoque y diseño metodológico", screenDefault("12", "Diseño metodológico"))],
+    ["procedimientos", "Procedimientos y técnicas", draftValue("12:Procedimientos y técnicas", screenDefault("12", "Procedimiento"))],
+    ["usuarios_validacion", "Usuarios y validación", draftValue("12:Usuarios y validación", "")],
+    ["analisis_resultados", "Análisis de resultados", draftValue("12:Análisis de resultados", screenDefault("12", "Análisis de resultados"))],
+    ["continuidad", "Continuidad y financiamiento previo", draftValue("08:Continuidad y financiamiento previo", "")],
+    ["instrumento_juridico", "Instrumento jurídico / convenio", draftValue("08:Instrumento jurídico / convenio", "")],
+    ["vinculacion_posgrado", "Vinculación con posgrado", draftValue("08:Vinculación con posgrado", "")],
+    ["informacion_sensible", "Información sensible", draftValue("08:Información sensible", "")],
+    ["difusion", "Difusión y socialización", draftValue("16:Difusión y socialización", "")],
+    ["hoja_ruta", "Hoja de ruta", draftValue("16:Hoja de ruta", "")],
+  ]
+    .filter(([, , contenido]) => String(contenido ?? "").trim())
+    .map(([codigo, titulo, contenido], index) => ({
+      codigo_seccion: codigo,
+      titulo,
+      contenido,
+      orden: index + 1,
+    }));
+
+  const etiquetasEticas = [
+    "Participación de seres humanos",
+    "Biodiversidad y recursos genéticos",
+    "Uso de animales",
+    "Territorios o pueblos indígenas",
+  ];
+  const declaraciones = etiquetasEticas.map((tipo, index) => {
+    const aplica = draftValue(`ethics:${index}:applies`, "No") === "Sí";
+    return {
+      tipo_aspecto: tipo,
+      aplica,
+      justificacion_exencion: draftValue(`ethics:${index}:reason`, ""),
+    };
+  });
+
+  const colaboradores = state.externalCollaborator
+    ? [
+        {
+          nombre_completo: state.externalCollaborator.nombre,
+          institucion: state.externalCollaborator.institucion,
+          rol: state.externalCollaborator.rol,
+          orcid: state.externalCollaborator.orcid,
+          horas_asignadas: Number(state.externalCollaborator.horas) || null,
+          responsabilidad: state.externalCollaborator.responsabilidad,
+        },
+      ]
+    : [];
+
+  const clientUuid = state.clientUuid || nuevoClientUuid();
+  state.clientUuid = clientUuid;
+  return {
+    id_usuario_lider: session?.user?.id_usuario ?? 10,
+    id_escuela: catalogoId(draftValue("08:Instancia coordinadora", escuelas?.[0]?.id || 1), escuelas ?? []),
+    id_modalidad: Number(state.modeId || 3),
+    id_linea_investigacion: catalogoId(draftValue("08:Línea de investigación", lineas_investigacion?.[0]?.id || 1), lineas_investigacion ?? []),
+    id_convocatoria: Number(state.convocatoriaId || convocatoriaActivaId()),
+    titulo: draftValue("08:Título de la propuesta", screenDefault("08", "Título de la propuesta")),
+    resumen: draftValue("08:Resumen", screenDefault("08", "Resumen")),
+    palabras_clave: draftValue("08:Palabras clave", ""),
+    palabras_clave_en: draftValue("08:Palabras clave en inglés", ""),
+    resumen_en: draftValue("08:Resumen en inglés", ""),
+    prioridad_nacional_ods: draftValue("08:Prioridad nacional y ODS", ""),
+    fecha_inicio: fechaInicio,
+    fecha_fin: fechaFin,
+    estado_inicial: 2,
+    client_uuid: clientUuid,
+    trl_inicial: Number(draftValue("16:TRL actual", "4")),
+    trl_esperado: Number(draftValue("16:TRL esperado", "6")),
+    potencial_pi: draftValue("16:Potencial de propiedad intelectual", "Sí") === "Sí",
+    activo_previsto: draftValue("16:Activo previsto", ""),
+    equipo: equipo.map((m) => ({
+      correo: m.correo,
+      id_tipo_hora: tipoHoraId(m.tipo, m.tipo === "VIE" ? 1 : 4),
+      horas_asignadas: m.horas,
+    })),
+    colaboradores_externos: colaboradores,
+    objetivos,
+    productos_academicos: todosLosProductos,
+    plan_accion: plan,
+    riesgos,
+    presupuesto,
+    declaraciones_eticas: declaraciones,
+    secciones,
+    documentos: proposalDocuments(),
+  };
+}
+
+function proposalValidationIssues() {
+  const issues = [];
+  const obligatorios = [
+    ["08:Título de la propuesta", "08", "Título de la propuesta"],
+    ["08:Resumen", "08", "Resumen"],
+    ["08:Palabras clave", "08", "Palabras clave"],
+    ["11:Objetivo general", "11", "Objetivo general"],
+    ["10:Problema e importancia", "10", "Problema e importancia"],
+    ["10:Justificación", "10", "Justificación"],
+    ["12:Enfoque y diseño metodológico", "12", "Enfoque metodológico"],
+    ["12:Procedimientos y técnicas", "12", "Procedimientos y técnicas"],
+    ["12:Análisis de resultados", "12", "Análisis de resultados"],
+  ];
+  for (const [key, pantalla, nombre] of obligatorios) {
+    if (!String(draftValue(key, screenDefault(pantalla, nombre))).trim())
+      issues.push({ screen: pantalla, text: nombre });
+  }
+  if (!proposalTeamMembers().length) issues.push({ screen: "09", text: "Equipo investigador" });
+  if (state.budget.some((p) => (Number(p.a) > 0 || Number(p.b) > 0) && !rubroParaPartida(p)))
+    issues.push({ screen: "15", text: "Rubros presupuestarios sin equivalente institucional" });
+  if (!budgetValid()) issues.push({ screen: "15", text: "Reglas del presupuesto" });
+  if (state.attachments < 4) issues.push({ screen: "17", text: "Documentos obligatorios" });
+  if (proposalDocuments().length < 4) issues.push({ screen: "17", text: "Documentos obligatorios" });
+  return issues;
+}
+
+function clearProposalDraft() {
+  Object.keys(state.saved || {})
+    .filter(
+      (key) =>
+        PROPOSAL_SCREENS.some((id) => key.startsWith(`${id}:`)) ||
+        key.startsWith("ethics:") ||
+        key.startsWith("modal:"),
+    )
+    .forEach((key) => delete state.saved[key]);
+  state.budget = structuredClone(defaultState.budget);
+  state.attachments = 4;
+  state.teamAdded = false;
+  state.extraPerson = null;
+  state.extraObjective = null;
+  state.extraActivities = [];
+  state.extraRisks = [];
+  state.externalCollaborator = null;
+  state.proposalDocs = [];
+  state.reviewed = false;
+  state.clientUuid = null;
+  state.modeId = 3;
+  state.mode = "Desarrollo tecnológico";
+}
+
 function newProposal() {
   return shell(
     `<div class="two-col"><form class="card card-pad" id="modality-form"><div class="section-head"><h2>Elige la modalidad</h2>${badge("Paso inicial")}</div><div class="stack">${(modalidades ?? [])
       .map(
         (m) =>
-          `<label class="radio-card"><input type="radio" name="modality" value="${esc(m.titulo)}" ${state.mode === m.titulo ? "checked" : ""}><div><h3>${esc(m.titulo)}</h3><p>${esc(m.descripcion)}</p><p style="margin-top:10px"><strong>${esc(m.duracion)} · ${money(m.monto)}</strong></p></div></label>`,
+          `<label class="radio-card"><input type="radio" name="modality" value="${esc(m.id)}" ${Number(state.modeId || 3) === Number(m.id) ? "checked" : ""}><div><h3>${esc(m.titulo)}</h3><p>${esc(m.descripcion)}</p><p style="margin-top:10px"><strong>${esc(m.duracion)} · ${money(m.monto)}</strong></p></div></label>`,
       )
       .join(
         "",
@@ -1647,8 +2156,8 @@ function newProposal() {
  */
 function dataForm() {
   // [Línea clave]: ¿Por qué soy importante? Mapea los catálogos asíncronos de la base de datos a listas de opciones. ¿Para qué? Alimentar los selectores de escuela y línea de investigación del formulario. ¿Dónde me usan? Al construir dataForm().
-  const escuelasOpts = (escuelas ?? []).map((e) => e.nombre);
-  const lineasOpts = (lineas_investigacion ?? []).map((l) => l.nombre);
+  const escuelasOpts = (escuelas ?? []).map((e) => ({ value: e.id, label: e.nombre }));
+  const lineasOpts = (lineas_investigacion ?? []).map((l) => ({ value: l.id, label: l.nombre }));
   return `
     ${field(
       "Título de la propuesta",
@@ -1660,7 +2169,7 @@ function dataForm() {
     
     <div class="field-row">
       ${field("Instancia coordinadora", escuelasOpts, "select", "", true)}
-      ${field("Modalidad", "Desarrollo tecnológico", "readonly")}
+      ${field("Modalidad", state.mode || "Desarrollo tecnológico", "readonly")}
     </div>
 
     ${field(
@@ -1754,34 +2263,21 @@ function dataForm() {
  *     + string : teamFormHtml Marcado HTML de la gestión de equipo.
  */
 function teamForm() {
-  return `${notice("Dedicación total: 16 horas semanales", "Se registran 8 h VIE y 8 h REC. La participación estudiantil se presupuesta aparte.")}<div class="mt">${table(
-    ["Persona / instancia", "Rol", "Horas", ""],
-    [
-      [
-        `<strong>Laura Méndez</strong><br><span class="micro muted">Ingeniería Ambiental</span>`,
-        "Coordinadora",
-        "8 h VIE",
-        act("Editar", "team", "text compact"),
-      ],
-      [
-        '<strong>Andrés Rojas</strong><br><span class="micro muted">Ingeniería Electrónica</span>',
-        "Investigador",
-        "4 h REC",
-        act("Editar", "team", "text compact"),
-      ],
-      [
-        '<strong>Sofía Vega</strong><br><span class="micro muted">Ingeniería Ambiental</span>',
-        "Investigadora",
-        "4 h REC",
-        act("Editar", "team", "text compact"),
-      ],
-    ],
-    state.teamAdded
-      ? "<span>Participación externa: " +
-          esc(state.extraPerson || "María Arias") +
-          " · carta de compromiso.</span>"
+  const equipo = proposalTeamMembers();
+  const totalHoras = equipo.reduce((total, persona) => total + Number(persona.horas || 0), 0);
+  const externo = state.externalCollaborator;
+  return `${notice(`Dedicación total: ${totalHoras} horas semanales`, "El equipo se registra mediante correos de usuarios institucionales activos; el backend valida cada cuenta.")}<div class="mt">${table(
+    ["Persona / instancia", "Rol", "Horas", "Correo"],
+    equipo.map((persona) => [
+      `<strong>${esc(persona.nombre)}</strong><br><span class="micro muted">${esc(persona.escuela || "Institución")}</span>`,
+      esc(persona.rol),
+      `${esc(persona.horas)} h ${esc(persona.tipo)}`,
+      `<span class="micro muted">${esc(persona.correo)}</span>`,
+    ]),
+    externo
+      ? `<span>Participación externa: ${esc(externo.nombre)} · ${esc(externo.institucion)} · carta de compromiso.</span>`
       : "<span>Nombramientos: 01 ene 2027 – 31 dic 2028</span>",
-  )}</div><div class="action-row mt mb">${act("Agregar participante", "team", "secondary", "plus")}</div>${field("Participación estudiantil", "Valeria Campos · 10 h/semana de beca asistente especial; validación de campo y trabajo final de graduación.", "textarea", "₡960.000 por año para 400 horas a ₡2.400/h.", true)}<details class="accordion"><summary>Colaboración externa y responsabilidades</summary><p>Las personas externas se identifican con institución, ORCID, carta de compromiso y tareas en el plan. La persona titular se registra cuando se emplean horas CONS.</p>${field("Institución externa", "Sin participantes externos en la versión inicial.", "text")}</details>`;
+  )}</div><div class="action-row mt mb">${act("Agregar participante externo", "team", "secondary", "plus")}</div>${field("Participación estudiantil", "Valeria Campos · 10 h/semana de beca asistente especial; validación de campo y trabajo final de graduación.", "textarea", "₡960.000 por año para 400 horas a ₡2.400/h.", true)}<details class="accordion" ${externo ? "open" : ""}><summary>Colaboración externa y responsabilidades</summary><p>Las personas externas se identifican con institución, ORCID, carta de compromiso y tareas en el plan. La persona titular se registra cuando se emplean horas CONS.</p>${externo ? definition([["Nombre", esc(externo.nombre)], ["Institución", esc(externo.institucion)], ["Rol", esc(externo.rol)], ["Horas", `${esc(externo.horas || "—")} h/semana`], ["Responsabilidad", esc(externo.responsabilidad || "—")]]) : field("Institución externa", "Sin participantes externos en la versión inicial.", "text")}</details>`;
 }
 
 /**
@@ -1986,12 +2482,15 @@ function budgetForm() {
       "",
     )}</div>${valid ? notice("Presupuesto dentro del límite anual", "Equipo en el primer año y beca estudiantil de 10 h/semana incorporada.") : notice("Revisa el presupuesto para continuar", "El monto supera el tope anual, hay equipo en el segundo año o falta la beca mínima.", "warning")}<div class="mt">${table(
     ["Objeto de gasto", "2027", "2028", ""],
-    state.budget.map((r, i) => [
-      `<span class="project-code">${r.code}</span><strong>${r.name}</strong>`,
-      money(r.a),
-      money(r.b),
-      act("Editar", "budget-edit", "text compact", "edit", `data-index="${i}"`),
-    ]),
+    state.budget.map((r, i) => {
+      const rubro = rubroParaPartida(r);
+      return [
+        `<span class="project-code">${rubro ? `R-${rubro.id_rubro}` : r.code}</span><strong>${esc(rubro?.nombre_rubro || r.name)}</strong>`,
+        money(r.a),
+        money(r.b),
+        act("Editar", "budget-edit", "text compact", "edit", `data-index="${i}"`),
+      ];
+    }),
   )}</div><div class="action-row mt">${act("Agregar rubro", "budget-add", "secondary", "plus")}${act("Ver reglas de presupuesto", "budget-rules", "text")}</div><details class="accordion"><summary>Justificaciones y otras fuentes</summary>${state.budget.map((r) => `<p><strong>${r.name}.</strong> ${r.detail}</p>`).join("")}${field("Financiamiento externo / contrapartida", "Sin aportes externos.", "textarea")}</details>`;
 }
 
@@ -2049,22 +2548,28 @@ function documentsForm() {
  *     + string : reviewFormHtml Marcado HTML del resumen de verificación.
  */
 function reviewForm() {
-  const ok = budgetValid() && state.attachments >= 4;
-  return `<div class="mb"><span class="project-code">SI-2027-014 · Desarrollo tecnológico</span><h2>Agua Inteligente: monitoreo de cuencas</h2><p class="small muted" style="margin-top:8px">2027–2028 · ${money(totalA() + totalB())} · Versión 1.0</p></div><div class="review-grid">${[
-    ["Datos y equipo", "08", true],
-    ["Fundamentación y objetivos", "10", true],
-    ["Metodología y plan", "12", true],
-    ["Gestión de riesgos", "14", true],
-    ["Presupuesto anual", "15", budgetValid()],
-    ["Documentos obligatorios", "17", state.attachments >= 4],
-  ]
+  const issues = proposalValidationIssues();
+  const afectadas = new Set(issues.map((i) => i.screen));
+  const ok = issues.length === 0;
+  const titulo = draftValue("08:Título de la propuesta", screenDefault("08", "Título de la propuesta"));
+  const modalidad = (modalidades ?? []).find((m) => Number(m.id) === Number(state.modeId))?.titulo || state.mode;
+  const filas = [
+    ["Datos y equipo", "08", !afectadas.has("08") && !afectadas.has("09")],
+    ["Fundamentación y objetivos", "10", !afectadas.has("10") && !afectadas.has("11")],
+    ["Metodología y plan", "12", !afectadas.has("12") && !afectadas.has("13")],
+    ["Gestión de riesgos", "14", !afectadas.has("14")],
+    ["Presupuesto anual", "15", !afectadas.has("15")],
+    ["Ética y propiedad intelectual", "16", !afectadas.has("16")],
+    ["Documentos obligatorios", "17", !afectadas.has("17")],
+  ];
+  return `<div class="mb"><span class="project-code">${esc(state.clientUuid ? "Borrador listo para registrar" : "Nueva propuesta")} · ${esc(modalidad || "Modalidad")}</span><h2>${esc(titulo)}</h2><p class="small muted" style="margin-top:8px">${esc(draftValue("08:Fecha de inicio", "2027-01-01"))} – ${esc(draftValue("08:Fecha de finalización", "2028-12-31"))} · ${money(totalA() + totalB())} · Versión 1.0</p></div><div class="review-grid">${filas
     .map(
       ([a, b, c]) =>
         `<div class="review-row"><span class="ok">${c ? "✓" : "!"}</span><span>${a}<br><span class="micro muted">${c ? "Completo" : "Requiere corrección"}</span></span><button data-go="${b}">Revisar</button></div>`,
     )
     .join(
       "",
-    )}</div><div class="mt">${notice("Próxima etapa: Vinculación", "Esta propuesta es de desarrollo tecnológico. Se enviará primero a revisión de PI, luego al Comité Técnico.")}</div><label class="checkline mt"><input type="checkbox" id="reviewed" ${state.reviewed ? "checked" : ""}>He revisado la información y los documentos.</label>${!ok ? notice("Aún no puedes enviar", "Corrige el presupuesto y adjunta todos los documentos señalados.", "warning") : ""}`;
+    )}</div><div class="mt">${notice("Próxima etapa: Vinculación", "La propuesta se registrará con estado «En revisión de Vinculación» y la evaluación preliminar IA se generará en el servidor.")}</div><label class="checkline mt"><input type="checkbox" id="reviewed" ${state.reviewed ? "checked" : ""}>He revisado la información y los documentos.</label>${!ok ? notice("Aún no puedes enviar", issues.map((i) => i.text).join(" · "), "warning") : ""}`;
 }
 
 /**
@@ -2076,12 +2581,18 @@ function reviewForm() {
  *     + string : confirmHtml Marcado HTML de confirmación.
  */
 function confirmation() {
+  const creada = state.created;
+  const codigo = creada?.code || "SI-2027-014";
+  const titulo = creada?.title || draftValue("08:Título de la propuesta", screenDefault("08", "Título de la propuesta"));
+  const fecha = creada?.date
+    ? new Date(creada.date).toLocaleDateString("es-CR", { day: "2-digit", month: "long", year: "numeric" })
+    : new Date().toLocaleDateString("es-CR", { day: "2-digit", month: "long", year: "numeric" });
   return shell(
-    `<div class="card card-pad" style="max-width:850px;margin:auto;padding:42px"><div style="width:56px;height:56px;border-radius:50%;background:var(--soft);display:grid;place-items:center;margin-bottom:22px">${icon("check")}</div><h2 style="font-size:28px">Tu propuesta fue enviada a revisión</h2><p class="small muted" style="margin:12px 0 30px">Se registró la versión 1.0 de SI-2027-014. Podrás consultar cada cambio desde el seguimiento.</p>${definition(
+    `<div class="card card-pad" style="max-width:850px;margin:auto;padding:42px"><div style="width:56px;height:56px;border-radius:50%;background:var(--soft);display:grid;place-items:center;margin-bottom:22px">${icon("check")}</div><h2 style="font-size:28px">Tu propuesta fue registrada</h2><p class="small muted" style="margin:12px 0 30px">Se guardó la versión 1.0 de <strong>${esc(codigo)}</strong> · ${esc(titulo)}. Podrás consultar cada cambio desde el seguimiento.</p>${definition(
       [
         ["Estado", badge("En revisión de Vinculación")],
         ["Responsable actual", "Centro de Vinculación"],
-        ["Registro", "21 ago 2026"],
+        ["Registro", esc(fecha)],
         ["Siguiente etapa", "Evaluación del Comité Técnico"],
       ],
     )}<div class="mt">${notice("Este envío no es el sometimiento formal", "Una vez que obtengas la evaluación técnica y los avales, deberás someter la propuesta ante VIE el 28 de septiembre.")}</div><div class="action-row mt">${btn("Ver seguimiento", "20", "", "arrow")}${btn("Mis propuestas", "06", "secondary")}</div></div>`,
@@ -2180,8 +2691,13 @@ function tracking() {
       "Expediente cerrado",
       "El expediente conserva documentos e historial y está disponible solo para consulta.",
     );
+  const creada = state.created || {};
+  const trackCode = creada.code || state.viewProposal || "SI-2027-014";
+  const trackTitle = creada.title || draftValue("08:Título de la propuesta", PROPOSAL_DEFAULTS["08:Título de la propuesta"]);
+  const trackAmount = Number(creada.amount) || totalA() + totalB();
+  const trackHours = state.created ? proposalTeamMembers().reduce((total, m) => total + Number(m.horas || 0), 0) : 16;
   return shell(
-    `<div class="two-col"><div class="stack">${card("Agua Inteligente: monitoreo de cuencas", `<span class="project-code">SI-2027-014 · Versión 1.0</span><div class="action-row mt mb">${badge(stateText, "solid")}${badge("Desarrollo tecnológico")}</div>${action}<div class="stat-strip"><div><strong>${money(totalA() + totalB())}</strong><span>Monto solicitado</span></div><div><strong>24 meses</strong><span>Enero 2027 – diciembre 2028</span></div><div><strong>16 h</strong><span>Dedicación semanal</span></div></div>`)}${card("Documentos de la etapa", doc(ix >= 3 ? "Acuerdo de aval · IA-014-2026.pdf" : "Registro de envío · versión 1.0.pdf") + doc("Propuesta · SI-2027-014.pdf"))}</div>${card("Ruta del expediente", `<div class="timeline">${stageList.map((s, i) => `<div class="event ${s === state.stage ? "current" : ""}"><h3>${i < ix ? "✓ " : ""}${s}</h3><p>${["Investigador", "Vinculación", "Comité Técnico", "Consejos de Escuela", "Investigador → VIE", "Dirección de Investigación", "CIE", "Investigador", "Equipo investigador", "Dirección de Investigación"][i]}</p></div>`).join("")}</div>`)}</div>`,
+    `<div class="two-col"><div class="stack">${card(esc(trackTitle), `<span class="project-code">${esc(trackCode)} · Versión 1.0</span><div class="action-row mt mb">${badge(stateText, "solid")}${badge(state.mode || "Desarrollo tecnológico")}</div>${action}<div class="stat-strip"><div><strong>${money(trackAmount)}</strong><span>Monto solicitado</span></div><div><strong>24 meses</strong><span>Enero 2027 – diciembre 2028</span></div><div><strong>${trackHours} h</strong><span>Dedicación semanal</span></div></div>`)}${card("Documentos de la etapa", doc(ix >= 3 ? "Acuerdo de aval · IA-014-2026.pdf" : `Registro de envío · ${esc(trackCode)}.pdf`) + doc(`Propuesta · ${esc(trackCode)}.pdf`))}</div>${card("Ruta del expediente", `<div class="timeline">${stageList.map((s, i) => `<div class="event ${s === state.stage ? "current" : ""}"><h3>${i < ix ? "✓ " : ""}${s}</h3><p>${["Investigador", "Vinculación", "Comité Técnico", "Consejos de Escuela", "Investigador → VIE", "Dirección de Investigación", "CIE", "Investigador", "Equipo investigador", "Dirección de Investigación"][i]}</p></div>`).join("")}</div>`)}</div>`,
     "Seguimiento de propuesta",
     "Consulta la etapa actual y la próxima acción que te corresponde.",
     btn("Abrir expediente", "22", "secondary", "folder"),
@@ -2244,28 +2760,28 @@ function inbox() {
  */
 function dossier() {
   // [Línea clave]: ¿Por qué soy importante? Resuelve el expediente activo en memoria. ¿Para qué? Mostrar metadatos de SI-2027-014 o el expediente seleccionado desde la bandeja. ¿Dónde me usan? Al inicio de dossier().
-  const code = state.viewProposal || "SI-2027-014";
+  const code = state.created?.code || state.viewProposal || "SI-2027-014";
   const p = (top3propuestasmasrecientes || []).find((x) => x.code === code) || {
     code: code,
-    title: "Agua Inteligente: monitoreo de cuencas",
-    type: "Desarrollo tecnológico",
+    title: state.created?.title || draftValue("08:Título de la propuesta", PROPOSAL_DEFAULTS["08:Título de la propuesta"]),
+    type: state.mode || "Desarrollo tecnológico",
     period: "2027–2028",
     status: state.stage,
-    amount: 9400000,
+    amount: Number(state.created?.amount) || totalA() + totalB(),
   };
   const isClosed = p.status === "Cerrada" || p.status === "Rechazada";
-  const historical = code !== "SI-2027-014";
+  const historical = !state.created && code !== "SI-2027-014";
 
   let body;
   if (dossierTab === "Resumen")
     body = `${definition([
       ["Coordinadora / Líder", "Dra. Laura Méndez"],
-      ["Instancia", "Escuela de Ingeniería Ambiental"],
+      ["Instancia", escuelas?.[0]?.nombre || "Instancia coordinadora"],
       ["Período", p.period],
       ["Monto solicitado", money(p.amount)],
       ["Modalidad", p.type],
-      ["Línea de investigación", "Gestión integrada del recurso hídrico"],
-    ])}<div class="mt"><h3>Resumen de la investigación</h3><p class="small muted" style="margin-top:10px">${esc(historical ? "Estudio sobre el recurso hídrico con resultados conservados en el expediente." : screen("08").fields.find((f) => f.label === "Resumen").value)}</p></div><div class="mt">${notice(isClosed ? "Consulta de expediente cerrado o resuelto" : "Expediente digital sincronizado con PostgreSQL", isClosed ? "La información se conserva para consulta. No se pueden modificar documentos ni decisiones." : "Propuesta, equipo, plan, presupuesto y decisiones conservan su versión y responsable con trazabilidad en base de datos.")}</div>`;
+      ["Línea de investigación", lineas_investigacion?.[0]?.nombre || "Línea institucional"],
+    ])}<div class="mt"><h3>Resumen de la investigación</h3><p class="small muted" style="margin-top:10px">${esc(historical ? "Estudio sobre el recurso hídrico con resultados conservados en el expediente." : draftValue("08:Resumen", PROPOSAL_DEFAULTS["08:Resumen"]))}</p></div><div class="mt">${notice(isClosed ? "Consulta de expediente cerrado o resuelto" : "Expediente digital sincronizado con PostgreSQL", isClosed ? "La información se conserva para consulta. No se pueden modificar documentos ni decisiones." : "Propuesta, equipo, plan, presupuesto y decisiones conservan su versión y responsable con trazabilidad en base de datos.")}</div>`;
   else if (dossierTab === "Documentos")
     body =
       doc("Formulario de propuesta.pdf") +
@@ -3180,8 +3696,13 @@ async function handleAction(action, el) {
         go(el.dataset.next);
       }
       break;
-    case "create-proposal":
-      state.mode = $("input[name=modality]:checked")?.value || state.mode;
+    case "create-proposal": {
+      const modalidadId = Number($("input[name=modality]:checked")?.value) || 3;
+      const modalidad = (modalidades ?? []).find((m) => Number(m.id) === modalidadId);
+      state.modeId = modalidadId;
+      state.mode = modalidad?.titulo || "Desarrollo tecnológico";
+      state.clientUuid = state.clientUuid || nuevoClientUuid();
+      state.convocatoriaId = convocatoriaActivaId();
       if (state.mode !== "Desarrollo tecnológico") {
         modal(
           "Modalidad seleccionada",
@@ -3195,8 +3716,12 @@ async function handleAction(action, el) {
         go("08");
       }
       break;
+    }
     case "demo-project":
       state.mode = "Desarrollo tecnológico";
+      state.modeId = 3;
+      state.clientUuid = state.clientUuid || nuevoClientUuid();
+      state.convocatoriaId = convocatoriaActivaId();
       state.stage = "En formulación";
       save();
       go("08");
@@ -3266,14 +3791,29 @@ async function handleAction(action, el) {
         "team",
       );
       break;
-    case "team-save":
+    case "team-save": {
+      const nombre = $('[data-field="modal:person"]')?.value?.trim();
+      const institucion = $('[data-field="modal:institution"]')?.value?.trim();
+      if (!nombre || !institucion) {
+        toast("Completa el nombre y la institución del participante.");
+        break;
+      }
+      state.externalCollaborator = {
+        nombre,
+        institucion,
+        rol: $('[data-field="modal:role"]')?.value || "Colaboración externa",
+        horas: Number($('[data-field="modal:hours"]')?.value) || null,
+        orcid: $('[data-field="modal:orcid"]')?.value || "",
+        responsabilidad: $('[data-field="modal:responsibility"]')?.value || "",
+      };
       state.teamAdded = true;
-      state.extraPerson = $('[data-field="modal:person"]').value;
+      state.extraPerson = nombre;
       save();
       closeModal();
       render();
       toast("Participación externa registrada.");
       break;
+    }
     case "objective":
       modal(
         "Agregar objetivo específico",
@@ -3423,31 +3963,31 @@ async function handleAction(action, el) {
         "upload",
       );
       break;
-    case "upload-save":
-      state.attachments = 4;
+    case "upload-save": {
+      const nombre = $('[data-field="modal:upload"]')?.value;
+      if (nombre && !(state.proposalDocs || []).includes(nombre)) {
+        state.proposalDocs = (state.proposalDocs || []).concat(nombre);
+      }
+      state.attachments = Math.max(4, proposalDocuments().length);
       save();
       closeModal();
       render();
       toast("Documento adjunto · versión 1.0.");
       break;
+    }
     case "toggle-attachment":
       state.attachments = state.attachments >= 4 ? 3 : 4;
       save();
       render();
       break;
-    case "send":
-      // [Línea clave]: ¿Por qué soy importante? Envío formal a evaluación técnica y Vinculación. ¿Para qué? Transicionar el estado del expediente de formulación a revisión. ¿Dónde me usan? En handleAction bajo la acción 'send'.
-      if (!budgetValid() || state.attachments < 4) {
+    case "send": {
+      // [Línea clave]: ¿Por qué soy importante? Envío formal a evaluación técnica y Vinculación. ¿Para qué? Validar y registrar la propuesta completa en PostgreSQL. ¿Dónde me usan? En handleAction bajo la acción 'send'.
+      const issues = proposalValidationIssues();
+      if (issues.length) {
         modal(
           "Corrige la propuesta antes de enviar",
-          notice(
-            "Hay requisitos incompletos",
-            !budgetValid()
-              ? "Revisa los topes y las reglas del presupuesto."
-              : "Falta el anexo obligatorio de fundamentación.",
-            "warning",
-          ),
-          btn("Ir a corregir", !budgetValid() ? "15" : "17"),
+          notice("Hay requisitos incompletos", issues.map((i) => `• ${i.text}`).join("<br>"), "warning"),
+          btn("Ir a corregir", issues[0].screen),
         );
         break;
       }
@@ -3456,23 +3996,49 @@ async function handleAction(action, el) {
         $("#reviewed")?.focus();
         break;
       }
+      const titulo = draftValue("08:Título de la propuesta", screenDefault("08", "Título de la propuesta"));
       modal(
         "¿Enviar a revisión de Vinculación?",
-        `<p>Se registrará la versión 1.0 de <strong>Agua Inteligente: monitoreo de cuencas</strong> y quedará disponible para la instancia revisora.</p><div class="mt">${notice("Todavía no es el sometimiento formal", "El sometimiento ante VIE ocurre después de la evaluación técnica y los avales.")}</div>`,
+        `<p>Se registrará la versión 1.0 de <strong>${esc(titulo)}</strong> y quedará disponible para la instancia revisora.</p><div class="mt">${notice("Todavía no es el sometimiento formal", "El sometimiento ante VIE ocurre después de la evaluación técnica y los avales.")}</div>`,
         act("Seguir revisando", "close", "secondary") +
           confirmBtn("Confirmar envío", "send-confirm"),
         false,
         "send",
       );
       break;
-    case "send-confirm":
-      state.stage = "En revisión de Vinculación";
-      save();
-      generarEvaluacionPreliminarIA().then(() => {
-        toast("Evaluación preliminar con Gemini IA generada para las instancias evaluadoras.");
-      });
-      go("19");
+    }
+    case "send-confirm": {
+      try {
+        toast("Registrando la propuesta en PostgreSQL...");
+        const payload = buildProposalPayload();
+        const respuesta = await crearPropuestaBackend(payload);
+        const creada = respuesta?.propuesta || {};
+        state.created = {
+          id: Number(creada.id_propuesta),
+          code: creada.codigo || "SI-2027-014",
+          title: creada.titulo || payload.titulo,
+          amount: totalA() + totalB(),
+          date: new Date().toISOString(),
+        };
+        state.stage = "En revisión de Vinculación";
+        state.viewProposal = state.created.code;
+        evaluacionPreliminarIA = respuesta?.evaluacion_preliminar_ia || null;
+        clearProposalDraft();
+        save();
+        closeModal();
+        await obtenerDatosBackend();
+        go("19");
+        toast(respuesta?.duplicada ? "La propuesta ya estaba registrada." : "Propuesta registrada y remitida a Vinculación.");
+      } catch (err) {
+        console.error("send-confirm error:", err);
+        modal(
+          "No se pudo registrar la propuesta",
+          notice("Se conservó tu borrador en este navegador", esc(err.message || "Error desconocido al registrar."), "warning"),
+          act("Cerrar", "close", "secondary"),
+        );
+      }
       break;
+    }
     case "refresh-ai-eval":
       toast("Consultando a Google Gemini (Free Tier)...");
       await generarEvaluacionPreliminarIA();
@@ -3489,7 +4055,7 @@ async function handleAction(action, el) {
         render();
         toast("Puntajes de referencia IA aplicados a la rúbrica.");
       } else {
-        await obtenerEvaluacionPreliminarIA(1);
+        await obtenerEvaluacionPreliminarIA(currentProposalId());
         if (evaluacionPreliminarIA?.criterios_sugeridos) {
           state.scores = {
             ...state.scores,
@@ -3502,7 +4068,7 @@ async function handleAction(action, el) {
       }
       break;
     case "modal-ai-detail": {
-      if (!evaluacionPreliminarIA) await obtenerEvaluacionPreliminarIA(1);
+      if (!evaluacionPreliminarIA) await obtenerEvaluacionPreliminarIA(currentProposalId());
       const ia = evaluacionPreliminarIA || {};
       const fortalezasHtml = (ia.fortalezas || [])
         .map((f) => `<li>${esc(f)}</li>`)

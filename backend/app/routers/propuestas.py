@@ -34,9 +34,11 @@ ARCHIVO: backend/app/routers/propuestas.py
 ========================================================================================
 """
 
+import logging
 import math
 from datetime import date, datetime
 from typing import Any, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from psycopg import Connection
@@ -124,11 +126,13 @@ class TeamMemberIn(BaseModel):
     Se utiliza dentro del arreglo 'equipo' de PropuestaCrearIn (Pantalla 09).
 
     atributos:
-        * int : id_usuario Identificador del usuario que integrará el equipo investigador.
+        * Optional[int] : id_usuario Identificador del usuario que integrará el equipo investigador.
+        * Optional[str] : correo Correo institucional para resolver al usuario en servidor.
         * int : id_tipo_hora Identificador del tipo de hora asignada (VIE, CONS, REC, DOC, etc.).
         * int : horas_asignadas Cantidad de horas semanales dedicadas al proyecto.
     """
-    id_usuario: int
+    id_usuario: Optional[int] = None
+    correo: Optional[str] = None
     id_tipo_hora: int
     horas_asignadas: int = Field(ge=1, le=40)
 
@@ -171,6 +175,7 @@ class ProductoAcademicoIn(BaseModel):
     descripcion: str
     meta_esperada: str
     categoria: str
+    codigo_objetivo: Optional[str] = None
     id_objetivo: Optional[int] = None
     es_obligatorio: bool = True
 
@@ -188,11 +193,23 @@ class PlanAccionIn(BaseModel):
         * date : fecha_inicio Fecha en que inicia la actividad.
         * Optional[date] : fecha_fin Fecha programada de culminación de la actividad.
         * Optional[int] : id_usuario_responsable Identificador del investigador a cargo.
+        * Optional[int] : id_objetivo Objetivo específico al que tributa la actividad.
+        * Optional[str] : resultado_esperado Entregable o resultado verificable.
+        * Optional[str] : rol_responsable Rol con el que participa la persona responsable.
+        * Optional[int] : mes_inicio Mes ordinal de inicio dentro del proyecto.
+        * Optional[int] : mes_fin Mes ordinal de finalización dentro del proyecto.
     """
     descripcion_actividad: str
     fecha_inicio: date
     fecha_fin: Optional[date] = None
     id_usuario_responsable: Optional[int] = None
+    correo_responsable: Optional[str] = None
+    codigo_objetivo: Optional[str] = None
+    id_objetivo: Optional[int] = None
+    resultado_esperado: Optional[str] = None
+    rol_responsable: Optional[str] = None
+    mes_inicio: Optional[int] = Field(default=None, ge=1, le=36)
+    mes_fin: Optional[int] = Field(default=None, ge=1, le=36)
 
 
 class RiesgoIn(BaseModel):
@@ -209,12 +226,16 @@ class RiesgoIn(BaseModel):
         * int : id_nivel_impacto Nivel de impacto en caso de materialización.
         * Optional[str] : medida_mitigacion Plan de contingencia o acción preventiva.
         * Optional[int] : id_plan_accion Actividad del plan de acción vinculada al riesgo.
+        * Optional[int] : id_usuario_responsable Persona encargada de monitorear el riesgo.
+        * Optional[str] : correo_responsable Correo institucional para resolver al responsable.
     """
     descripcion_riesgo: str
     id_nivel_probabilidad: int
     id_nivel_impacto: int
     medida_mitigacion: Optional[str] = None
     id_plan_accion: Optional[int] = None
+    id_usuario_responsable: Optional[int] = None
+    correo_responsable: Optional[str] = None
 
 
 class PresupuestoItemIn(BaseModel):
@@ -229,10 +250,12 @@ class PresupuestoItemIn(BaseModel):
         * int : id_rubro Identificador del rubro presupuestario institucional.
         * float : monto Monto solicitado para ese rubro en colones costarricenses (CRC).
         * int : anio Año de ejecución presupuestaria al que corresponde el gasto (1, 2 o 3).
+        * Optional[str] : justificacion Detalle o criterio de elegibilidad del gasto.
     """
     id_rubro: int
     monto: float = Field(ge=0)
     anio: int = Field(default=1, ge=1, le=3)
+    justificacion: Optional[str] = ""
 
 
 class DeclaracionEticaIn(BaseModel):
@@ -259,6 +282,70 @@ class DeclaracionEticaIn(BaseModel):
     estado_tramite: Optional[str] = None
 
 
+class ColaboradorExternoIn(BaseModel):
+    """
+    Modelo de entrada para colaboradores externos que no poseen cuenta institucional.
+
+    Se persiste en 'external_collaborators' y complementa al equipo registrado por correo.
+
+    atributos:
+        * str : nombre_completo Nombre de la persona colaboradora.
+        * str : institucion Universidad, empresa o centro de investigación de procedencia.
+        * str : rol Proyecto o función dentro de la propuesta.
+        * Optional[str] : correo Correo de contacto del colaborador.
+        * Optional[str] : orcid Identificador ORCID si está disponible.
+        * Optional[int] : horas_asignadas Dedicación semanal declarada.
+        * Optional[str] : responsabilidad Alcance o entregable bajo su responsabilidad.
+    """
+    nombre_completo: str = Field(..., min_length=3, max_length=150)
+    institucion: str = Field(..., min_length=2, max_length=200)
+    rol: str = Field(..., min_length=2, max_length=100)
+    correo: Optional[str] = None
+    orcid: Optional[str] = None
+    horas_asignadas: Optional[int] = Field(default=None, ge=1, le=40)
+    responsabilidad: Optional[str] = None
+
+
+class SeccionPropuestaIn(BaseModel):
+    """
+    Modelo de entrada para secciones narrativas extensas de la propuesta.
+
+    Se utiliza para persistir texto que no tiene una columna dedicada en 'propuestas'.
+
+    atributos:
+        * str : codigo_seccion Identificador estable de la sección (problema, metodologia, etc.).
+        * str : titulo Título visible de la sección.
+        * str : contenido Texto completo de la sección.
+        * int : orden Posición de la sección en el expediente.
+    """
+    codigo_seccion: str = Field(..., min_length=1, max_length=80)
+    titulo: str = Field(..., min_length=1, max_length=200)
+    contenido: str
+    orden: int = 1
+
+
+class DocumentoPropuestaIn(BaseModel):
+    """
+    Modelo de entrada para los metadatos de documentos adjuntos a la propuesta.
+
+    En esta fase no se almacenan archivos reales; se registra nombre, tipo y ruta lógica.
+
+    atributos:
+        * str : nombre_archivo Nombre original o etiqueta del documento.
+        * str : tipo_documento Categoría del instrumento.
+        * Optional[str] : extension Extensión del archivo.
+        * Optional[str] : file_path Ruta lógica o marcador de posición.
+        * Optional[int] : tamano_bytes Tamaño declarado en bytes.
+        * Optional[str] : mime_type Tipo MIME declarado.
+    """
+    nombre_archivo: str = Field(..., min_length=1, max_length=255)
+    tipo_documento: str = Field(default="Documento de propuesta", max_length=100)
+    extension: Optional[str] = None
+    file_path: Optional[str] = None
+    tamano_bytes: Optional[int] = Field(default=0, ge=0)
+    mime_type: Optional[str] = None
+
+
 class PropuestaCrearIn(BaseModel):
     """
     Modelo de entrada consolidado (Request Body) para la creación atómica de una propuesta completa.
@@ -278,8 +365,19 @@ class PropuestaCrearIn(BaseModel):
         * Optional[int] : id_convocatoria Convocatoria a la que se postula (por defecto 1 = Fondos VIE 2027).
         * Optional[date] : fecha_inicio Fecha prevista de inicio de actividades.
         * Optional[date] : fecha_fin Fecha prevista de finalización.
-        * Optional[int] : estado_inicial Estado de registro (1 = En formulación / Borrador).
+        * Optional[int] : estado_inicial Estado de registro (2 = En revisión de Vinculación).
+        * Optional[str] : client_uuid Identificador idempotente generado por el navegador.
+        * Optional[str] : palabras_clave Palabras clave de la propuesta.
+        * Optional[str] : resumen_en Resumen en inglés.
+        * Optional[str] : prioridad_nacional_ods Prioridad nacional u ODS vinculado.
+        * Optional[int] : trl_inicial Nivel de madurez tecnológica de partida (1–9).
+        * Optional[int] : trl_esperado Nivel de madurez tecnológica esperado (1–9).
+        * Optional[bool] : potencial_pi Indica si existe potencial de propiedad intelectual.
+        * Optional[str] : activo_previsto Activo de propiedad intelectual comprometido.
         * list[TeamMemberIn] : equipo Miembros del equipo de investigación y horas asignadas.
+        * list[ColaboradorExternoIn] : colaboradores_externos Personas sin cuenta institucional.
+        * list[SeccionPropuestaIn] : secciones Secciones narrativas extensas.
+        * list[DocumentoPropuestaIn] : documentos Metadatos de documentos adjuntos.
         * list[ObjetivoIn] : objetivos Objetivos generales y específicos formulados.
         * list[ProductoAcademicoIn] : productos_academicos Entregables comprometidos.
         * list[PlanAccionIn] : plan_accion Cronograma de actividades planificadas.
@@ -296,8 +394,20 @@ class PropuestaCrearIn(BaseModel):
     id_convocatoria: Optional[int] = 1
     fecha_inicio: Optional[date] = None
     fecha_fin: Optional[date] = None
-    estado_inicial: Optional[int] = 1
+    estado_inicial: Optional[int] = 2
+    client_uuid: Optional[UUID] = None
+    palabras_clave: Optional[str] = None
+    resumen_en: Optional[str] = None
+    palabras_clave_en: Optional[str] = None
+    prioridad_nacional_ods: Optional[str] = None
+    trl_inicial: Optional[int] = Field(default=None, ge=1, le=9)
+    trl_esperado: Optional[int] = Field(default=None, ge=1, le=9)
+    potencial_pi: Optional[bool] = None
+    activo_previsto: Optional[str] = None
     equipo: list[TeamMemberIn] = []
+    colaboradores_externos: list[ColaboradorExternoIn] = []
+    secciones: list[SeccionPropuestaIn] = []
+    documentos: list[DocumentoPropuestaIn] = []
     objetivos: list[ObjetivoIn] = []
     productos_academicos: list[ProductoAcademicoIn] = []
     plan_accion: list[PlanAccionIn] = []
@@ -883,6 +993,57 @@ def obtener_dossier_propuesta(
         except Exception:
             pass
 
+        # [Línea clave]: Consulta las secciones narrativas extensas del formulario.
+        secciones = []
+        try:
+            cur.execute(
+                """
+                SELECT codigo_seccion, contenido
+                FROM proposal_sections
+                WHERE id_propuesta = %s
+                ORDER BY codigo_seccion ASC
+                """,
+                (id_propuesta,),
+            )
+            secciones = cur.fetchall()
+        except Exception:
+            pass
+
+        # [Línea clave]: Consulta los metadatos de los documentos adjuntos.
+        documentos = []
+        try:
+            cur.execute(
+                """
+                SELECT id_documento, nombre_archivo, tipo_documento, extension,
+                       file_path, tamano_bytes, version, fecha_subida
+                FROM proposal_documents
+                WHERE id_propuesta = %s
+                ORDER BY id_documento ASC
+                """,
+                (id_propuesta,),
+            )
+            documentos = cur.fetchall()
+        except Exception:
+            pass
+
+        # [Línea clave]: Consulta los colaboradores externos y sus compromisos.
+        colaboradores_externos = []
+        try:
+            cur.execute(
+                """
+                SELECT id_colaborador, nombre_completo, identificacion_orcid,
+                       institucion_empresa, rol_desempenado, carta_compromiso_adjunta,
+                       horas_semana, responsabilidad
+                FROM external_collaborators
+                WHERE id_propuesta = %s
+                ORDER BY id_colaborador ASC
+                """,
+                (id_propuesta,),
+            )
+            colaboradores_externos = cur.fetchall()
+        except Exception:
+            pass
+
         # [Línea clave]: Consulta la bitácora inmutable de cambios de estado para trazabilidad.
         historial = []
         try:
@@ -945,6 +1106,9 @@ def obtener_dossier_propuesta(
         "riesgos": riesgos,
         "presupuesto": presupuesto,
         "declaraciones_eticas": eticas,
+        "secciones": secciones,
+        "documentos": documentos,
+        "colaboradores_externos": colaboradores_externos,
         "historial": historial,
         "evaluaciones": evaluaciones,
         "evaluacion_ia": evaluacion_ia,
@@ -979,81 +1143,161 @@ def crear_propuesta(
     # 1. Validaciones de Negocio Obligatorias (Disposiciones VIE 2027)
     # -------------------------------------------------------------
     with conn.cursor() as cur:
+        cols = _get_table_columns(cur, "propuestas")
+        has_codigo = "codigo" in cols
+        has_convocatoria = "id_convocatoria" in cols
+        has_fechas = "fecha_inicio" in cols and "fecha_fin" in cols
+        code_expr = "COALESCE(codigo, 'SI-' || id_propuesta::text)" if has_codigo else "'SI-' || id_propuesta::text"
+
+        # Idempotencia: si el navegador reenvía el mismo borrador, devuelve la propuesta ya creada.
+        if payload.client_uuid and "client_uuid" in cols:
+            cur.execute(
+                f"SELECT id_propuesta, {code_expr} AS codigo, titulo, estado_actual FROM propuestas WHERE client_uuid = %s LIMIT 1;",
+                (payload.client_uuid,),
+            )
+            existente = cur.fetchone()
+            if existente:
+                return {
+                    "ok": True,
+                    "mensaje": "La propuesta ya había sido registrada; se devuelve el expediente existente.",
+                    "propuesta": existente,
+                    "duplicada": True,
+                    "evaluacion_preliminar_ia": obtener_evaluacion_ia_guardada(id_propuesta=existente["id_propuesta"], conn=conn, autogenerar=False),
+                }
+
         # [Línea clave]: Mapea rubros presupuestarios para verificar la regla de bienes duraderos en Año 1.
-        cur.execute("SELECT id_rubro, nombre_rubro FROM rubros_presupuesto")
-        rubros_map = {r["id_rubro"]: r["nombre_rubro"].lower() for r in cur.fetchall()}
+        cur.execute("SELECT id_rubro, nombre_rubro, es_bien_duradero FROM rubros_presupuesto")
+        rubros_map = {r["id_rubro"]: r for r in cur.fetchall()}
 
-    # [Línea clave]: Regla 2.3.9: bloquea compras de bienes duraderos en años 2 o 3 con HTTP 400.
-    for item in payload.presupuesto:
-        nom = rubros_map.get(item.id_rubro, "")
-        if ("duradero" in nom or "equipo" in nom) and item.anio > 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="La adquisición de equipo y bienes duraderos debe formularse obligatoriamente en el Año 1 (Sección 2.3.9 Disposiciones Fondos VIE 2027).",
+        # Resolver integrantes por correo institucional, evitando IDs enviados por el cliente.
+        user_cols = _get_table_columns(cur, "usuarios")
+        active_filter = " AND estado_activo IS TRUE" if "estado_activo" in user_cols else ""
+        usuarios_por_correo: dict[str, Optional[int]] = {}
+
+        def resolver_usuario_por_correo(correo: Optional[str]) -> Optional[int]:
+            if not correo:
+                return None
+            clave = correo.strip().lower()
+            if clave in usuarios_por_correo:
+                return usuarios_por_correo[clave]
+            cur.execute(
+                f"SELECT id_usuario FROM usuarios WHERE lower(trim(correo)) = %s{active_filter} LIMIT 1;",
+                (clave,),
+            )
+            fila = cur.fetchone()
+            usuarios_por_correo[clave] = fila["id_usuario"] if fila else None
+            return usuarios_por_correo[clave]
+
+        equipo_resuelto: list[TeamMemberIn] = []
+        claves_equipo: set[tuple[int, int]] = set()
+        for miembro in payload.equipo:
+            id_usuario = miembro.id_usuario
+            if miembro.correo:
+                cur.execute(
+                    f"SELECT id_usuario, correo FROM usuarios WHERE lower(trim(correo)) = lower(trim(%s)){active_filter} LIMIT 1;",
+                    (miembro.correo,),
+                )
+                usuario = cur.fetchone()
+                if not usuario:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"El correo {miembro.correo} no corresponde a un usuario institucional activo.",
+                    )
+                id_usuario = usuario["id_usuario"]
+            if not id_usuario:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cada integrante del equipo debe incluir id_usuario o correo institucional.",
+                )
+            clave = (id_usuario, miembro.id_tipo_hora)
+            if clave in claves_equipo:
+                continue
+            claves_equipo.add(clave)
+            equipo_resuelto.append(
+                TeamMemberIn(
+                    id_usuario=id_usuario,
+                    correo=miembro.correo,
+                    id_tipo_hora=miembro.id_tipo_hora,
+                    horas_asignadas=miembro.horas_asignadas,
+                )
             )
 
-    # [Línea clave]: Regla 2.4.1: calcula la proporción de al menos 1 producto por cada 10 horas semanales.
-    total_horas = sum(m.horas_asignadas for m in payload.equipo)
-    min_productos_requeridos = max(1, math.ceil(total_horas / 10)) if total_horas > 0 else 1
+        # [Línea clave]: Regla 2.3.9: bloquea compras de bienes duraderos en años 2 o 3 con HTTP 400.
+        for item in payload.presupuesto:
+            rubro = rubros_map.get(item.id_rubro)
+            if not rubro:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"El rubro presupuestario {item.id_rubro} no existe en el catálogo institucional.",
+                )
+            nom = (rubro["nombre_rubro"] or "").lower()
+            if (rubro.get("es_bien_duradero") or "duradero" in nom or "equipo" in nom) and item.anio > 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="La adquisición de equipo y bienes duraderos debe formularse obligatoriamente en el Año 1 (Sección 2.3.9 Disposiciones Fondos VIE 2027).",
+                )
 
-    if payload.estado_inicial and payload.estado_inicial > 1:
-        if len(payload.productos_academicos) < min_productos_requeridos:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Para {total_horas} horas totales del equipo se exige un mínimo de {min_productos_requeridos} productos académicos comprometidos (Sección 2.4.1 Disposiciones VIE 2027).",
-            )
+        # [Línea clave]: Regla 2.4.1: calcula la proporción de al menos 1 producto por cada 10 horas semanales.
+        total_horas = sum(m.horas_asignadas for m in equipo_resuelto)
+        min_productos_requeridos = max(1, math.ceil(total_horas / 10)) if total_horas > 0 else 1
+
+        if (payload.estado_inicial or 2) > 1:
+            if len(payload.productos_academicos) < min_productos_requeridos:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Para {total_horas} horas totales del equipo se exige un mínimo de {min_productos_requeridos} productos académicos comprometidos (Sección 2.4.1 Disposiciones VIE 2027).",
+                )
 
     # -------------------------------------------------------------
     # 2. Inserción Atómica Multitabla
     # -------------------------------------------------------------
     with conn.cursor() as cur:
-        # [Línea clave]: Obtiene columnas de todas las tablas antes de insertar para garantizar consistencia.
-        cols = _get_table_columns(cur, "propuestas")
         risks_cols = _get_table_columns(cur, "risks")
         budget_cols = _get_table_columns(cur, "proposal_budget")
-        has_codigo = "codigo" in cols
-        has_convocatoria = "id_convocatoria" in cols
-        has_fechas = "fecha_inicio" in cols and "fecha_fin" in cols
         has_plan_fk = "id_plan_accion" in risks_cols
+        has_risk_user = "id_usuario_responsable" in risks_cols
         has_anio_col = "anio" in budget_cols
-        code_expr = "COALESCE(codigo, 'SI-' || id_propuesta::text)" if has_codigo else "'SI-' || id_propuesta::text"
+        has_budget_just = "justificacion" in budget_cols
 
-        insert_cols = [
-            "id_usuario_lider",
-            "id_escuela",
-            "id_modalidad",
-            "id_linea_investigacion",
-            "titulo",
-            "resumen",
-            "estado_actual",
-            "fecha_creacion",
-        ]
-        values = [
-            payload.id_usuario_lider,
-            payload.id_escuela,
-            payload.id_modalidad,
-            payload.id_linea_investigacion,
-            payload.titulo,
-            payload.resumen,
-            payload.estado_inicial or 1,
-            datetime.now(),
-        ]
+        fecha_inicio = payload.fecha_inicio or date(2027, 1, 1)
+        fecha_fin = payload.fecha_fin or date(2028, 12, 31)
+        estado_inicial = payload.estado_inicial or 2
 
-        if has_convocatoria and payload.id_convocatoria:
-            insert_cols.append("id_convocatoria")
-            values.append(payload.id_convocatoria)
-
+        cabecera: dict[str, Any] = {
+            "id_usuario_lider": payload.id_usuario_lider,
+            "id_escuela": payload.id_escuela,
+            "id_modalidad": payload.id_modalidad,
+            "id_linea_investigacion": payload.id_linea_investigacion,
+            "titulo": payload.titulo,
+            "resumen": payload.resumen or "",
+            "estado_actual": estado_inicial,
+            "fecha_creacion": datetime.now(),
+        }
+        if has_convocatoria:
+            cabecera["id_convocatoria"] = payload.id_convocatoria or 1
         if has_fechas:
-            insert_cols.extend(["fecha_inicio", "fecha_fin"])
-            values.extend([payload.fecha_inicio or date(2027, 1, 1), payload.fecha_fin or date(2028, 12, 31)])
+            cabecera["fecha_inicio"] = fecha_inicio
+            cabecera["fecha_fin"] = fecha_fin
+        opcionales = {
+            "client_uuid": payload.client_uuid,
+            "palabras_clave": payload.palabras_clave,
+            "palabras_clave_en": payload.palabras_clave_en,
+            "resumen_en": payload.resumen_en,
+            "prioridad_nacional_ods": payload.prioridad_nacional_ods,
+            "trl_inicial": payload.trl_inicial,
+            "trl_esperado": payload.trl_esperado,
+            "potencial_pi": payload.potencial_pi,
+            "activo_previsto": payload.activo_previsto,
+        }
+        for columna, valor in opcionales.items():
+            if columna in cols and valor is not None:
+                cabecera[columna] = valor
 
-        placeholders = ", ".join(["%s"] * len(values))
-        cols_str = ", ".join(insert_cols)
-
-        # [Línea clave]: Inserta la cabecera en propuestas retornando el id generado por PostgreSQL.
+        insert_cols = list(cabecera.keys())
+        placeholders = ", ".join(["%s"] * len(insert_cols))
         cur.execute(
-            f"INSERT INTO propuestas ({cols_str}) VALUES ({placeholders}) RETURNING id_propuesta;",
-            tuple(values),
+            f"INSERT INTO propuestas ({', '.join(insert_cols)}) VALUES ({placeholders}) RETURNING id_propuesta;",
+            tuple(cabecera.values()),
         )
         id_propuesta = cur.fetchone()["id_propuesta"]
 
@@ -1062,19 +1306,32 @@ def crear_propuesta(
             cur.execute("SELECT codigo FROM propuestas WHERE id_propuesta = %s;", (id_propuesta,))
             codigo_row = cur.fetchone()
             if not codigo_row or not codigo_row["codigo"]:
-                anio_actual = datetime.now().year
+                anio_codigo = str(fecha_inicio.year)
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s));",
+                    (f"sgpi_codigo_propuesta_{anio_codigo}",),
+                )
+                cur.execute(
+                    """
+                    SELECT COALESCE(MAX(SUBSTRING(codigo FROM '^SI-[0-9]{4}-([0-9]+)$')::integer), 0) + 1 AS consecutivo
+                    FROM propuestas
+                    WHERE codigo LIKE %s;
+                    """,
+                    (f"SI-{anio_codigo}-%",),
+                )
+                consecutivo = cur.fetchone()["consecutivo"]
                 cur.execute(
                     "UPDATE propuestas SET codigo = %s WHERE id_propuesta = %s;",
-                    (f"SI-{anio_actual}-{id_propuesta:03d}", id_propuesta),
+                    (f"SI-{anio_codigo}-{consecutivo:03d}", id_propuesta),
                 )
 
         # 3. Equipo Investigador
-        for miembro in payload.equipo:
+        for miembro in equipo_resuelto:
             cur.execute(
                 """
                 INSERT INTO research_team (id_propuesta, id_usuario, id_tipo_hora, horas_asignadas)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (id_propuesta, id_usuario, id_tipo_hora) 
+                ON CONFLICT (id_propuesta, id_usuario, id_tipo_hora)
                 DO UPDATE SET horas_asignadas = EXCLUDED.horas_asignadas;
                 """,
                 (id_propuesta, miembro.id_usuario, miembro.id_tipo_hora, miembro.horas_asignadas),
@@ -1083,177 +1340,242 @@ def crear_propuesta(
         # 4. Objetivos
         objetivo_id_map: dict[str, int] = {}
         for obj in payload.objetivos:
-            try:
-                cur.execute(
-                    """
-                    INSERT INTO proposal_objectives (id_propuesta, codigo_objetivo, descripcion, orden)
-                    VALUES (%s, %s, %s, %s)
-                    RETURNING id_objetivo;
-                    """,
-                    (id_propuesta, obj.codigo_objetivo, obj.descripcion, obj.orden),
-                )
-                id_obj = cur.fetchone()["id_objetivo"]
-                objetivo_id_map[obj.codigo_objetivo] = id_obj
-            except Exception:
-                pass
+            cur.execute(
+                """
+                INSERT INTO proposal_objectives (id_propuesta, codigo_objetivo, descripcion, orden)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id_objetivo;
+                """,
+                (id_propuesta, obj.codigo_objetivo, obj.descripcion, obj.orden),
+            )
+            objetivo_id_map[obj.codigo_objetivo] = cur.fetchone()["id_objetivo"]
 
         # 5. Compromisos de Productos Académicos
         for prod in payload.productos_academicos:
-            try:
-                cur.execute(
-                    """
-                    INSERT INTO academic_product_commitments (
-                        id_propuesta, id_objetivo, tipo_producto, descripcion,
-                        meta_esperada, categoria, es_obligatorio, cumplido
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
-                    """,
-                    (
-                        id_propuesta,
-                        prod.id_objetivo,
-                        prod.tipo_producto,
-                        prod.descripcion,
-                        prod.meta_esperada,
-                        prod.categoria,
-                        prod.es_obligatorio,
-                        False,
-                    ),
-                )
-            except Exception:
-                pass
+            id_objetivo = objetivo_id_map.get(prod.codigo_objetivo or "") or prod.id_objetivo
+            cur.execute(
+                """
+                INSERT INTO academic_product_commitments (
+                    id_propuesta, id_objetivo, tipo_producto, descripcion,
+                    meta_esperada, categoria, es_obligatorio, cumplido
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+                """,
+                (
+                    id_propuesta,
+                    id_objetivo,
+                    prod.tipo_producto,
+                    prod.descripcion,
+                    prod.meta_esperada,
+                    prod.categoria,
+                    prod.es_obligatorio,
+                    False,
+                ),
+            )
 
         # 6. Plan de Acción
-        primer_plan_id: Optional[int] = None
+        plan_ids: list[int] = []
         for plan in payload.plan_accion:
-            try:
-                cur.execute(
-                    """
-                    INSERT INTO action_plans (id_propuesta, descripcion_actividad, fecha_inicio, fecha_fin, id_usuario_responsable)
-                    VALUES (%s, %s, %s, %s, %s)
-                    RETURNING id_plan_accion;
-                    """,
-                    (id_propuesta, plan.descripcion_actividad, plan.fecha_inicio, plan.fecha_fin, plan.id_usuario_responsable),
-                )
-                res = cur.fetchone()
-                if res and primer_plan_id is None:
-                    primer_plan_id = res["id_plan_accion"]
-            except Exception:
-                pass
+            id_objetivo = objetivo_id_map.get(plan.codigo_objetivo or "") or plan.id_objetivo
+            id_responsable = plan.id_usuario_responsable or resolver_usuario_por_correo(plan.correo_responsable)
+            cur.execute(
+                """
+                INSERT INTO action_plans (
+                    id_propuesta, descripcion_actividad, fecha_inicio, fecha_fin,
+                    id_usuario_responsable, id_objetivo, resultado_esperado,
+                    rol_responsable, mes_inicio, mes_fin
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id_plan_accion;
+                """,
+                (
+                    id_propuesta,
+                    plan.descripcion_actividad,
+                    plan.fecha_inicio,
+                    plan.fecha_fin,
+                    id_responsable,
+                    id_objetivo,
+                    plan.resultado_esperado,
+                    plan.rol_responsable,
+                    plan.mes_inicio,
+                    plan.mes_fin,
+                ),
+            )
+            plan_ids.append(cur.fetchone()["id_plan_accion"])
 
-        # 7. Matriz de Riesgos (vinculada al plan de acción si existe columna)
-        for r in payload.riesgos:
-            try:
-                if has_plan_fk:
-                    cur.execute(
-                        """
-                        INSERT INTO risks (id_propuesta, descripcion_riesgo, id_nivel_probabilidad, id_nivel_impacto, medida_mitigacion, id_plan_accion)
-                        VALUES (%s, %s, %s, %s, %s, %s);
-                        """,
-                        (id_propuesta, r.descripcion_riesgo, r.id_nivel_probabilidad, r.id_nivel_impacto, r.medida_mitigacion, r.id_plan_accion or primer_plan_id),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        INSERT INTO risks (id_propuesta, descripcion_riesgo, id_nivel_probabilidad, id_nivel_impacto, medida_mitigacion)
-                        VALUES (%s, %s, %s, %s, %s);
-                        """,
-                        (id_propuesta, r.descripcion_riesgo, r.id_nivel_probabilidad, r.id_nivel_impacto, r.medida_mitigacion),
-                    )
-            except Exception:
-                pass
+        # 7. Matriz de Riesgos (vinculada al primer plan de acción si no se indica uno)
+        for indice, riesgo in enumerate(payload.riesgos):
+            plan_ref = riesgo.id_plan_accion
+            if plan_ref is None and plan_ids:
+                plan_ref = plan_ids[min(indice, len(plan_ids) - 1)]
+            id_responsable = riesgo.id_usuario_responsable or resolver_usuario_por_correo(riesgo.correo_responsable)
+            cur.execute(
+                """
+                INSERT INTO risks (
+                    id_propuesta, descripcion_riesgo, id_nivel_probabilidad,
+                    id_nivel_impacto, medida_mitigacion, id_plan_accion, id_usuario_responsable
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s);
+                """,
+                (
+                    id_propuesta,
+                    riesgo.descripcion_riesgo,
+                    riesgo.id_nivel_probabilidad,
+                    riesgo.id_nivel_impacto,
+                    riesgo.medida_mitigacion,
+                    plan_ref if has_plan_fk else None,
+                    id_responsable if has_risk_user else None,
+                ),
+            )
 
         # 8. Presupuesto Anualizado
         for b in payload.presupuesto:
-            try:
-                if has_anio_col:
-                    cur.execute(
-                        """
-                        INSERT INTO proposal_budget (id_propuesta, id_rubro, monto, anio)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (id_propuesta, id_rubro) DO UPDATE SET monto = EXCLUDED.monto, anio = EXCLUDED.anio;
-                        """,
-                        (id_propuesta, b.id_rubro, b.monto, b.anio),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        INSERT INTO proposal_budget (id_propuesta, id_rubro, monto)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (id_propuesta, id_rubro) DO UPDATE SET monto = EXCLUDED.monto;
-                        """,
-                        (id_propuesta, b.id_rubro, b.monto),
-                    )
-            except Exception:
-                pass
+            if b.monto <= 0:
+                continue
+            if has_anio_col and has_budget_just:
+                cur.execute(
+                    """
+                    INSERT INTO proposal_budget (id_propuesta, id_rubro, monto, anio, justificacion)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (id_propuesta, id_rubro, anio)
+                    DO UPDATE SET monto = EXCLUDED.monto, justificacion = EXCLUDED.justificacion;
+                    """,
+                    (id_propuesta, b.id_rubro, b.monto, b.anio, b.justificacion),
+                )
+            elif has_anio_col:
+                cur.execute(
+                    """
+                    INSERT INTO proposal_budget (id_propuesta, id_rubro, monto, anio)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (id_propuesta, id_rubro, anio)
+                    DO UPDATE SET monto = EXCLUDED.monto;
+                    """,
+                    (id_propuesta, b.id_rubro, b.monto, b.anio),
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO proposal_budget (id_propuesta, id_rubro, monto)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (id_propuesta, id_rubro)
+                    DO UPDATE SET monto = EXCLUDED.monto;
+                    """,
+                    (id_propuesta, b.id_rubro, b.monto),
+                )
 
         # 9. Declaraciones Éticas
         for etica in payload.declaraciones_eticas:
-            try:
-                cur.execute(
-                    """
-                    INSERT INTO proposal_ethics_declarations (
-                        id_propuesta, tipo_aspecto, aplica, justificacion_exencion,
-                        ente_regulatorio, numero_permiso, estado_tramite
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s);
-                    """,
-                    (
-                        id_propuesta,
-                        etica.tipo_aspecto,
-                        etica.aplica,
-                        etica.justificacion_exencion or "",
-                        etica.ente_regulatorio,
-                        etica.numero_permiso,
-                        etica.estado_tramite,
-                    ),
-                )
-            except Exception:
-                pass
-
-        # 10. Registrar en historial de estados
-        try:
             cur.execute(
                 """
-                INSERT INTO proposal_state_history (id_propuesta, id_estado_anterior, id_estado_nuevo, id_usuario_responsable, fecha_cambio, observaciones)
-                VALUES (%s, NULL, %s, %s, NOW(), %s);
-                """,
-                (id_propuesta, payload.estado_inicial or 1, payload.id_usuario_lider, "Creación de la propuesta"),
-            )
-        except Exception:
-            pass
-
-        # 11. Notificación inicial
-        try:
-            cur.execute(
-                """
-                INSERT INTO notificaciones (id_usuario, id_propuesta, tipo, titulo, mensaje, fecha_creacion, leida)
-                VALUES (%s, %s, 'tramite', 'Propuesta registrada', %s, NOW(), false);
+                INSERT INTO proposal_ethics_declarations (
+                    id_propuesta, tipo_aspecto, aplica, justificacion_exencion,
+                    ente_regulatorio, numero_permiso, estado_tramite
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s);
                 """,
                 (
-                    payload.id_usuario_lider,
                     id_propuesta,
-                    f"Su propuesta «{payload.titulo}» fue registrada con éxito en el sistema.",
+                    etica.tipo_aspecto,
+                    etica.aplica,
+                    etica.justificacion_exencion or "",
+                    etica.ente_regulatorio,
+                    etica.numero_permiso,
+                    etica.estado_tramite,
                 ),
             )
-        except Exception:
-            pass
+
+        # 10. Secciones narrativas extensas
+        if _get_table_columns(cur, "proposal_sections"):
+            for orden, seccion in enumerate(payload.secciones, start=1):
+                cur.execute(
+                    """
+                    INSERT INTO proposal_sections (id_propuesta, codigo_seccion, contenido)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (id_propuesta, codigo_seccion)
+                    DO UPDATE SET contenido = EXCLUDED.contenido;
+                    """,
+                    (id_propuesta, seccion.codigo_seccion, seccion.contenido),
+                )
+
+        # 11. Colaboradores externos
+        collab_cols = _get_table_columns(cur, "external_collaborators")
+        if collab_cols:
+            for colaborador in payload.colaboradores_externos:
+                columnas = {
+                    "id_propuesta": id_propuesta,
+                    "nombre_completo": colaborador.nombre_completo,
+                    "identificacion_orcid": colaborador.orcid,
+                    "institucion_empresa": colaborador.institucion,
+                    "rol_desempenado": colaborador.rol,
+                    "carta_compromiso_adjunta": False,
+                    "horas_semana": colaborador.horas_asignadas,
+                    "responsabilidad": colaborador.responsabilidad,
+                }
+                columnas = {k: v for k, v in columnas.items() if k in collab_cols}
+                cur.execute(
+                    f"INSERT INTO external_collaborators ({', '.join(columnas)}) VALUES ({', '.join(['%s'] * len(columnas))});",
+                    tuple(columnas.values()),
+                )
+
+        # 12. Documentos (solo metadatos; los archivos físicos se incorporarán en otra fase)
+        doc_cols = _get_table_columns(cur, "proposal_documents")
+        if doc_cols:
+            for documento in payload.documentos:
+                nombre = documento.nombre_archivo
+                extension = documento.extension or (nombre.rsplit(".", 1)[-1].lower() if "." in nombre else "pdf")
+                columnas = {
+                    "id_propuesta": id_propuesta,
+                    "nombre_archivo": nombre,
+                    "tipo_documento": documento.tipo_documento,
+                    "extension": extension,
+                    "file_path": documento.file_path or f"propuestas/{id_propuesta}/documentos/{nombre}",
+                    "tamano_bytes": documento.tamano_bytes or 0,
+                    "version": "1.0",
+                    "id_usuario_subio": payload.id_usuario_lider,
+                }
+                columnas = {k: v for k, v in columnas.items() if k in doc_cols}
+                cur.execute(
+                    f"INSERT INTO proposal_documents ({', '.join(columnas)}) VALUES ({', '.join(['%s'] * len(columnas))});",
+                    tuple(columnas.values()),
+                )
+
+        # 13. Registrar en historial de estados
+        cur.execute(
+            """
+            INSERT INTO proposal_state_history (id_propuesta, id_estado_anterior, id_estado_nuevo, id_usuario_responsable, fecha_cambio, observaciones)
+            VALUES (%s, NULL, %s, %s, NOW(), %s);
+            """,
+            (id_propuesta, estado_inicial, payload.id_usuario_lider, "Creación y envío de la propuesta"),
+        )
+
+        # 14. Notificación inicial
+        cur.execute(
+            """
+            INSERT INTO notificaciones (id_usuario, id_propuesta, tipo, titulo, mensaje, fecha_creacion, leida)
+            VALUES (%s, %s, 'tramite', 'Propuesta registrada', %s, NOW(), false);
+            """,
+            (
+                payload.id_usuario_lider,
+                id_propuesta,
+                f"Su propuesta «{payload.titulo}» fue registrada y remitida a revisión de Vinculación.",
+            ),
+        )
 
         # [Línea clave]: Consulta y retorna el registro recién creado con su código asignado.
         cur.execute(
-            f"SELECT id_propuesta, {code_expr} AS codigo, titulo FROM propuestas WHERE id_propuesta = %s",
+            f"SELECT id_propuesta, {code_expr} AS codigo, titulo, estado_actual, fecha_creacion FROM propuestas WHERE id_propuesta = %s",
             (id_propuesta,),
         )
         propuesta_creada = cur.fetchone()
 
-    # [Línea clave]: Genera automáticamente la evaluación preliminar con Gemini IA al registrar/enviar la propuesta.
+    # La evaluación preliminar es complementaria: un fallo de IA no revierte el registro.
     evaluacion_preliminar_ia = None
     try:
         evaluacion_preliminar_ia = generar_y_guardar_evaluacion_ia(id_propuesta, conn)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("No se pudo generar la evaluación preliminar IA para la propuesta %s: %s", id_propuesta, exc)
 
     return {
         "ok": True,
         "mensaje": "Propuesta creada exitosamente con todos sus componentes institucionales.",
         "propuesta": propuesta_creada,
+        "duplicada": False,
         "evaluacion_preliminar_ia": evaluacion_preliminar_ia,
     }
 
