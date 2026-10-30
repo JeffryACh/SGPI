@@ -28,7 +28,7 @@
 - [ ] Flujos específicos de Vinculación, Comité, Consejo, Dirección y CIE.
 - [ ] Administración de convocatorias, catálogos y rúbricas.
 - [ ] Guardado de borrador en servidor.
-- [ ] Carga real de documentos de propuesta.
+- [x] Carga real de documentos de propuesta.
 - [ ] Pruebas automatizadas por rol y flujo.
 
 ## 2. Brechas transversales
@@ -73,8 +73,8 @@
 - [x] Notificación inicial al registrar propuesta.
 - [x] Backend para marcar una notificación como leída: `PATCH /notificaciones/{id}/leer`.
 - [x] Backend para marcar todas como leídas: `PATCH /notificaciones/leer-todas`.
-- [ ] **Parcial / bug:** el frontend llama `POST /notificaciones/marcar-leida`.
-- [ ] **Parcial / bug:** el frontend llama `POST /notificaciones/marcar-todas-leidas`.
+- [x] **Parcial / bug:** el frontend llama `POST /notificaciones/marcar-leida`.
+- [x] **Parcial / bug:** el frontend llama `POST /notificaciones/marcar-todas-leidas`.
 - [ ] Alinear rutas o agregar aliases compatibles.
 - [ ] Verificar que el contador de no leídas se actualice tras marcar.
 - [ ] Definir destinatarios por rol/instancia, no solo al líder.
@@ -82,10 +82,10 @@
 ### 2.4 Documentos y archivos
 
 - [x] Documentos de convocatoria se suben a Supabase Storage.
-- [x] Metadatos de documentos de propuesta se guardan en `proposal_documents`.
+- [x] Los documentos de propuesta se registran en `proposal_documents` solo cuando tienen archivo real; la creación ya no inserta metadatos falsos.
 - [x] Consulta de documentos de convocatoria por convocatoria.
-- [ ] **Parcial:** los documentos de propuesta son solo metadatos; no hay archivo real.
-- [ ] Endpoint de carga real de documentos de propuesta.
+- [x] Los documentos de propuesta se guardan como archivo real en Supabase Storage y metadatos en `proposal_documents`.
+- [x] Endpoint de carga real de documentos de propuesta.
 - [ ] Endpoint de descarga/URL firmada.
 - [ ] Endpoint de eliminación o reemplazo con versionado.
 - [ ] Validar tipo MIME, extensión y tamaño.
@@ -105,7 +105,7 @@
 - [ ] Pruebas de notificaciones y lectura.
 - [ ] Pruebas de autorización: un rol no puede ejecutar acciones de otro.
 - [ ] Pruebas de idempotencia y concurrencia.
-- [ ] Documentar variables de entorno necesarias.
+- [x] Documentar variables de entorno necesarias (`.env.example`, `docker-compose.yml`, `render.yaml`, `AGENTS.md`).
 - [ ] Revisar CORS permisivo (`allow_origins=["*"]`) antes de producción.
 
 ## 3. Endpoints existentes
@@ -148,11 +148,11 @@ Pantallas principales: `02`, `03`, `04`–`20`, `22`, `28`, `33`.
 
 - [x] **01 · Acceso:** login contra backend.
 - [x] **02 · Inicio:** métricas, propuesta reciente y top 3 desde backend.
-- [ ] **03 · Notificaciones:** corregir rutas de marcado de lectura.
+- [x] **03 · Notificaciones:** rutas de marcado de lectura corregidas a `PATCH /notificaciones/{id}/leer` y `PATCH /notificaciones/leer-todas`.
 - [x] **04 · Convocatorias:** listado desde backend.
 - [ ] **04 · Convocatorias:** filtros/paginación reales; hoy el filtro es local.
 - [x] **05 · Fondos VIE 2027:** etapas y documentos desde backend.
-- [ ] **06 · Mis propuestas:** consumir `GET /propuestas?id_usuario=...` en lugar de reutilizar el top 3.
+- [x] **06 · Mis propuestas:** consume `GET /propuestas?id_usuario=...` en lugar de reutilizar el top 3.
 - [ ] **06 · Mis propuestas:** filtros y paginación del lado servidor.
 - [x] **07 · Nueva propuesta:** modalidades, escuelas y líneas desde backend.
 - [x] **08–16 · Formulario:** los datos se persisten al crear la propuesta.
@@ -169,14 +169,14 @@ Pantallas principales: `02`, `03`, `04`–`20`, `22`, `28`, `33`.
 - [x] **15 · Presupuesto:** rubros y montos por año persistidos.
 - [ ] **15 · Presupuesto:** validaciones completas del lado servidor.
 - [x] **16 · Información complementaria:** TRL, potencial PI y secciones persistidas.
-- [ ] **17 · Documentos:** solo se registran metadatos; falta archivo real.
+- [x] **17 · Documentos:** el borrador muestra placeholders; los archivos reales se adjuntan tras registrar la propuesta con `POST /propuestas/{id}/documentos`. Se eliminaron los documentos quemados.
 - [x] **18 · Revisión:** envío crea la propuesta completa.
 - [x] **19 · Confirmación:** muestra el código devuelto por backend.
-- [ ] **20 · Seguimiento:** no recarga el expediente por ID; usa estado local.
-- [ ] **20 · Seguimiento:** consumir `GET /propuestas/{id}` y refrescar al entrar.
-- [ ] **22 · Expediente:** el backend devuelve el dossier, pero la pantalla sigue usando datos locales/estáticos.
-- [ ] **22 · Expediente:** conectar pestañas Documentos, Evaluaciones, Resolución e Historial al dossier real.
-- [ ] **28 · Historial:** conectar al arreglo `historial` del dossier o a endpoint dedicado.
+- [x] **20 · Seguimiento:** recarga el expediente real por ID y usa el estado de PostgreSQL.
+- [x] **20 · Seguimiento:** consume `GET /propuestas/{id}` mediante `cargarDossier()` al entrar.
+- [x] **22 · Expediente:** la pantalla consume el dossier real del backend (`dossierActual`).
+- [x] **22 · Expediente:** pestañas Documentos, Evaluaciones, Resolución e Historial conectadas al dossier real.
+- [x] **28 · Historial:** conectado al arreglo `historial` y a `vinculacion_evaluaciones` del dossier.
 - [ ] **33 · Perfil:** no hay endpoint para actualizar datos del usuario.
 - [ ] **33 · Perfil:** no hay endpoint para consultar roles/permisos actualizados.
 
@@ -184,21 +184,21 @@ Pantallas principales: `02`, `03`, `04`–`20`, `22`, `28`, `33`.
 
 Pantallas principales: `21`, `22`, `23`, `28`, `29`, `30`.
 
-- [ ] **21 · Bandeja:** filtrar propuestas asignadas a Vinculación.
-- [ ] **21 · Bandeja:** usar `GET /propuestas?estado_nombre=...` o endpoint de bandeja por rol.
-- [ ] **22 · Expediente:** cargar dossier real por ID.
-- [ ] **23 · Revisión de Vinculación:** no existe persistencia específica.
-- [ ] **23 · Revisión de Vinculación:** guardar número de oficio de dictamen.
-- [ ] **23 · Revisión de Vinculación:** guardar potencial PI, tipo de innovación y activo previsto.
-- [ ] **23 · Revisión de Vinculación:** guardar valoración técnica y reserva.
-- [ ] **23 · Revisión de Vinculación:** persistir en `vinculacion_evaluations`.
-- [ ] **23 · Revisión de Vinculación:** asociar dictamen a evaluación base en `evaluations`.
-- [ ] **23 · Revisión de Vinculación:** adjuntar oficio/documento firmado.
-- [ ] **23 · Revisión de Vinculación:** transición controlada de estado `2` a `3` o `10`.
-- [ ] **23 · Revisión de Vinculación:** notificar al investigador y al Comité.
-- [ ] **28 · Historial:** mostrar decisión de Vinculación con actor, fecha y documento.
-- [ ] **29–30 · Consulta histórica:** usar `GET /propuestas` con filtros reales.
-- [ ] **29–30 · Consulta histórica:** usar `GET /propuestas/{id}` al abrir un resultado.
+- [x] **21 · Bandeja:** filtrar propuestas asignadas a Vinculación.
+- [x] **21 · Bandeja:** usar `GET /propuestas?estado_nombre=...` o endpoint de bandeja por rol.
+- [x] **22 · Expediente:** cargar dossier real por ID.
+- [x] **23 · Revisión de Vinculación:** persistencia específica implementada.
+- [x] **23 · Revisión de Vinculación:** guardar número de oficio de dictamen.
+- [x] **23 · Revisión de Vinculación:** guardar potencial PI, tipo de innovación y activo previsto.
+- [x] **23 · Revisión de Vinculación:** guardar valoración técnica y reserva.
+- [x] **23 · Revisión de Vinculación:** persistir en `vinculacion_evaluations`.
+- [x] **23 · Revisión de Vinculación:** asociar dictamen a evaluación base en `evaluations`.
+- [x] **23 · Revisión de Vinculación:** adjuntar oficio/documento firmado.
+- [x] **23 · Revisión de Vinculación:** transición controlada de estado `2` a `3` o `10`.
+- [x] **23 · Revisión de Vinculación:** notificar al investigador y al Comité.
+- [x] **28 · Historial:** mostrar decisión de Vinculación con actor, fecha y documento.
+- [x] **29–30 · Consulta histórica:** usar `GET /propuestas` con filtros reales.
+- [x] **29–30 · Consulta histórica:** usar `GET /propuestas/{id}` al abrir un resultado.
 
 ### 4.3 Comité Técnico
 
@@ -310,8 +310,8 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 | `technical_committee_evaluations` | Uso parcial | Solo puntaje total desde endpoint genérico |
 | `cie_resolution_evaluations` | Uso parcial | Solo `id_resolucion`; faltan datos del acuerdo |
 | `ai_preliminary_evaluations` | Uso completo | Mantener y versionar si cambia el modelo |
-| `proposal_documents` | Uso parcial | Solo metadatos, sin archivo real |
-| `notificaciones` | Uso parcial | Rutas de lectura desalineadas en frontend |
+| `proposal_documents` | Uso completo | Archivo real en Storage + metadatos; sin filas falsas de borrador |
+| `notificaciones` | Uso completo | Rutas `PATCH` alineadas (una y todas) |
 
 ## 6. Backlog propuesto de endpoints
 
@@ -338,8 +338,8 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 
 ### 6.3 Documentos
 
-- [ ] `POST /propuestas/{id}/documentos` con archivo real.
-- [ ] `GET /propuestas/{id}/documentos`.
+- [x] `POST /propuestas/{id}/documentos` con archivo real.
+- [x] `GET /propuestas/{id}/documentos`.
 - [ ] `DELETE /propuestas/{id}/documentos/{id_documento}`.
 - [ ] `GET /propuestas/{id}/documentos/{id_documento}/url`.
 - [ ] `PATCH /convocatorias/documentos_convocatoria/{id}`.
@@ -347,8 +347,8 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 
 ### 6.4 Evaluaciones por instancia
 
-- [ ] `POST /propuestas/{id}/vinculacion`.
-- [ ] `GET /propuestas/{id}/vinculacion`.
+- [x] `POST /propuestas/{id}/vinculacion`.
+- [x] `GET /propuestas/{id}/vinculacion`.
 - [ ] `POST /propuestas/{id}/comite`.
 - [ ] `GET /propuestas/{id}/comite`.
 - [ ] `POST /propuestas/{id}/consejo`.

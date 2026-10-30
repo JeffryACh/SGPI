@@ -36,6 +36,7 @@ ARCHIVO: backend/app/routers/propuestas.py
 
 import logging
 import math
+import os
 from datetime import date, datetime
 from typing import Any, Optional
 from uuid import UUID
@@ -49,6 +50,19 @@ from .ia import generar_y_guardar_evaluacion_ia, obtener_evaluacion_ia_guardada
 
 # [Línea clave]: Declara el router bajo el prefijo /propuestas para agrupar las operaciones centrales de expedientes.
 router = APIRouter(prefix="/propuestas", tags=["propuestas"])
+
+
+def _url_publica_documento(file_path: str) -> str:
+    """Construir la URL pública de un documento almacenado en Supabase Storage."""
+
+    if not file_path:
+        return ""
+    if file_path.startswith("http://") or file_path.startswith("https://"):
+        return file_path
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    if not url:
+        return file_path
+    return f"{url}/storage/v1/object/public/convocatorias/{file_path.lstrip('/')}"
 
 
 # =====================================================================
@@ -328,7 +342,7 @@ class DocumentoPropuestaIn(BaseModel):
     """
     Modelo de entrada para los metadatos de documentos adjuntos a la propuesta.
 
-    En esta fase no se almacenan archivos reales; se registra nombre, tipo y ruta lógica.
+    Solo se registran documentos con archivo real en Storage; los metadatos sin archivo se ignoran.
 
     atributos:
         * str : nombre_archivo Nombre original o etiqueta del documento.
@@ -688,6 +702,9 @@ def listar_propuestas(
     id_estado: Optional[int] = Query(default=None, description="Filtrar por ID de estado"),
     estado_nombre: Optional[str] = Query(default=None, description="Filtrar por nombre de estado"),
     q: Optional[str] = Query(default=None, description="Término de búsqueda en título o código"),
+    anio_desde: Optional[int] = Query(default=None, description="Filtrar desde el año de inicio"),
+    anio_hasta: Optional[int] = Query(default=None, description="Filtrar hasta el año de inicio"),
+    solo_cerradas: bool = Query(default=False, description="Mostrar únicamente propuestas cerradas"),
     conn: Connection = Depends(get_conn),
 ):
     """
@@ -763,6 +780,18 @@ def listar_propuestas(
             else:
                 where_clauses.append("p.titulo ILIKE %s")
                 params.append(f"%{q}%")
+
+        anio_expr = "EXTRACT(YEAR FROM COALESCE(p.fecha_inicio, p.fecha_creacion))" if has_fechas else "EXTRACT(YEAR FROM p.fecha_creacion)"
+        if anio_desde is not None:
+            where_clauses.append(f"{anio_expr} >= %s")
+            params.append(anio_desde)
+
+        if anio_hasta is not None:
+            where_clauses.append(f"{anio_expr} <= %s")
+            params.append(anio_hasta)
+
+        if solo_cerradas:
+            where_clauses.append("e.nombre_estado IN ('Cerrada', 'Rechazada', 'Aprobada por CIE', 'Resuelta')")
 
         group_cols = [
             "p.id_propuesta",
@@ -1022,7 +1051,10 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            documentos = cur.fetchall()
+            documentos = [
+                {**documento, "file_url": _url_publica_documento(documento["file_path"])}
+                for documento in cur.fetchall()
+            ]
         except Exception:
             pass
 
@@ -1090,6 +1122,28 @@ def obtener_dossier_propuesta(
         except Exception:
             pass
 
+        # [Línea clave]: Recupera el detalle del dictamen técnico emitido por Vinculación.
+        vinculacion_evaluaciones = []
+        try:
+            cur.execute(
+                """
+                SELECT ev.id_evaluacion, ev.fecha_evaluacion, ev.observaciones,
+                       u.nombre AS evaluador_nombre, ve.numero_oficio_dictamen,
+                       ve.potencial_pi_identificado, ve.tipo_innovacion,
+                       ve.activo_previsto, ve.valoracion_tecnica, ve.requiere_reserva
+                FROM evaluations ev
+                JOIN roles r ON r.id_rol = ev.id_rol_evaluador AND r.nombre_rol = 'Vinculación'
+                JOIN vinculacion_evaluations ve ON ve.id_evaluacion = ev.id_evaluacion
+                JOIN usuarios u ON u.id_usuario = ev.id_usuario_eval
+                WHERE ev.id_propuesta = %s
+                ORDER BY ev.fecha_evaluacion DESC
+                """,
+                (id_propuesta,),
+            )
+            vinculacion_evaluaciones = cur.fetchall()
+        except Exception:
+            pass
+
     # [Línea clave]: Incluye la evaluación preliminar generada por Gemini IA para apoyo de los 5 niveles evaluadores.
     evaluacion_ia = None
     try:
@@ -1111,6 +1165,7 @@ def obtener_dossier_propuesta(
         "colaboradores_externos": colaboradores_externos,
         "historial": historial,
         "evaluaciones": evaluaciones,
+        "vinculacion_evaluaciones": vinculacion_evaluaciones,
         "evaluacion_ia": evaluacion_ia,
     }
 
@@ -1513,10 +1568,13 @@ def crear_propuesta(
                     tuple(columnas.values()),
                 )
 
-        # 12. Documentos (solo metadatos; los archivos físicos se incorporarán en otra fase)
+        # 12. Documentos reales: la creación no registra metadatos sin archivo.
+        # Los archivos se suben después con POST /propuestas/{id}/documentos.
         doc_cols = _get_table_columns(cur, "proposal_documents")
         if doc_cols:
             for documento in payload.documentos:
+                if not documento.file_path or (documento.tamano_bytes or 0) <= 0:
+                    continue
                 nombre = documento.nombre_archivo
                 extension = documento.extension or (nombre.rsplit(".", 1)[-1].lower() if "." in nombre else "pdf")
                 columnas = {
@@ -1524,8 +1582,8 @@ def crear_propuesta(
                     "nombre_archivo": nombre,
                     "tipo_documento": documento.tipo_documento,
                     "extension": extension,
-                    "file_path": documento.file_path or f"propuestas/{id_propuesta}/documentos/{nombre}",
-                    "tamano_bytes": documento.tamano_bytes or 0,
+                    "file_path": documento.file_path,
+                    "tamano_bytes": documento.tamano_bytes,
                     "version": "1.0",
                     "id_usuario_subio": payload.id_usuario_lider,
                 }

@@ -15,8 +15,8 @@ ARCHIVO: backend/app/main.py
            - Importa los submódulos de endpoints desde 'app.routers'.
     2.2.2. A dónde envía datos:
            - Enruta las solicitudes entrantes hacia los routers especializados:
-             auth, propuestas, notificaciones, modalidades, escuelas, lineas_de_investigacion,
-             convocatorias, tipos_hora y catalogos.
+             auth, propuestas, vinculacion, notificaciones, modalidades, escuelas,
+             lineas_de_investigacion, convocatorias, tipos_hora y catalogos.
            - Retorna respuestas serializadas en formato JSON y códigos de estado HTTP a los clientes web.
 
 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
@@ -48,6 +48,7 @@ from .routers import (
     tipos_hora,
     catalogos,
     ia,
+    vinculacion,
 )
 
 
@@ -81,6 +82,9 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 # [Línea clave]: Monta el router de autenticación para login de usuarios institucionales.
 app.include_router(auth.router)
+# [Línea clave]: Monta la bandeja y el dictamen de Vinculación antes de la ruta dinámica
+# /propuestas/{id_propuesta} para que /propuestas/bandeja resuelva correctamente.
+app.include_router(vinculacion.router)
 # [Línea clave]: Monta el router de propuestas (dashboard, creación atómica, expediente, cambios de estado y evaluaciones).
 app.include_router(propuestas.router)
 # [Línea clave]: Monta el router de notificaciones y marcado de lectura en base de datos.

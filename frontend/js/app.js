@@ -228,6 +228,16 @@ const SCREEN_LOADERS = {
       obtenerEtapasConvocatoria(state.viewCall),
       obtenerDocumentosConvocatoria(state.viewCall),
     ]),
+  "06": () => cargarMisPropuestas(),
+  "20": () => cargarDossier(),
+  "21": () => cargarBandejaVinculacion(),
+  "22": () => cargarDossier(),
+  "23": async () => {
+    await cargarDossier();
+    await cargarVinculacion();
+  },
+  "28": () => cargarDossier(),
+  "30": () => buscarPropuestas(),
 };
 
 /**
@@ -358,13 +368,13 @@ async function Notificaciones() {
 function marcarLeida(idNotif) {
   const n = (notificaciones ?? []).find((x) => x.id_notificacion === idNotif);
   if (n) n.leida = true;
-  fetch(`${API_URL}/notificaciones/marcar-leida?id_notificacion=${idNotif}`, { method: "POST" })
+  fetch(`${API_URL}/notificaciones/${idNotif}/leer`, { method: "PATCH" })
     .catch((e) => console.warn("Error avisando lectura:", e));
 }
 
 /**
  * Marcar todas las notificaciones pendientes del usuario como leídas.
- * Muta la propiedad leida a true en todos los elementos de memoria y realiza un POST a /marcar-todas-leidas.
+ * Muta la propiedad leida a true en todos los elementos de memoria y realiza un PATCH a /notificaciones/leer-todas.
  * parametros:
  *     (ninguno)
  * return:
@@ -374,7 +384,7 @@ function marcarTodasLeidas() {
   (notificaciones ?? []).forEach((n) => (n.leida = true));
   const idUsuario = session?.user?.id_usuario;
   if (!idUsuario) return;
-  fetch(`${API_URL}/notificaciones/marcar-todas-leidas?id_usuario=${idUsuario}`, { method: "POST" })
+  fetch(`${API_URL}/notificaciones/leer-todas?id_usuario=${idUsuario}`, { method: "PATCH" })
     .catch((e) => console.warn("Error marcando todas leídas:", e));
 }
 
@@ -718,7 +728,337 @@ async function obtenerDatosBackend() {
     obtener_convocatorias(),
     obtenerCatalogos(),
     obtenerEvaluacionPreliminarIA(currentProposalId()),
+    state.role === "vinculacion" ? cargarBandejaVinculacion() : Promise.resolve(null),
   ]);
+}
+
+let bandejaPropuestas = null;
+let misPropuestas = null;
+let dossierActual = null;
+let evaluacionVinculacion = null;
+let documentosVinculacion = [];
+let historialPropuestas = null;
+let vinculacionCargadaId = null;
+
+/**
+ * Resolver el identificador de la propuesta que se está consultando en este momento.
+ * Prioriza la selección explícita de la bandeja y recurre al borrador o propuesta creada.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + number : idPropuesta Identificador de la propuesta activa.
+ */
+function propuestaActivaId() {
+  return Number(state.viewProposalId) || currentProposalId();
+}
+
+/**
+ * Resolver el id de una propuesta ya registrada en PostgreSQL, nunca de un borrador.
+ * La creación (opción A) no sube archivos; esto evita asociar documentos a una propuesta anterior.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + number|null : idPropuesta Identificador real o null si solo hay borrador.
+ */
+function propuestaRealActiva() {
+  return Number(state.viewProposalId) || Number(state.created?.id) || Number(dossierActual?.id_propuesta) || null;
+}
+
+/**
+ * Limpiar los punteros a propuestas existentes al comenzar un borrador nuevo.
+ * Evita que las pantallas del asistente reutilicen el dossier o los documentos de una propuesta anterior.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + void : undefined Muta el estado y los cachés de expediente in-place.
+ */
+function iniciarNuevoBorrador() {
+  state.created = null;
+  state.viewProposalId = null;
+  state.viewProposal = null;
+  dossierActual = null;
+  evaluacionVinculacion = null;
+  documentosVinculacion = [];
+  vinculacionCargadaId = null;
+}
+
+/**
+ * Normalizar una propuesta del backend al formato que consumen las tablas y tarjetas del SPA.
+ * parametros:
+ *     - Object : p Registro retornado por /propuestas o /propuestas/bandeja.
+ * return:
+ *     + Object : propuesta Registro con code, title, type, period, status, amount y leader.
+ */
+function mapearPropuestaBackend(p = {}) {
+  const id = Number(p.id_propuesta ?? p.id) || null;
+  return {
+    id,
+    code: p.codigo || p.code || (id ? `SI-${id}` : "SI-2027-014"),
+    title: p.titulo || p.title || "Propuesta sin título",
+    type: p.modalidad || p.nombre_modalidad || p.type || "Desarrollo tecnológico",
+    period: p.periodo || p.period || "2027–2028",
+    status: p.estado || p.nombre_estado || p.status || "En formulación",
+    amount: Number(p.monto_total ?? p.amount ?? 0),
+    leader: p.lider_nombre || p.nombre_lider || p.leader || "Investigador",
+    school: p.escuela || p.nombre_escuela || p.school || "TEC",
+    line: p.linea_investigacion || p.nombre_linea || p.line || "",
+  };
+}
+
+/**
+ * Extraer el mensaje de error devuelto por FastAPI sin perder el detalle de validación.
+ * parametros:
+ *     - Response : res Respuesta HTTP fallida.
+ * return:
+ *     + Promise<string> : mensaje Texto legible para el usuario.
+ */
+async function errorDesdeRespuesta(res) {
+  try {
+    const data = await res.json();
+    if (typeof data.detail === "string") return data.detail;
+    if (Array.isArray(data.detail)) return data.detail.map((d) => d.msg).join(" ");
+    if (typeof data.error === "string") return data.error;
+  } catch {}
+  return `El servidor respondió con código ${res.status}.`;
+}
+
+/**
+ * Descargar las propuestas del investigador autenticado desde PostgreSQL (Pantalla 06).
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>|null> : misPropuestas Propuestas del usuario normalizadas.
+ */
+async function cargarMisPropuestas() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) return null;
+  try {
+    const res = await fetch(`${API_URL}/propuestas?id_usuario=${idUsuario}`);
+    if (res.ok) {
+      misPropuestas = (await res.json()).map(mapearPropuestaBackend);
+    } else {
+      misPropuestas = [];
+    }
+  } catch (err) {
+    console.warn("cargarMisPropuestas error:", err);
+    misPropuestas = [];
+  }
+  return misPropuestas;
+}
+
+/**
+ * Descargar la bandeja de Vinculación desde PostgreSQL y conservar la propuesta activa.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>|null> : bandejaPropuestas Propuestas pendientes o dictaminadas.
+ */
+async function cargarBandejaVinculacion() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) return null;
+  try {
+    const res = await fetch(
+      `${API_URL}/propuestas/bandeja?rol=${encodeURIComponent("Vinculación")}&id_usuario=${idUsuario}`,
+    );
+    if (res.ok) {
+      const data = await res.json();
+      bandejaPropuestas = data.map(mapearPropuestaBackend);
+      if (!state.viewProposalId && bandejaPropuestas.length) {
+        state.viewProposalId = bandejaPropuestas[0].id;
+        state.viewProposal = bandejaPropuestas[0].code;
+      }
+    } else {
+      bandejaPropuestas = [];
+    }
+  } catch (err) {
+    console.warn("cargarBandejaVinculacion error:", err);
+    bandejaPropuestas = [];
+  }
+  return bandejaPropuestas;
+}
+
+/**
+ * Descargar el expediente completo de una propuesta y almacenarlo para las pantallas 22, 23 y 28.
+ * parametros:
+ *     - number : idPropuesta Identificador del expediente; por defecto usa la propuesta activa.
+ * return:
+ *     + Promise<Object|null> : dossierActual Expediente consolidado con documentos e historial.
+ */
+async function cargarDossier(idPropuesta = propuestaActivaId()) {
+  if (!idPropuesta) return null;
+  try {
+    const res = await fetch(`${API_URL}/propuestas/${idPropuesta}`);
+    if (res.ok) {
+      dossierActual = await res.json();
+      state.viewProposalId = Number(dossierActual.id_propuesta) || idPropuesta;
+      state.viewProposal = dossierActual.codigo || state.viewProposal;
+    } else {
+      dossierActual = null;
+    }
+  } catch (err) {
+    console.warn("cargarDossier error:", err);
+    dossierActual = null;
+  }
+  return dossierActual;
+}
+
+/**
+ * Descargar el dictamen de Vinculación y los documentos firmados de una propuesta.
+ * parametros:
+ *     - number : idPropuesta Identificador del expediente; por defecto usa la propuesta activa.
+ * return:
+ *     + Promise<Object|null> : evaluacionVinculacion Último dictamen registrado.
+ */
+async function cargarVinculacion(idPropuesta = propuestaActivaId()) {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idPropuesta || !idUsuario) return null;
+  if (vinculacionCargadaId !== Number(idPropuesta)) {
+    Object.keys(state.saved)
+      .filter((clave) => clave.startsWith("vinculacion:"))
+      .forEach((clave) => delete state.saved[clave]);
+    vinculacionCargadaId = Number(idPropuesta);
+  }
+  try {
+    const res = await fetch(
+      `${API_URL}/propuestas/${idPropuesta}/vinculacion?id_usuario=${idUsuario}`,
+    );
+    if (res.ok) {
+      const data = await res.json();
+      evaluacionVinculacion = data.evaluacion || null;
+      documentosVinculacion = data.documentos || [];
+    } else {
+      evaluacionVinculacion = null;
+      documentosVinculacion = [];
+    }
+  } catch (err) {
+    console.warn("cargarVinculacion error:", err);
+    evaluacionVinculacion = null;
+    documentosVinculacion = [];
+  }
+  return evaluacionVinculacion;
+}
+
+/**
+ * Registrar el dictamen de Vinculación y devolver el nuevo estado de la propuesta.
+ * parametros:
+ *     - number : idPropuesta Identificador de la propuesta.
+ *     - Object : payload Datos del dictamen, incluida la decisión y el documento firmado.
+ * return:
+ *     + Promise<Object> : resultado Respuesta del backend con estado y evaluación creada.
+ */
+async function guardarVinculacion(idPropuesta, payload) {
+  const res = await fetch(`${API_URL}/propuestas/${idPropuesta}/vinculacion`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await errorDesdeRespuesta(res));
+  return res.json();
+}
+
+/**
+ * Construir el payload del dictamen de Vinculación desde el formulario de la pantalla 23.
+ * parametros:
+ *     - string : decision Resultado favorable, observaciones o rechazo.
+ *     - string : observaciones Detalle de la devolución o justificación.
+ *     - number|null : idDocumento Documento firmado ya subido a Storage.
+ * return:
+ *     + Object : payload Cuerpo JSON esperado por POST /propuestas/{id}/vinculacion.
+ */
+function payloadVinculacion(decision = "favorable", observaciones = "", idDocumento = null) {
+  return {
+    id_usuario_eval: session?.user?.id_usuario,
+    numero_oficio_dictamen: state.saved["vinculacion:oficio"] || "CV-014-2026",
+    potencial_pi_identificado: (state.saved["vinculacion:potencial_pi"] ?? "true") === "true",
+    tipo_innovacion: state.saved["vinculacion:tipo_innovacion"] || null,
+    activo_previsto: state.saved["vinculacion:activo_previsto"] || null,
+    valoracion_tecnica:
+      state.saved["vinculacion:valoracion"] ||
+      "Valoración técnica registrada por el Centro de Vinculación.",
+    requiere_reserva: !!state.saved["vinculacion:reserva"],
+    observaciones: observaciones || "Dictamen registrado por Vinculación.",
+    decision,
+    id_documento: idDocumento,
+  };
+}
+
+/**
+ * Subir el oficio firmado de Vinculación a Supabase Storage.
+ * parametros:
+ *     - number : idPropuesta Identificador de la propuesta.
+ *     - File : archivo Archivo seleccionado en el formulario.
+ *     - string : tipoDocumento Clasificación documental del adjunto.
+ * return:
+ *     + Promise<Object> : documento Metadatos del documento registrado.
+ */
+async function subirDocumentoPropuesta(idPropuesta, archivo, tipoDocumento = "Dictamen de Vinculación") {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) throw new Error("No hay un usuario autenticado para adjuntar el documento.");
+  if (!archivo) throw new Error("Selecciona el oficio firmado.");
+  const form = new FormData();
+  form.append("archivo", archivo);
+  form.append("id_usuario", String(idUsuario));
+  form.append("tipo_documento", tipoDocumento);
+  form.append("version", "1.0");
+  const res = await fetch(`${API_URL}/propuestas/${idPropuesta}/documentos`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) throw new Error(await errorDesdeRespuesta(res));
+  return res.json();
+}
+
+/**
+ * Leer los filtros de la pantalla 29 desde el estado persistido del formulario.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Object : filtros Parámetros listos para GET /propuestas.
+ */
+function filtrosHistorial() {
+  const numero = (valor) => {
+    if (valor === undefined || valor === null || valor === "") return null;
+    const n = Number(valor);
+    return Number.isFinite(n) ? n : null;
+  };
+  return {
+    q: state.saved["history:query"] || "",
+    id_escuela: numero(state.saved["history:school"]),
+    id_modalidad: numero(state.saved["history:mode"]),
+    id_estado: numero(state.saved["history:status"]),
+    id_linea: numero(state.saved["history:line"]),
+    anio_desde: numero(state.saved["history:from"]),
+    anio_hasta: numero(state.saved["history:to"]),
+    solo_cerradas: !!state.saved["history:closed"],
+  };
+}
+
+/**
+ * Buscar propuestas con filtros institucionales y guardar el resultado para la pantalla 30.
+ * parametros:
+ *     - Object : filtros Criterios de búsqueda; por defecto usa los de la pantalla 29.
+ * return:
+ *     + Promise<Array<Object>|null> : historialPropuestas Resultados normalizados.
+ */
+async function buscarPropuestas(filtros = filtrosHistorial()) {
+  const params = new URLSearchParams();
+  Object.entries(filtros).forEach(([clave, valor]) => {
+    if (valor === null || valor === undefined || valor === "" || valor === false) return;
+    params.set(clave, String(valor));
+  });
+  try {
+    const res = await fetch(`${API_URL}/propuestas?${params.toString()}`);
+    if (res.ok) {
+      const data = await res.json();
+      historialPropuestas = data.map(mapearPropuestaBackend);
+    } else {
+      historialPropuestas = [];
+    }
+  } catch (err) {
+    console.warn("buscarPropuestas error:", err);
+    historialPropuestas = [];
+  }
+  return historialPropuestas;
 }
 
 /**
@@ -889,7 +1229,7 @@ const defaultState = {
   clientUuid: null,
   convocatoriaId: null,
   externalCollaborator: null,
-  proposalDocs: [],
+  viewProposalId: null,
   created: null,
   theme: "light",
   largeText: false,
@@ -902,7 +1242,6 @@ const defaultState = {
     "cie",
   ],
   saved: {},
-  attachments: 4,
   teamAdded: false,
   reviewed: false,
   budget: [
@@ -1022,7 +1361,9 @@ const homeFor = () => (state.role === "investigador" ? "02" : "21");
  *     + void : undefined Muta el estado in-place.
  */
 function applyRole(key) {
+  const rolAnterior = state.role;
   state.role = key;
+  if (key === "vinculacion" && rolAnterior !== "vinculacion") state.viewProposalId = null;
   state.viewProposal = state.created?.code || "SI-2027-014";
   state.stage = {
     investigador: state.stage,
@@ -1288,17 +1629,33 @@ function fieldsFor(id) {
 }
 
 /**
- * Construir la fila visual representativa de un documento adjunto con icono y acción de previsualizar.
- * Genera un contenedor .doc-row con insignia de formato (PDF/XLSX), nombre, metadatos y botón de acción.
+ * Renderizar un documento esperado que aún no tiene archivo real asociado.
+ * Reemplaza las filas decorativas quemadas por un marcador visible de "Pendiente".
  * parametros:
- *     - string : name Nombre del archivo o anexo.
- *     - string : meta Metadatos textuales (ej. 'Versión 1.0 · 240 KB').
- *     - string : action Acción a disparar al pulsar 'Ver' ('preview' o similar).
+ *     - string : titulo Nombre del documento esperado.
+ *     - string : nota Contexto de cuándo se adjunta.
  * return:
- *     + string : docHtml Marcado de la fila de documento.
+ *     + string : placeholderHtml Fila visual sin enlace de descarga.
  */
-function doc(name, meta = "Versión 1.0", action = "preview") {
-  return `<div class="doc-row"><span class="doc-icon">${/xlsx/i.test(name) ? "XLSX" : "PDF"}</span><div class="grow"><strong>${esc(name)}</strong><small>${esc(meta)}</small></div>${act("Ver", action, "text compact", "file", `data-doc="${esc(name)}"`)}</div>`;
+function docPendiente(titulo, nota = "Pendiente de adjuntar") {
+  return `<div class="doc-row"><span class="doc-icon">—</span><div class="grow"><strong>${esc(titulo)}</strong><small>${esc(nota)}</small></div>${badge("Pendiente")}</div>`;
+}
+
+/**
+ * Renderizar un documento real con su tipo, versión, tamaño y URL pública de descarga.
+ * parametros:
+ *     - Object : d Documento retornado por el dossier o por Vinculación.
+ * return:
+ *     + string : documentoHtml Fila visual con enlace al archivo en Storage.
+ */
+function docPropuesta(d = {}) {
+  const nombre = d.nombre_archivo || "Documento de la propuesta";
+  const meta = [d.tipo_documento, d.version ? `Versión ${d.version}` : "", formatBytes(d.tamano_bytes)].filter(Boolean).join(" · ");
+  const icono = /xlsx/i.test(nombre) ? "XLSX" : /docx/i.test(nombre) ? "DOCX" : "PDF";
+  const enlace = d.file_url
+    ? `<a class="btn text compact" href="${esc(d.file_url)}" target="_blank" rel="noopener">${icon("file")}Ver</a>`
+    : act("Ver", "preview", "text compact", "file", `data-doc="${esc(nombre)}"`);
+  return `<div class="doc-row"><span class="doc-icon">${icono}</span><div class="grow"><strong>${esc(nombre)}</strong><small>${esc(meta)}</small></div>${enlace}</div>`;
 }
 
 /** Formatear bytes a texto legible (KB / MB). */
@@ -1308,7 +1665,7 @@ function formatBytes(b) {
 }
 
 /**
- * Fila de documento proveniente de la base de datos (a diferencia de doc(), que es estática).
+ * Fila de documento proveniente de la base de datos con enlace real a Storage.
  * Usa la extensión real (PDF / DOCX / XLSX) en la insignia.
  */
 function docRemoto(d) {
@@ -1357,7 +1714,7 @@ function visorHtml(d) {
  */
 function projectRows(list = (top3propuestasmasrecientes ?? [])) {
   return list.map((p, i) => [
-    `<span class="project-code">${p.code}</span><span class="project-name">${p.title}</span><span class="small muted">${p.type}</span>`,
+    `<span class="project-code">${esc(p.code)}</span><span class="project-name">${esc(p.title)}</span><span class="small muted">${esc(p.type)}</span>`,
     p.period,
     badge(p.code === "SI-2027-014" ? state.stage : p.status),
     money(p.amount),
@@ -1374,7 +1731,7 @@ function projectRows(list = (top3propuestasmasrecientes ?? [])) {
         : "22",
       "text compact",
       "arrow",
-      `data-proposal="${p.code}"`,
+      `data-proposal="${p.code}" data-proposal-id="${p.id || ""}"`,
     ),
   ]);
 }
@@ -1521,7 +1878,7 @@ function dashboard() {
             p.status === "En formulación" ? "08" : "22",
             "text compact",
             "arrow",
-            `data-proposal="${p.code}"`,
+            `data-proposal="${p.code}" data-proposal-id="${p.id || ""}"`,
           ),
         ]),
     )}</section><div class="stack">${card("Próximo vencimiento", `<div class="eyebrow">FONDOS VIE 2027</div><div style="font-size:32px;font-weight:700">28 <span style="font-size:18px;font-weight:400">sep 2026</span></div><p class="small muted" style="margin:8px 0 18px">Sometimiento formal ante VIE. Requiere evaluación y avales previos.</p>${btn("Consultar convocatoria", "05", "text", "arrow")}`)}</div></div>`,
@@ -1557,7 +1914,7 @@ function notifications() {
         ? items
             .map(
               (n) =>
-                `<div class="list-item"><div class="list-icon">${icon(n.tipo === "convocatoria" ? "calendar" : "file")}</div><div class="grow"><div class="action-row"><h3>${esc(n.titulo)}</h3>${!n.leida ? badge("Sin leer") : ""}</div><p>${esc(n.mensaje)}</p><small class="micro muted">${fecha(n.fecha_creacion)}</small></div>${btn("Ver", destino(n), "text", "arrow", `data-notif="${n.id_notificacion}" ${n.id_propuesta ? `data-proposal="SI-${n.id_propuesta}"` : ""}`)}</div>`,
+                `<div class="list-item"><div class="list-icon">${icon(n.tipo === "convocatoria" ? "calendar" : "file")}</div><div class="grow"><div class="action-row"><h3>${esc(n.titulo)}</h3>${!n.leida ? badge("Sin leer") : ""}</div><p>${esc(n.mensaje)}</p><small class="micro muted">${fecha(n.fecha_creacion)}</small></div>${btn("Ver", destino(n), "text", "arrow", `data-notif="${n.id_notificacion}" ${n.id_propuesta ? `data-proposal="SI-${n.id_propuesta}" data-proposal-id="${n.id_propuesta}"` : ""}`)}</div>`,
             )
             .join("")
         : `<div class="empty">${icon("check")}<h2>${activeFilter === "Sin leer" ? "Estás al día" : "Sin notificaciones"}</h2><p>${activeFilter === "Sin leer" ? "No tienes notificaciones sin leer." : "No hay notificaciones en esta categoría."}</p>${act("Ver todas", "all-notifications", "secondary")}</div>`
@@ -1663,7 +2020,7 @@ function callDetail() {
  *     + string : proposalsHtml Marcado HTML de la vista Mis Propuestas.
  */
 function myProposals() {
-  const list = top3propuestasmasrecientes || [];
+  const list = misPropuestas ?? [];
   let filtered = list;
   if (activeFilter === "En formulación") filtered = list.filter((p) => p.status === "En formulación");
   else if (activeFilter === "En ejecución") filtered = list.filter((p) => p.status === "En ejecución");
@@ -1823,34 +2180,6 @@ function nombreResponsableActual() {
   return session?.user?.nombre || "Coordinador/a";
 }
 
-function proposalDocuments() {
-  const names = [
-    "Formulario de proyecto · v1.pdf",
-    "Plan de acción y riesgos · v1.xlsx",
-    "Presupuesto 2027–2028 · v1.xlsx",
-    "Fundamentación.pdf",
-    ...(state.proposalDocs || []),
-  ];
-  return [...new Set(names)].map((name) => {
-    const extension = name.includes(".") ? name.split(".").pop().toLowerCase() : "pdf";
-    const tipo = /presupuesto/i.test(name)
-      ? "Presupuesto"
-      : /plan/i.test(name)
-        ? "Plan de acción"
-        : /fundament/i.test(name)
-          ? "Fundamentación"
-          : /formulario/i.test(name)
-            ? "Formulario oficial"
-            : "Anexo";
-    return {
-      nombre_archivo: name,
-      tipo_documento: tipo,
-      extension,
-      file_path: `propuestas/metadatos/${name}`,
-      tamano_bytes: 0,
-    };
-  });
-}
 
 function fechaIso(value, fallback) {
   const texto = String(value ?? "").trim();
@@ -2068,7 +2397,7 @@ function buildProposalPayload() {
     presupuesto,
     declaraciones_eticas: declaraciones,
     secciones,
-    documentos: proposalDocuments(),
+    documentos: [],
   };
 }
 
@@ -2093,8 +2422,6 @@ function proposalValidationIssues() {
   if (state.budget.some((p) => (Number(p.a) > 0 || Number(p.b) > 0) && !rubroParaPartida(p)))
     issues.push({ screen: "15", text: "Rubros presupuestarios sin equivalente institucional" });
   if (!budgetValid()) issues.push({ screen: "15", text: "Reglas del presupuesto" });
-  if (state.attachments < 4) issues.push({ screen: "17", text: "Documentos obligatorios" });
-  if (proposalDocuments().length < 4) issues.push({ screen: "17", text: "Documentos obligatorios" });
   return issues;
 }
 
@@ -2108,14 +2435,12 @@ function clearProposalDraft() {
     )
     .forEach((key) => delete state.saved[key]);
   state.budget = structuredClone(defaultState.budget);
-  state.attachments = 4;
   state.teamAdded = false;
   state.extraPerson = null;
   state.extraObjective = null;
   state.extraActivities = [];
   state.extraRisks = [];
   state.externalCollaborator = null;
-  state.proposalDocs = [];
   state.reviewed = false;
   state.clientUuid = null;
   state.modeId = 3;
@@ -2282,7 +2607,7 @@ function teamForm() {
  *     + string : foundationHtml Marcado HTML de fundamentación.
  */
 function foundationForm() {
-  return `${field("Problema e importancia", screen("10").fields[0].value, "textarea", "Máximo una página.", true)}${field("Justificación", screen("10").fields[1].value, "textarea", "Explica la contribución y las personas beneficiarias.", true)}${field("Estado del arte y vacío identificado", "Revisión previa documentada: los sistemas comparados presentan limitaciones de continuidad de mediciones e integración de datos en las microcuencas del caso. El prototipo aborda ese vacío mediante calibración comparativa y registro continuo.", "textarea", "Máximo 2 páginas. Incluye al menos 10 referencias primarias WoS/Scopus de los últimos 5 años.", true)}<details class="accordion"><summary>Ver referencias y antecedentes del caso</summary><p>Referencias pendientes de completar en este ejemplo.</p>${field("Antecedentes", screen("10").fields[2].value, "textarea")}${doc("Fundamentación.pdf")}</details>`;
+  return `${field("Problema e importancia", screen("10").fields[0].value, "textarea", "Máximo una página.", true)}${field("Justificación", screen("10").fields[1].value, "textarea", "Explica la contribución y las personas beneficiarias.", true)}${field("Estado del arte y vacío identificado", "Revisión previa documentada: los sistemas comparados presentan limitaciones de continuidad de mediciones e integración de datos en las microcuencas del caso. El prototipo aborda ese vacío mediante calibración comparativa y registro continuo.", "textarea", "Máximo 2 páginas. Incluye al menos 10 referencias primarias WoS/Scopus de los últimos 5 años.", true)}<details class="accordion"><summary>Ver referencias y antecedentes del caso</summary><p>Referencias pendientes de completar en este ejemplo.</p>${field("Antecedentes", screen("10").fields[2].value, "textarea")}${docPendiente("Fundamentación", "Anexo de referencia · pendiente de adjuntar")}</details>`;
 }
 
 /**
@@ -2529,7 +2854,9 @@ function complementaryForm() {
  *     + string : docsFormHtml Marcado HTML de gestión documental.
  */
 function documentsForm() {
-  return `<div class="dropzone">${icon("upload")}<h3>Documentos de la propuesta</h3><p>Incorpora los archivos que respaldan esta versión.</p>${act("Adjuntar documento", "upload", "secondary", "plus")}</div><div class="mt">${doc("Formulario de proyecto · v1.pdf")}${doc("Plan de acción y riesgos · v1.xlsx")}${doc("Presupuesto 2027–2028 · v1.xlsx")}${state.attachments >= 4 ? doc("Fundamentación.pdf") : notice("Falta un documento obligatorio", "Incorpora el anexo de fundamentación antes del envío.", "warning")}</div><div class="mt">${notice("Dictámenes y acuerdos se agregan en su etapa", "El dictamen de Vinculación precede al Comité; los avales se requieren para el sometimiento formal. No se exige un documento antes de que pueda ser emitido.")}</div>`;
+  // [Línea clave]: Opción A: el borrador no sube archivos. Los documentos reales se adjuntan
+  // después de registrar la propuesta desde Seguimiento (pantalla 20) o desde cada dictamen.
+  return `${notice("Los documentos se adjuntan después de registrar la propuesta", "Al enviarla se asigna el código SI-YYYY-NNN. Desde Seguimiento (pantalla 20) puedes adjuntar los archivos reales en PDF, DOCX, XLSX o PPTX.")}<div class="mt">${docPendiente("Formulario institucional", "Opcional en el borrador")}${docPendiente("Plan de acción y riesgos", "Opcional en el borrador")}${docPendiente("Presupuesto 2027–2028", "Opcional en el borrador")}${docPendiente("Fundamentación", "Opcional en el borrador")}</div><div class="mt">${notice("Dictámenes y acuerdos se agregan en su etapa", "El dictamen de Vinculación precede al Comité; los avales se requieren para el sometimiento formal. No se exige un documento antes de que pueda ser emitido.")}</div>`;
 }
 
 /**
@@ -2554,7 +2881,7 @@ function reviewForm() {
     ["Gestión de riesgos", "14", !afectadas.has("14")],
     ["Presupuesto anual", "15", !afectadas.has("15")],
     ["Ética y propiedad intelectual", "16", !afectadas.has("16")],
-    ["Documentos obligatorios", "17", !afectadas.has("17")],
+    ["Documentos (se adjuntan tras registrar)", "17", true],
   ];
   return `<div class="mb"><span class="project-code">${esc(state.clientUuid ? "Borrador listo para registrar" : "Nueva propuesta")} · ${esc(modalidad || "Modalidad")}</span><h2>${esc(titulo)}</h2><p class="small muted" style="margin-top:8px">${esc(draftValue("08:Fecha de inicio", "2027-01-01"))} – ${esc(draftValue("08:Fecha de finalización", "2028-12-31"))} · ${money(totalA() + totalB())} · Versión 1.0</p></div><div class="review-grid">${filas
     .map(
@@ -2623,6 +2950,28 @@ const stageList = [
   "En ejecución",
   "Cerrada",
 ];
+
+// [Línea clave]: ¿Por qué soy importante? Traduce los nombres oficiales de estado de PostgreSQL
+// a las etapas que usa la línea de tiempo del seguimiento. ¿Para qué? Que la pantalla 20 refleje el
+// estado real del expediente. ¿Dónde me usan? En tracking() y en los paneles de estado del frontend.
+const ESTADOS_BACKEND_A_ETAPA = {
+  "En formulación": "En formulación",
+  "En revisión de Vinculación": "En revisión de Vinculación",
+  "En evaluación del Comité Técnico": "En evaluación técnica",
+  "Pendiente de aval del Consejo": "En evaluación técnica",
+  "Avalada": "Avalada",
+  "Sometida ante VIE": "Sometida",
+  "Dictaminada por Dirección": "Dictaminada",
+  "Aprobada por CIE": "Resuelta",
+  "Con observaciones": "Con observaciones",
+  "Rechazada": "Rechazada",
+  "En ejecución": "En ejecución",
+  "Cerrada": "Cerrada",
+};
+
+function normalizarEstado(nombre) {
+  return ESTADOS_BACKEND_A_ETAPA[nombre] || nombre || "En formulación";
+}
 /**
  * Renderizar la pantalla de seguimiento del ciclo de vida de la propuesta (Pantalla 20).
  * Evalúa el estado del expediente en la máquina de estados stageList, determina la acción pendiente
@@ -2634,32 +2983,38 @@ const stageList = [
  *     + string : trackingHtml Marcado HTML de la vista de seguimiento.
  */
 function tracking() {
-  const ix = stageList.indexOf(state.stage),
-    stateText = state.stage;
+  // [Línea clave]: ¿Por qué soy importante? Consulta el expediente real de la propuesta activa.
+  // ¿Para qué? Mostrar la etapa actual, documentos y ruta del proceso según PostgreSQL y no solo el estado local.
+  // ¿Dónde me usan? En la pantalla 20 al entrar desde el menú o desde la confirmación de envío.
+  const idActivo = propuestaActivaId();
+  const d = dossierActual && Number(dossierActual.id_propuesta) === Number(idActivo) ? dossierActual : null;
+  const stage = normalizarEstado(d?.nombre_estado || state.stage);
+  const ix = stageList.indexOf(stage),
+    stateText = stage;
   let action = notice(
     "Tu expediente está en revisión",
     "Recibirás una notificación cuando haya una decisión o se requieran ajustes.",
   );
-  if (state.stage === "Avalada")
+  if (stage === "Avalada")
     action =
       notice(
         "Tu propuesta ya cuenta con aval",
         "El investigador debe someterla formalmente el 28 sep 2026.",
       ) +
       `<div class="mt">${act("Someter propuesta", "submit", "", "arrow")}</div>`;
-  if (state.stage === "Resuelta")
+  if (stage === "Resuelta")
     action =
       notice(
         "Resolución favorable del CIE",
         "Presenta la carta de aceptación durante el período del 2 al 6 de noviembre.",
       ) +
       `<div class="mt">${act("Presentar carta de aceptación", "acceptance", "", "upload")}</div>`;
-  if (state.stage === "Aceptada")
+  if (stage === "Aceptada")
     action = notice(
       "Carta de aceptación registrada",
       "La ejecución comienza el 1 ene 2027.",
     );
-  if (state.stage === "Con observaciones")
+  if (stage === "Con observaciones")
     action =
       notice(
         "Se requieren ajustes",
@@ -2667,31 +3022,41 @@ function tracking() {
         "warning",
       ) +
       `<div class="mt">${btn("Atender observaciones", "14", "", "edit")}</div>`;
-  if (state.stage === "Rechazada")
+  if (stage === "Rechazada")
     action = notice(
       "Resolución: no aprobada",
       "Consulta el acuerdo motivado del CIE en el expediente. La resolución no habilita aceptación ni ejecución.",
       "warning",
     );
-  if (state.stage === "En ejecución")
+  if (stage === "En ejecución")
     action =
       notice(
         "Proyecto en ejecución",
         "Registra informes y productos; el cierre requiere el informe final y oficio de Vinculación.",
       ) +
       `<div class="mt">${act("Presentar informe", "report", "secondary", "upload")}</div>`;
-  if (state.stage === "Cerrada")
+  if (stage === "Cerrada")
     action = notice(
       "Expediente cerrado",
       "El expediente conserva documentos e historial y está disponible solo para consulta.",
     );
   const creada = state.created || {};
-  const trackCode = creada.code || state.viewProposal || "SI-2027-014";
-  const trackTitle = creada.title || draftValue("08:Título de la propuesta", PROPOSAL_DEFAULTS["08:Título de la propuesta"]);
-  const trackAmount = Number(creada.amount) || totalA() + totalB();
+  const trackCode = d?.codigo || creada.code || state.viewProposal || "SI-2027-014";
+  const trackTitle = d?.titulo || creada.title || draftValue("08:Título de la propuesta", PROPOSAL_DEFAULTS["08:Título de la propuesta"]);
+  const trackAmount = d
+    ? (d.presupuesto || []).reduce((total, fila) => total + Number(fila.monto || 0), 0)
+    : Number(creada.amount) || totalA() + totalB();
   const trackHours = totalHorasEquipo();
+  const periodo = d?.fecha_inicio && d?.fecha_fin
+    ? `${String(d.fecha_inicio).slice(0, 4)}–${String(d.fecha_fin).slice(0, 4)}`
+    : "2027–2028";
+  const documentosEtapa = `${
+    (d?.documentos || []).length
+      ? d.documentos.map(docPropuesta).join("")
+      : docPendiente("Sin documentos registrados", "Usa el botón para adjuntar el primer archivo real.")
+  }<div class="action-row mt">${act("Adjuntar documento", "upload", "secondary", "plus")}</div>`;
   return shell(
-    `<div class="two-col"><div class="stack">${card(esc(trackTitle), `<span class="project-code">${esc(trackCode)} · Versión 1.0</span><div class="action-row mt mb">${badge(stateText, "solid")}${badge(state.mode || "Desarrollo tecnológico")}</div>${action}<div class="stat-strip"><div><strong>${money(trackAmount)}</strong><span>Monto solicitado</span></div><div><strong>24 meses</strong><span>Enero 2027 – diciembre 2028</span></div><div><strong>${trackHours} h</strong><span>Dedicación semanal</span></div></div>`)}${card("Documentos de la etapa", doc(ix >= 3 ? "Acuerdo de aval · IA-014-2026.pdf" : `Registro de envío · ${esc(trackCode)}.pdf`) + doc(`Propuesta · ${esc(trackCode)}.pdf`))}</div>${card("Ruta del expediente", `<div class="timeline">${stageList.map((s, i) => `<div class="event ${s === state.stage ? "current" : ""}"><h3>${i < ix ? "✓ " : ""}${s}</h3><p>${["Investigador", "Vinculación", "Comité Técnico", "Consejos de Escuela", "Investigador → VIE", "Dirección de Investigación", "CIE", "Investigador", "Equipo investigador", "Dirección de Investigación"][i]}</p></div>`).join("")}</div>`)}</div>`,
+    `<div class="two-col"><div class="stack">${card(esc(d?.titulo || trackTitle), `<span class="project-code">${esc(trackCode)} · Versión 1.0</span><div class="action-row mt mb">${badge(stateText, "solid")}${badge(d?.nombre_modalidad || state.mode || "Desarrollo tecnológico")}</div>${action}<div class="stat-strip"><div><strong>${money(trackAmount)}</strong><span>Monto solicitado</span></div><div><strong>${esc(periodo)}</strong><span>Período de ejecución</span></div><div><strong>${trackHours} h</strong><span>Dedicación semanal</span></div></div>`)}${card("Documentos de la etapa", documentosEtapa)}</div>${card("Ruta del expediente", `<div class="timeline">${stageList.map((s, i) => `<div class="event ${s === stage ? "current" : ""}"><h3>${i < ix ? "✓ " : ""}${s}</h3><p>${["Investigador", "Vinculación", "Comité Técnico", "Consejos de Escuela", "Investigador → VIE", "Dirección de Investigación", "CIE", "Investigador", "Equipo investigador", "Dirección de Investigación"][i]}</p></div>`).join("")}</div>`)}</div>`,
     "Seguimiento de propuesta",
     "Consulta la etapa actual y la próxima acción que te corresponde.",
     btn("Abrir expediente", "22", "secondary", "folder"),
@@ -2708,19 +3073,22 @@ function tracking() {
  *     + string : inboxHtml Marcado HTML de la bandeja de trabajo.
  */
 function inbox() {
-  const list = top3propuestasmasrecientes || [];
-  const pending = list.filter((p) => !["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"].includes(p.status));
-  const closed = list.filter((p) => ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"].includes(p.status));
+  const list = state.role === "vinculacion" ? bandejaPropuestas || [] : top3propuestasmasrecientes || [];
+  const closedStatuses =
+    state.role === "vinculacion"
+      ? ["En evaluación del Comité Técnico", "Con observaciones", "Rechazada", "Aprobada por CIE", "Cerrada", "Resuelta"]
+      : ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"];
+  const pending = list.filter((p) => !closedStatuses.includes(p.status));
+  const closed = list.filter((p) => closedStatuses.includes(p.status));
 
-  let filtered = pending;
+  let filtered = activeFilter === "Finalizadas" ? closed : pending;
   if (activeFilter === "En revisión") filtered = pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación"));
-  else if (activeFilter === "Finalizadas") filtered = closed;
 
   const rows = filtered.map((p) => [
-    `<span class="project-code">${p.code}</span><strong>${esc(p.title)}</strong><br><span class="micro muted">${esc(p.leader || "Investigador")} · ${esc(p.school || "TEC")}</span>`,
-    p.type,
+    `<span class="project-code">${esc(p.code)}</span><strong>${esc(p.title)}</strong><br><span class="micro muted">${esc(p.leader || "Investigador")} · ${esc(p.school || "TEC")}</span>`,
+    esc(p.type),
     badge(p.status),
-    btn("Abrir expediente", "22", "secondary compact", "arrow", `data-proposal="${p.code}"`),
+    btn("Abrir expediente", "22", "secondary compact", "arrow", `data-proposal="${p.code}" data-proposal-id="${p.id || ""}"`),
   ]);
 
   return shell(
@@ -2753,55 +3121,96 @@ function inbox() {
  *     + string : dossierHtml Marcado estructurado del expediente digital.
  */
 function dossier() {
-  // [Línea clave]: ¿Por qué soy importante? Resuelve el expediente activo en memoria. ¿Para qué? Mostrar metadatos de SI-2027-014 o el expediente seleccionado desde la bandeja. ¿Dónde me usan? Al inicio de dossier().
-  const code = state.created?.code || state.viewProposal || "SI-2027-014";
-  const p = (top3propuestasmasrecientes || []).find((x) => x.code === code) || {
-    code: code,
-    title: state.created?.title || draftValue("08:Título de la propuesta", PROPOSAL_DEFAULTS["08:Título de la propuesta"]),
-    type: state.mode || "Desarrollo tecnológico",
-    period: "2027–2028",
-    status: state.stage,
-    amount: Number(state.created?.amount) || totalA() + totalB(),
-  };
-  const isClosed = p.status === "Cerrada" || p.status === "Rechazada";
-  const historical = !state.created && code !== "SI-2027-014";
+  // [Línea clave]: ¿Por qué soy importante? Resuelve el expediente activo desde PostgreSQL o desde el escenario local. ¿Para qué? Mostrar metadatos y decisiones reales de la propuesta seleccionada en la bandeja. ¿Dónde me usan? Al inicio de dossier().
+  const idActivo = propuestaActivaId();
+  const d = dossierActual && Number(dossierActual.id_propuesta) === Number(idActivo) ? dossierActual : null;
+  const code = d?.codigo || state.created?.code || state.viewProposal || "SI-2027-014";
+  const historical = !d && !state.created && code !== "SI-2027-014";
+  const amount = d
+    ? (d.presupuesto || []).reduce((total, fila) => total + Number(fila.monto || 0), 0)
+    : Number(state.created?.amount) || totalA() + totalB();
+  const p = d
+    ? {
+        id: Number(d.id_propuesta),
+        code: d.codigo || code,
+        title: d.titulo,
+        type: d.nombre_modalidad || state.mode || "Desarrollo tecnológico",
+        period: d.fecha_inicio && d.fecha_fin ? `${String(d.fecha_inicio).slice(0, 4)}–${String(d.fecha_fin).slice(0, 4)}` : "2027–2028",
+        status: d.nombre_estado || state.stage,
+        amount,
+        leader: d.nombre_lider || "Investigador",
+        school: d.nombre_escuela || d.siglas_escuela || "Instancia coordinadora",
+        line: d.nombre_linea || "Línea institucional",
+        resumen: d.resumen,
+      }
+    : (top3propuestasmasrecientes || []).find((x) => x.code === code) || {
+        code: code,
+        title: state.created?.title || draftValue("08:Título de la propuesta", PROPOSAL_DEFAULTS["08:Título de la propuesta"]),
+        type: state.mode || "Desarrollo tecnológico",
+        period: "2027–2028",
+        status: state.stage,
+        amount,
+        leader: "Dra. Laura Méndez",
+        school: escuelas?.[0]?.nombre || "Instancia coordinadora",
+        line: lineas_investigacion?.[0]?.nombre || "Línea institucional",
+        resumen: historical ? "Estudio sobre el recurso hídrico con resultados conservados en el expediente." : draftValue("08:Resumen", PROPOSAL_DEFAULTS["08:Resumen"]),
+      };
+  const isClosed = ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"].includes(p.status);
 
   let body;
   if (dossierTab === "Resumen")
     body = `${definition([
-      ["Coordinadora / Líder", "Dra. Laura Méndez"],
-      ["Instancia", escuelas?.[0]?.nombre || "Instancia coordinadora"],
-      ["Período", p.period],
+      ["Coordinadora / Líder", esc(p.leader)],
+      ["Instancia", esc(p.school)],
+      ["Período", esc(p.period)],
       ["Monto solicitado", money(p.amount)],
-      ["Modalidad", p.type],
-      ["Línea de investigación", lineas_investigacion?.[0]?.nombre || "Línea institucional"],
-    ])}<div class="mt"><h3>Resumen de la investigación</h3><p class="small muted" style="margin-top:10px">${esc(historical ? "Estudio sobre el recurso hídrico con resultados conservados en el expediente." : draftValue("08:Resumen", PROPOSAL_DEFAULTS["08:Resumen"]))}</p></div><div class="mt">${notice(isClosed ? "Consulta de expediente cerrado o resuelto" : "Expediente digital sincronizado con PostgreSQL", isClosed ? "La información se conserva para consulta. No se pueden modificar documentos ni decisiones." : "Propuesta, equipo, plan, presupuesto y decisiones conservan su versión y responsable con trazabilidad en base de datos.")}</div>`;
-  else if (dossierTab === "Documentos")
-    body =
-      doc("Formulario de propuesta.pdf") +
-      doc("Plan y riesgos.xlsx") +
-      doc("Presupuesto.xlsx") +
-      doc("Dictamen de Vinculación.pdf") +
-      doc("Acuerdo de aval.pdf");
-  else if (dossierTab === "Evaluaciones") {
+      ["Modalidad", esc(p.type)],
+      ["Línea de investigación", esc(p.line)],
+    ])}<div class="mt"><h3>Resumen de la investigación</h3><p class="small muted" style="margin-top:10px">${esc(p.resumen || "Sin resumen registrado.")}</p></div><div class="mt">${notice(isClosed ? "Consulta de expediente cerrado o resuelto" : "Expediente digital sincronizado con PostgreSQL", isClosed ? "La información se conserva para consulta. No se pueden modificar documentos ni decisiones." : "Propuesta, equipo, plan, presupuesto y decisiones conservan su versión y responsable con trazabilidad en base de datos.")}</div>`;
+  else if (dossierTab === "Documentos") {
+    const docs = d?.documentos || [];
+    body = docs.length
+      ? docs.map(docPropuesta).join("")
+      : docPendiente("Sin documentos registrados", "Los archivos se adjuntan desde el expediente y quedan vinculados a la propuesta.");
+  } else if (dossierTab === "Evaluaciones") {
     const puntajeIA = evaluacionPreliminarIA ? `${Number(evaluacionPreliminarIA.puntaje_preliminar).toFixed(1)}/100 · ${evaluacionPreliminarIA.recomendacion_global}` : "87.8/100 · Recomendada (Preliminar)";
-    body = `${table(
-      ["Instancia", "Resultado", "Documento"],
-      [
-        ["IA Preliminar (Gemini Free Tier)", puntajeIA, act("Ver dictamen IA", "modal-ai-detail", "text")],
-        ["Vinculación", "Dictamen técnico registrado", act("Ver dictamen", "preview", "text")],
-        ["Comité Técnico", "Recomendada", act("Ver rúbrica", "rubric-summary", "text")],
-        ["Consejo de Escuela", "Aval otorgado", act("Ver acuerdo", "preview", "text")],
-      ],
-    )}`;
-  } else if (dossierTab === "Resolución")
-    body = `${notice(isClosed ? "Resolución y cierre registrados" : "Decisión del CIE", isClosed ? "Acuerdo favorable y certificación de cierre conservados en PostgreSQL." : "La resolución se agrega cuando el CIE concluye su revisión.")}${doc("Acuerdo CIE.pdf")}${isClosed ? doc("Certificación de cierre.pdf") : ""}`;
-  else {
-    body = historyContent();
+    const vin = d?.vinculacion_evaluaciones || [];
+    const filas = [
+      ["IA Preliminar (Gemini Free Tier)", puntajeIA, act("Ver dictamen IA", "modal-ai-detail", "text")],
+    ];
+    if (vin.length) {
+      vin.forEach((e) => filas.push([
+        "Vinculación",
+        esc(`${e.numero_oficio_dictamen} · ${e.potencial_pi_identificado ? "Potencial de PI identificado" : "Sin potencial de PI"}`),
+        `<button class="btn text" data-go="28">Ver dictamen</button>`,
+      ]));
+    } else {
+      filas.push(["Vinculación", "Sin dictamen registrado", act("Ver dictamen", "preview", "text")]);
+    }
+    filas.push(["Comité Técnico", "Recomendada", act("Ver rúbrica", "rubric-summary", "text")]);
+    filas.push(["Consejo de Escuela", "Aval otorgado", act("Ver acuerdo", "preview", "text")]);
+    body = table(["Instancia", "Resultado", "Documento"], filas);
+  } else if (dossierTab === "Resolución") {
+    const cie = (d?.evaluaciones || []).find((e) => e.rol_evaluador === "CIE");
+    const docs = (d?.documentos || []).filter((doc) => /resoluc|acuerdo|cie|cierre/i.test(`${doc.tipo_documento} ${doc.nombre_archivo}`));
+    body = `${notice(isClosed ? "Resolución y cierre registrados" : "Decisión del CIE", isClosed ? "Acuerdo favorable y certificación de cierre conservados en PostgreSQL." : cie ? `Resolución registrada: ${cie.observaciones || "sin detalle adicional"}` : "La resolución se agrega cuando el CIE concluye su revisión.")}${docs.length ? docs.map(docPropuesta).join("") : docPendiente("Acuerdo del CIE", "Pendiente de emisión")}${isClosed ? docPendiente("Certificación de cierre", "Pendiente de adjuntar") : ""}`;
+  } else {
+    body = historyContent(d);
   }
 
+  const accion = historical
+    ? `<p class="small muted mb">Este expediente está disponible en modo consulta.</p>${btn("Volver a resultados", "30", "secondary")}`
+    : state.role === "investigador"
+      ? `<p class="small muted mb">Consulta la etapa y las acciones pendientes de tu propuesta.</p>${btn("Ver seguimiento", "20", "", "arrow")}`
+      : `<p class="small muted mb">Actúas como ${roles[state.role].label}.</p>${btn(
+          p.status === "En revisión de Vinculación" ? "Iniciar revisión" : "Consultar dictamen",
+          roles[state.role].screen,
+          "",
+          "arrow",
+        )}`;
+
   return shell(
-    `<div class="card card-pad mb"><span class="project-code">${p.code} · ${p.type}</span><div class="section-head" style="margin:10px 0 0"><h2 style="font-size:26px">${p.title}</h2>${badge(historical ? p.status : state.stage, "solid")}</div></div>${tabs(["Resumen", "Documentos", "Evaluaciones", "Resolución", "Historial"], dossierTab)}<div class="two-col">${card("", body)}<div class="stack">${card("Acción disponible", historical ? `<p class="small muted mb">Este expediente está disponible en modo consulta.</p>${btn("Volver a resultados", "30", "secondary")}` : state.role === "investigador" ? `<p class="small muted mb">Consulta la etapa y las acciones pendientes de tu propuesta.</p>${btn("Ver seguimiento", "20", "", "arrow")}` : `<p class="small muted mb">Actúas como ${roles[state.role].label}.</p>${btn("Iniciar revisión", roles[state.role].screen, "", "arrow")}`)}${renderizarPanelReferenciaIA("22")}${card("Trazabilidad", `<p class="small muted mb">Cada decisión conserva fecha, actor, documento y versión en PostgreSQL.</p>${btn("Ver historial completo", "28", "text", "arrow")}`)}${["direccion", "cie"].includes(state.role) ? notice("Verificación restringida", "Responsabilidades institucionales: al día.") : ""}</div></div>`,
+    `<div class="card card-pad mb"><span class="project-code">${esc(p.code)} · ${esc(p.type)}</span><div class="section-head" style="margin:10px 0 0"><h2 style="font-size:26px">${esc(p.title)}</h2>${badge(p.status, "solid")}</div></div>${tabs(["Resumen", "Documentos", "Evaluaciones", "Resolución", "Historial"], dossierTab)}<div class="two-col">${card("", body)}<div class="stack">${card("Acción disponible", accion)}${renderizarPanelReferenciaIA("22")}${card("Trazabilidad", `<p class="small muted mb">Cada decisión conserva fecha, actor, documento y versión en PostgreSQL.</p>${btn("Ver historial completo", "28", "text", "arrow")}`)}${["direccion", "cie"].includes(state.role) ? notice("Verificación restringida", "Responsabilidades institucionales: al día.") : ""}</div></div>`,
     "Expediente de propuesta",
     "Toda la información y las decisiones en un mismo lugar.",
     btn(
@@ -2951,8 +3360,17 @@ function evaluation(id) {
     27: "Resolución del CIE",
   };
   let inner = "";
-  if (id === "23")
-    inner = `${notice("Dictamen requerido", "Desarrollo tecnológico y potencial de PI identificado en software.")}<div class="mt">${field("Potencial identificado", "Software de integración y registro de mediciones.", "textarea", "", true)}${field("Valoración técnica", "Se identifica potencial de protección en el software. Documentar autoría y resultados, y coordinar divulgación con Vinculación.", "textarea", "", true)}${field("Oficio del dictamen", "CV-014-2026", "text", "27 ago 2026.", true)}${doc("Dictamen técnico de Vinculación.pdf")}</div>`;
+  if (id === "23") {
+    const ev = evaluacionVinculacion || {};
+    const piOpts = [
+      { value: "true", label: "Sí · existe potencial de protección" },
+      { value: "false", label: "No · sin potencial identificado" },
+    ];
+    if (ev.potencial_pi_identificado === false) piOpts.reverse();
+    const documentoVinculacion = documentosVinculacion[0];
+    const yaDictaminado = !!ev.id_evaluacion;
+    inner = `${notice(yaDictaminado ? "Dictamen ya registrado" : "Dictamen requerido", yaDictaminado ? `Oficio ${ev.numero_oficio_dictamen || "sin número"}. La propuesta ya fue remitida con la valoración de Vinculación; este formulario queda en modo consulta.` : "Registra el oficio firmado y la valoración técnica de Vinculación antes de remitir al Comité Técnico.")}<div class="mt">${field("Potencial de PI identificado", piOpts, "select", "Indica si el activo puede protegerse o requiere reserva.", true, "vinculacion:potencial_pi")}${field("Tipo de innovación", ev.tipo_innovacion || "Software / Desarrollo tecnológico", "text", "Clasificación del activo o resultado esperado.", false, "vinculacion:tipo_innovacion")}${field("Activo previsto", ev.activo_previsto || "Software de integración, registro de mediciones y documentación técnica.", "textarea", "Describe el activo que se resguardará.", true, "vinculacion:activo_previsto")}${field("Valoración técnica", ev.valoracion_tecnica || "Se identifica potencial de protección en el software. Documentar autoría y resultados, y coordinar divulgación con Vinculación.", "textarea", "", true, "vinculacion:valoracion")}${field("Oficio del dictamen", ev.numero_oficio_dictamen || "CV-014-2026", "text", "Número de oficio emitido por Vinculación.", true, "vinculacion:oficio")}${field("Requiere reserva o resguardo previo", ev.requiere_reserva === true, "checkbox", "Marca si la divulgación debe restringirse antes de proteger el activo.", false, "vinculacion:reserva")}${yaDictaminado ? "" : `<div class="field"><label for="vinculacion-doc">Oficio firmado (PDF, DOCX)</label><input id="vinculacion-doc" type="file" accept=".pdf,.docx"><span class="help">Máximo 20 MB. Se almacena en el expediente de la propuesta.</span></div>`}${documentoVinculacion ? docPropuesta(documentoVinculacion) : yaDictaminado ? "" : notice("Adjunto pendiente", "Puedes registrar el dictamen y adjuntar el oficio firmado en la misma acción.")}</div>`;
+  }
   if (id === "24") {
     const sc = scoreResult();
     inner = `${notice("Rúbrica oficial · Desarrollo tecnológico", "Deficiente 0 · Regular 6 · Bueno 8 · Excelente 10. Un obligatorio con 0 o 6 impide recomendar, aun con nota ≥70.")}<div class="mt">${criterionGroups
@@ -2982,11 +3400,23 @@ function evaluation(id) {
       )}</div><label class="checkline"><input type="checkbox" id="products-ok" ${!state.notRecommended ? "checked" : ""}>Producción no sumativa conforme: software + artículo WoS/Scopus + manual técnico para ${totalHorasEquipo()} h.</label>${field("Justificación de criterios obligatorios", "La propuesta identifica responsables, plazos, beca, riesgos y declaración ética; consta dictamen de Vinculación.", "textarea", "Justifica los criterios obligatorios con referencia a la evidencia.", true)}<div id="score-result" class="notice ${sc.recommended ? "" : "warning"}"><div><strong>${sc.sum.toFixed(1)} / 100 · ${sc.recommended ? "Recomendada" : "No recomendada"}</strong><p>${sc.blocked ? "Hay un criterio obligatorio con nivel insuficiente." : "La recomendación depende de la nota y de los requisitos obligatorios."}</p></div></div>`;
   }
   if (id === "25")
-    inner = `${notice("El aval no somete automáticamente", "Después del acuerdo, el investigador realiza el sometimiento formal ante VIE.")}<div class="mt">${field("Instancia", ["Escuela de Ingeniería Ambiental · Coordinadora", "Escuela de Ingeniería Electrónica · Participante"], "select", "Cada consejo avala a su propio personal.", true)}<div class="field-row">${field("Sesión y artículo", "18-2026 · Artículo 4", "text", "", true)}${field("Fecha del acuerdo", "2026-09-17", "date", "", true)}</div>${field("Oficio", "IA-AVAL-014-2026", "text", "", true)}${["Aval de la propuesta y presupuesto de ₡9.400.000", "Participación y horas del personal de la instancia", "Ratificación de la calificación del Comité Técnico"].map((t) => `<label class="checkline"><input type="checkbox" checked required>${t}</label>`).join("")}${doc("Acuerdo firmado de la coordinadora.pdf")}${doc("Acuerdo firmado de instancia participante.pdf")}</div>`;
+    inner = `${notice("El aval no somete automáticamente", "Después del acuerdo, el investigador realiza el sometimiento formal ante VIE.")}<div class="mt">${field("Instancia", ["Escuela de Ingeniería Ambiental · Coordinadora", "Escuela de Ingeniería Electrónica · Participante"], "select", "Cada consejo avala a su propio personal.", true)}<div class="field-row">${field("Sesión y artículo", "18-2026 · Artículo 4", "text", "", true)}${field("Fecha del acuerdo", "2026-09-17", "date", "", true)}</div>${field("Oficio", "IA-AVAL-014-2026", "text", "", true)}${["Aval de la propuesta y presupuesto de ₡9.400.000", "Participación y horas del personal de la instancia", "Ratificación de la calificación del Comité Técnico"].map((t) => `<label class="checkline"><input type="checkbox" checked required>${t}</label>`).join("")}${docPendiente("Acuerdo firmado de la coordinadora", "Se adjunta tras el aval")}${docPendiente("Acuerdo firmado de instancia participante", "Se adjunta tras el aval")}</div>`;
   if (id === "26")
-    inner = `${notice("Propuesta sometida el 28 sep 2026", "La Dirección verifica el expediente antes de emitir el dictamen para CIE.")}<div class="mt">${["Responsabilidades institucionales al día", "Riesgos por actividad y mitigación coherente", "Participación estudiantil presupuestada", "Declaración ética y permisos verificados", "Documentos, evaluación y acuerdos completos"].map((t) => `<label class="checkline"><input type="checkbox" checked required>${t}</label>`).join("")}</div>${field("Verificación restringida", "Al día", "readonly")}${field("Dictamen", ["Favorable", "Con observaciones", "Desfavorable"], "select", "", true)}${field("Fundamentación", "El expediente incorpora la evaluación, los avales y la documentación requerida. Se remite al CIE para resolución.", "textarea", "09 oct 2026.", true)}${doc("Dictamen DI-014-2026.pdf")}`;
+    inner = `${notice("Propuesta sometida el 28 sep 2026", "La Dirección verifica el expediente antes de emitir el dictamen para CIE.")}<div class="mt">${["Responsabilidades institucionales al día", "Riesgos por actividad y mitigación coherente", "Participación estudiantil presupuestada", "Declaración ética y permisos verificados", "Documentos, evaluación y acuerdos completos"].map((t) => `<label class="checkline"><input type="checkbox" checked required>${t}</label>`).join("")}</div>${field("Verificación restringida", "Al día", "readonly")}${field("Dictamen", ["Favorable", "Con observaciones", "Desfavorable"], "select", "", true)}${field("Fundamentación", "El expediente incorpora la evaluación, los avales y la documentación requerida. Se remite al CIE para resolución.", "textarea", "09 oct 2026.", true)}${docPendiente("Dictamen de Dirección", "Pendiente de emitir")}`;
   if (id === "27")
-    inner = `${notice("Expediente con dictamen de Dirección", "Valora cumplimiento del proceso, responsabilidades, interés estratégico y disponibilidad de recursos.")}<div class="mt">${field("Resolución", ["Aprobada", "Rechazada", "Con observaciones"], "select", "", true, "resolution")}</div><div class="field-row">${field("Sesión y artículo", "23-2026 · Artículo 5", "text", "", true)}${field("Fecha de resolución", "2026-10-23", "date", "", true)}</div>${field("Fundamentación y condiciones", "La iniciativa es pertinente y cuenta con respaldo en el proceso previo. Se aprueba conforme al plan y presupuesto; debe presentarse carta de aceptación.", "textarea", "La decisión debe quedar motivada, incluidas las resoluciones negativas.", true)}${doc("Acuerdo CIE-014-2026.pdf")}`;
+    inner = `${notice("Expediente con dictamen de Dirección", "Valora cumplimiento del proceso, responsabilidades, interés estratégico y disponibilidad de recursos.")}<div class="mt">${field("Resolución", ["Aprobada", "Rechazada", "Con observaciones"], "select", "", true, "resolution")}</div><div class="field-row">${field("Sesión y artículo", "23-2026 · Artículo 5", "text", "", true)}${field("Fecha de resolución", "2026-10-23", "date", "", true)}</div>${field("Fundamentación y condiciones", "La iniciativa es pertinente y cuenta con respaldo en el proceso previo. Se aprueba conforme al plan y presupuesto; debe presentarse carta de aceptación.", "textarea", "La decisión debe quedar motivada, incluidas las resoluciones negativas.", true)}${docPendiente("Acuerdo del CIE", "Pendiente de emitir")}`;
+  const propActiva =
+    dossierActual && Number(dossierActual.id_propuesta) === Number(propuestaActivaId())
+      ? dossierActual
+      : null;
+  const refCode = propActiva?.codigo || state.viewProposal || "SI-2027-014";
+  const refTitle = propActiva?.titulo || "Agua Inteligente: monitoreo de cuencas";
+  const refLeader = propActiva?.nombre_lider || "Laura Méndez";
+  const refSchool = propActiva?.nombre_escuela || "Ingeniería Ambiental";
+  const refType = propActiva?.nombre_modalidad || "Desarrollo tecnológico";
+  const refAmount = propActiva
+    ? (propActiva.presupuesto || []).reduce((total, fila) => total + Number(fila.monto || 0), 0)
+    : 9400000;
   const actionLabel = {
     23: "Emitir dictamen",
     24: "Registrar evaluación",
@@ -2994,13 +3424,17 @@ function evaluation(id) {
     26: "Emitir dictamen de Dirección",
     27: "Registrar resolución",
   }[id];
+  const dictamenExistente = id === "23" && !!evaluacionVinculacion?.id_evaluacion;
+  const accionesEvaluacion = dictamenExistente
+    ? btn("Volver a la bandeja", "21", "secondary", "back")
+    : `${act("Devolver con observaciones", "return", "secondary")}${act(actionLabel, "decision", "", "check", `data-step="${id}"`)}`;
   return shell(
-    `<div class="two-col"><form class="card form-card" id="evaluation-form"><div class="form-title"><h2>${names[id]}</h2>${badge("Pendiente")}</div>${inner}<div class="form-footer">${act("Devolver con observaciones", "return", "secondary")}${act(actionLabel, "decision", "", "check", `data-step="${id}"`)}</div></form><div class="stack">${renderizarPanelReferenciaIA(id)}${card(
+    `<div class="two-col"><form class="card form-card" id="evaluation-form"><div class="form-title"><h2>${names[id]}</h2>${badge(dictamenExistente ? "Registrado" : "Pendiente")}</div>${inner}<div class="form-footer">${accionesEvaluacion}</div></form><div class="stack">${renderizarPanelReferenciaIA(id)}${card(
       "Expediente en revisión",
-      `<span class="project-code">SI-2027-014</span><h3>Agua Inteligente: monitoreo de cuencas</h3><p class="small muted" style="margin:10px 0 20px">Laura Méndez<br>Ingeniería Ambiental</p>${definition(
+      `<span class="project-code">${esc(refCode)}</span><h3>${esc(refTitle)}</h3><p class="small muted" style="margin:10px 0 20px">${esc(refLeader)}<br>${esc(refSchool)}</p>${definition(
         [
-          ["Modalidad", "Desarrollo tecnológico"],
-          ["Total", money(9400000)],
+          ["Modalidad", esc(refType)],
+          ["Total", money(refAmount)],
           ["Período", "2027–2028"],
           ["Dedicación", `${totalHorasEquipo()} h/semana`],
         ],
@@ -3079,8 +3513,46 @@ const events = [
  * return:
  *     + string : timelineHtml Marcado HTML de los hitos del expediente.
  */
-function historyContent() {
+function historyContent(d = null) {
+  if (d?.historial?.length) {
+    const fechaCorta = (valor) => {
+      if (!valor) return "";
+      const fecha = new Date(valor);
+      return Number.isNaN(fecha.getTime())
+        ? String(valor).slice(0, 10)
+        : fecha.toLocaleDateString("es-CR", { day: "2-digit", month: "short", year: "numeric" });
+    };
+    return `<div class="timeline">${d.historial
+      .map(
+        (item) => `<div class="event"><small>${esc(fechaCorta(item.fecha_cambio))}</small><h3>${esc(item.estado_nuevo || "Cambio de estado")}</h3><p>${esc(item.responsable_nombre || "Sistema")}</p><p>${esc(item.observaciones || (item.estado_anterior ? `Estado anterior: ${item.estado_anterior}` : ""))}</p></div>`,
+      )
+      .join("")}</div>`;
+  }
   return `<div class="timeline">${events.map(([d, t, a, b]) => `<div class="event"><small>${d}</small><h3>${t}</h3><p>${a}</p><p>${b}</p></div>`).join("")}</div>`;
+}
+
+/**
+ * Construir la tarjeta con el dictamen técnico real de Vinculación y sus oficios firmados.
+ * parametros:
+ *     - Object|null : d Expediente consolidado.
+ * return:
+ *     + string : dictamenHtml Tarjeta con oficio, valoración y documentos.
+ */
+function dictamenVinculacion(d = null) {
+  const evaluacion = d?.vinculacion_evaluaciones?.[0];
+  if (!evaluacion) return notice("Dictamen de Vinculación pendiente", "La propuesta aún no tiene un dictamen técnico registrado.");
+  const documentos = (d?.documentos || []).filter((doc) =>
+    /vincul|dictamen/i.test(`${doc.tipo_documento} ${doc.nombre_archivo}`),
+  );
+  return `${definition([
+    ["Oficio", esc(evaluacion.numero_oficio_dictamen)],
+    ["Evaluador", esc(evaluacion.evaluador_nombre || "Vinculación")],
+    ["Potencial de PI", evaluacion.potencial_pi_identificado ? "Identificado" : "No identificado"],
+    ["Tipo de innovación", esc(evaluacion.tipo_innovacion || "No indicado")],
+    ["Activo previsto", esc(evaluacion.activo_previsto || "No indicado")],
+    ["Valoración técnica", esc(evaluacion.valoracion_tecnica || "Sin detalle")],
+    ["Reserva", evaluacion.requiere_reserva ? "Requiere resguardo previo" : "No requiere reserva"],
+  ])}${documentos.length ? `<div class="mt">${documentos.map(docPropuesta).join("")}</div>` : ""}`;
 }
 
 /**
@@ -3092,8 +3564,11 @@ function historyContent() {
  *     + string : historyHtml Marcado HTML de la pantalla de trazabilidad.
  */
 function history() {
+  const idActivo = propuestaActivaId();
+  const d = dossierActual && Number(dossierActual.id_propuesta) === Number(idActivo) ? dossierActual : null;
+  const code = d?.codigo || state.viewProposal || "SI-2027-014";
   return shell(
-    `${card("SI-2027-014 · Historial de actuaciones", historyContent())}`,
+    `${card(`${esc(code)} · Historial de actuaciones`, historyContent(d))}${card("Dictamen de Vinculación", dictamenVinculacion(d))}`,
     "Historial del expediente",
     "Cada cambio conserva su responsable, fecha, versión y evidencia.",
     btn("Volver al expediente", "22", "secondary", "back"),
@@ -3110,13 +3585,20 @@ function history() {
  *     + string : searchHtml Marcado HTML de la pantalla de búsqueda histórica.
  */
 function searchHistory() {
-  const escuelasOpts = ["Todas", "Escuela de Ingeniería Ambiental", "Escuela de Ingeniería Electrónica", "Escuela de Computación", "Escuela de Biología", "Escuela de Administración de Empresas"];
-  const modalidadesOpts = ["Todas", "Investigación básica, aplicada o ambas", "Desarrollo tecnológico", "Actividad de fortalecimiento"];
-  const estadosOpts = ["Todos", "En formulación", "En ejecución", "Cerrada", "Rechazada"];
-  const lineasOpts = ["Todas", "Gestión integrada del recurso hídrico", "Inteligencia Artificial y Ciencia de Datos", "Biotecnología y Sostenibilidad Ambiental"];
+  const opciones = (lista, idKey, labelKey, todas) => [
+    { value: "", label: todas },
+    ...(lista || []).map((item) => ({
+      value: item[idKey] ?? item.id,
+      label: item[labelKey] || String(item[idKey] ?? item.id),
+    })),
+  ];
+  const escuelasOpts = opciones(escuelas?.length ? escuelas : catalogos?.escuelas, "id_escuela", "nombre", "Todas");
+  const modalidadesOpts = opciones(modalidades?.length ? modalidades : catalogos?.modalidades, "id_modalidad", "nombre_modalidad", "Todas");
+  const estadosOpts = opciones(catalogos?.estados, "id_estado", "nombre_estado", "Todos");
+  const lineasOpts = opciones(lineas_investigacion?.length ? lineas_investigacion : catalogos?.lineas_investigacion, "id_linea_investigacion", "nombre_linea", "Todas");
 
   return shell(
-    `<div class="two-col"><form class="card card-pad" id="history-search"><div class="section-head"><h2>Encuentra un expediente</h2>${badge("Consulta institucional en BD")}</div>${field("Código, título o persona investigadora", state.search, "search", "Puedes combinar la búsqueda con filtros institucionales.", false, "history:query")}<div class="field-row">${field("Escuela", escuelasOpts, "select", "", false, "history:school")}${field("Modalidad", modalidadesOpts, "select", "", false, "history:mode")}</div><div class="field-row">${field("Estado", estadosOpts, "select", "", false, "history:status")}${field("Línea de investigación", lineasOpts, "select", "", false, "history:line")}</div><div class="field-row">${field("Desde", "2024", "number", "", false, "history:from")}${field("Hasta", "2028", "number", "", false, "history:to")}</div><div class="form-footer">${act("Limpiar filtros", "clear-search", "text")}${act("Buscar expedientes", "search-history", "", "search")}</div></form><div class="stack">${card("Consulta con trazabilidad", `<div class="list-item">${icon("folder")}<div><h3>Expediente completo</h3><p>Propuesta, recursos, documentos y productos.</p></div></div><div class="list-item">${icon("shield")}<div><h3>Decisiones y evidencia</h3><p>Evaluaciones, avales, dictámenes y resolución.</p></div></div><div class="list-item">${icon("clock")}<div><h3>Historial conservado</h3><p>Fechas, actores y versiones sincronizadas con PostgreSQL.</p></div></div>`)}</div></div>`,
+    `<div class="two-col"><form class="card card-pad" id="history-search"><div class="section-head"><h2>Encuentra un expediente</h2>${badge("Consulta institucional en BD")}</div>${field("Código, título o persona investigadora", state.search, "search", "Puedes combinar la búsqueda con filtros institucionales.", false, "history:query")}<div class="field-row">${field("Escuela", escuelasOpts, "select", "", false, "history:school")}${field("Modalidad", modalidadesOpts, "select", "", false, "history:mode")}</div><div class="field-row">${field("Estado", estadosOpts, "select", "", false, "history:status")}${field("Línea de investigación", lineasOpts, "select", "", false, "history:line")}</div><div class="field-row">${field("Desde", "2024", "number", "", false, "history:from")}${field("Hasta", "2028", "number", "", false, "history:to")}</div>${field("Mostrar únicamente propuestas cerradas", false, "checkbox", "Excluye expedientes todavía en trámite.", false, "history:closed")}<div class="form-footer">${act("Limpiar filtros", "clear-search", "text")}${act("Buscar expedientes", "search-history", "", "search")}</div></form><div class="stack">${card("Consulta con trazabilidad", `<div class="list-item">${icon("folder")}<div><h3>Expediente completo</h3><p>Propuesta, recursos, documentos y productos.</p></div></div><div class="list-item">${icon("shield")}<div><h3>Decisiones y evidencia</h3><p>Evaluaciones, avales, dictámenes y resolución.</p></div></div><div class="list-item">${icon("clock")}<div><h3>Historial conservado</h3><p>Fechas, actores y versiones sincronizadas con PostgreSQL.</p></div></div>`)}</div></div>`,
     "Consulta histórica",
     "Busca iniciativas y recupera la evidencia de su recorrido.",
   );
@@ -3132,7 +3614,7 @@ function searchHistory() {
  */
 function historyResults() {
   const q = (state.search || "").toLowerCase(),
-    list = top3propuestasmasrecientes || [];
+    list = historialPropuestas ?? [];
   return shell(
     `<div class="section-head"><span class="result-count">${list.length} expedientes encontrados en base de datos ${q ? "para «" + esc(state.search) + "»" : ""}</span>${btn("Modificar filtros", "29", "secondary", "settings")}</div>${list.length ? `<div class="card">${table(["Expediente", "Período", "Estado", "Monto", ""], projectRows(list), `<span>${list.length} resultado${list.length === 1 ? "" : "s"} desde PostgreSQL</span><span>Página 1 de 1</span>`)}</div>` : `<div class="card empty">${icon("search")}<h2>No encontramos coincidencias</h2><p>Prueba con una palabra más general o elimina un filtro para ampliar los resultados.</p>${act("Limpiar y volver a buscar", "clear-results", "secondary")}</div>`}`,
     "Resultados de consulta",
@@ -3697,6 +4179,7 @@ async function handleAction(action, el) {
       state.mode = modalidad?.titulo || "Desarrollo tecnológico";
       state.clientUuid = state.clientUuid || nuevoClientUuid();
       state.convocatoriaId = convocatoriaActivaId();
+      iniciarNuevoBorrador();
       if (state.mode !== "Desarrollo tecnológico") {
         modal(
           "Modalidad seleccionada",
@@ -3716,6 +4199,7 @@ async function handleAction(action, el) {
       state.modeId = 3;
       state.clientUuid = state.clientUuid || nuevoClientUuid();
       state.convocatoriaId = convocatoriaActivaId();
+      iniciarNuevoBorrador();
       state.stage = "En formulación";
       save();
       go("08");
@@ -3748,15 +4232,17 @@ async function handleAction(action, el) {
         toast("No hay coincidencias. Prueba con «VIE» o «2027».");
       else toast("1 convocatoria encontrada: Fondos VIE 2027.");
       break;
-    case "preview":
+    case "preview": {
+      const codigoActivo = dossierActual?.codigo || state.viewProposal || "";
       modal(
         "Vista previa de documento",
-        `<span class="badge">Documento ficticio</span><h3 style="margin-top:22px">${esc(el.dataset.doc || "Documento del expediente")}</h3><p>Expediente SI-2027-014 · Agua Inteligente: monitoreo de cuencas.</p><div class="notice mt">${icon("file")}<div><strong>Representación del visor</strong><p>Esta pantalla muestra el acceso y la trazabilidad del archivo. No representa un documento oficial firmado.</p></div></div>`,
+        `<span class="badge">Sin archivo adjunto</span><h3 style="margin-top:22px">${esc(el.dataset.doc || "Documento del expediente")}</h3>${codigoActivo ? `<p>Expediente ${esc(codigoActivo)}.</p>` : ""}<div class="notice mt">${icon("file")}<div><strong>Archivo no disponible</strong><p>Este documento no tiene un archivo real asociado en Storage. Adjúntalo desde el expediente para habilitar el visor.</p></div></div>`,
         act("Cerrar visor", "close", "secondary"),
         false,
         "document",
       );
       break;
+    }
     case "preview-remote": {
       const d = (documentosConvocatoria ?? []).find(
         (x) => x.id_documento_conv === Number(el.dataset.docId),
@@ -3947,33 +4433,45 @@ async function handleAction(action, el) {
         "budget-rules",
       );
       break;
-    case "upload":
+    case "upload": {
+      const propuestaReal = propuestaRealActiva();
+      if (!propuestaReal) {
+        toast("Registra la propuesta antes de adjuntar documentos.");
+        break;
+      }
       modal(
         "Adjuntar documento",
-        `<div class="mt">${field("Documento", ["Fundamentación.pdf", "Carta de compromiso.pdf", "Acuerdo firmado.pdf"], "select", "", false, "modal:upload")}</div>`,
+        `<div class="mt">${field("Tipo de documento", ["Fundamentación", "Carta de compromiso", "Presupuesto", "Plan de acción", "Otro"], "select", "", false, "modal:upload:tipo")}<div class="field"><label for="propuesta-doc">Archivo (PDF, DOCX, XLSX o PPTX)</label><input id="propuesta-doc" type="file" accept=".pdf,.docx,.xlsx,.pptx"><span class="help">Máximo 20 MB. Se almacena en el expediente de la propuesta.</span></div></div>`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Adjuntar", "upload-save"),
         false,
         "upload",
       );
       break;
+    }
     case "upload-save": {
-      const nombre = $('[data-field="modal:upload"]')?.value;
-      if (nombre && !(state.proposalDocs || []).includes(nombre)) {
-        state.proposalDocs = (state.proposalDocs || []).concat(nombre);
+      const propuestaReal = propuestaRealActiva();
+      const archivo = $("#propuesta-doc")?.files?.[0] || null;
+      const tipo = $('[data-field="modal:upload:tipo"]')?.value || "Otro";
+      if (!propuestaReal) {
+        toast("Registra la propuesta antes de adjuntar documentos.");
+        break;
       }
-      state.attachments = Math.max(4, proposalDocuments().length);
-      save();
-      closeModal();
-      render();
-      toast("Documento adjunto · versión 1.0.");
+      if (!archivo) {
+        toast("Selecciona un archivo PDF, DOCX, XLSX o PPTX.");
+        break;
+      }
+      try {
+        await subirDocumentoPropuesta(propuestaReal, archivo, tipo);
+        closeModal();
+        await cargarDossier(propuestaReal);
+        render();
+        toast(`Documento adjunto a ${dossierActual?.codigo || "la propuesta"}.`);
+      } catch (err) {
+        toast(err.message || "No se pudo adjuntar el documento.");
+      }
       break;
     }
-    case "toggle-attachment":
-      state.attachments = state.attachments >= 4 ? 3 : 4;
-      save();
-      render();
-      break;
     case "send": {
       // [Línea clave]: ¿Por qué soy importante? Envío formal a evaluación técnica y Vinculación. ¿Para qué? Validar y registrar la propuesta completa en PostgreSQL. ¿Dónde me usan? En handleAction bajo la acción 'send'.
       const issues = proposalValidationIssues();
@@ -4105,7 +4603,7 @@ async function handleAction(action, el) {
     case "acceptance":
       modal(
         "Carta de aceptación",
-        `${notice("Período: 2–6 nov 2026", "La aceptación sigue a una resolución favorable del CIE.")}${doc("Carta de aceptación.pdf")}<label class="checkline"><input type="checkbox" checked>Acepto las condiciones del acuerdo.</label>`,
+        `${notice("Período: 2–6 nov 2026", "La aceptación sigue a una resolución favorable del CIE.")}${docPendiente("Carta de aceptación", "Se adjunta al presentarla")}<label class="checkline"><input type="checkbox" checked>Acepto las condiciones del acuerdo.</label>`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Registrar carta", "acceptance-confirm"),
         false,
@@ -4122,7 +4620,7 @@ async function handleAction(action, el) {
     case "report":
       modal(
         "Informe de seguimiento",
-        `${field("Tipo", ["Informe semestral", "Informe anual", "Informe final"], "select", "", true, "modal:reporttype")}${doc("Informe de resultados.pdf")}<p>El cierre DT requiere productos y oficio final de Vinculación. La certificación corresponde a Dirección.</p>`,
+        `${field("Tipo", ["Informe semestral", "Informe anual", "Informe final"], "select", "", true, "modal:reporttype")}${docPendiente("Informe de resultados", "Se adjunta al presentar el informe")}<p>El cierre DT requiere productos y oficio final de Vinculación. La certificación corresponde a Dirección.</p>`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Registrar informe", "report-save"),
       );
@@ -4136,12 +4634,37 @@ async function handleAction(action, el) {
         "Devolver con observaciones",
         `${field("Observaciones para el investigador", "Completar la justificación del riesgo de campo y vincular la medida con el responsable.", "textarea", "Explica el ajuste requerido y la evidencia esperada.", true, "modal:return")}${notice("La devolución permite corregir", "Se conserva la versión revisada y las observaciones. No equivale a una resolución negativa definitiva.")}`,
         act("Cancelar", "close", "secondary") +
-          confirmBtn("Registrar devolución", "return-confirm"),
+          confirmBtn("Registrar devolución", "return-confirm", current === "23" ? 'data-step="23"' : ""),
         false,
         "return",
       );
       break;
     case "return-confirm": {
+      if (el.dataset.step === "23" || current === "23") {
+        const idPropuesta = propuestaActivaId();
+        try {
+          const fileInput = $("#vinculacion-doc");
+          let idDocumento = null;
+          if (fileInput?.files?.length) {
+            const subido = await subirDocumentoPropuesta(idPropuesta, fileInput.files[0], "Dictamen de Vinculación");
+            idDocumento = subido.id_documento;
+          }
+          const resultado = await guardarVinculacion(
+            idPropuesta,
+            payloadVinculacion("observaciones", state.saved["modal:return"] || "", idDocumento),
+          );
+          state.stage = resultado.nombre_estado;
+          state.viewProposalId = idPropuesta;
+          save();
+          closeModal();
+          await Promise.all([cargarBandejaVinculacion(), cargarDossier(idPropuesta), cargarVinculacion(idPropuesta)]);
+          go("21");
+          toast("Devolución registrada. El investigador podrá atender las observaciones.");
+        } catch (err) {
+          toast(err.message || "No se pudo registrar la devolución.");
+        }
+        break;
+      }
       state.stage = "Con observaciones";
       save();
       closeModal();
@@ -4160,7 +4683,7 @@ async function handleAction(action, el) {
           negative = id === "24" && !sc.recommended;
         modal(
           "Confirmar decisión",
-          `<p>${negative ? "La evaluación no recomienda la propuesta por la nota o los requisitos obligatorios." : "Se conservarán los datos y el documento asociados a esta revisión."}</p>${id === "27" ? notice("Resolución seleccionada", state.saved.resolution || "Aprobada") : ""}<p>Esta acción es una simulación y no emite un acuerdo institucional real.</p>`,
+          `<p>${negative ? "La evaluación no recomienda la propuesta por la nota o los requisitos obligatorios." : "Se conservarán los datos y el documento asociados a esta revisión."}</p>${id === "27" ? notice("Resolución seleccionada", state.saved.resolution || "Aprobada") : ""}${id === "23" ? notice("Registro en PostgreSQL", "El dictamen cambiará el estado de la propuesta y notificará al Comité Técnico.") : "<p>Esta acción es una simulación y no emite un acuerdo institucional real.</p>"}`,
           act("Revisar", "close", "secondary") +
             confirmBtn(
               "Registrar decisión",
@@ -4174,6 +4697,40 @@ async function handleAction(action, el) {
       break;
     case "decision-confirm": {
       const id = el.dataset.step;
+      if (id === "23") {
+        const idPropuesta = propuestaActivaId();
+        try {
+          const fileInput = $("#vinculacion-doc");
+          let idDocumento = null;
+          if (fileInput?.files?.length) {
+            const subido = await subirDocumentoPropuesta(idPropuesta, fileInput.files[0], "Dictamen de Vinculación");
+            idDocumento = subido.id_documento;
+          }
+          const resultado = await guardarVinculacion(
+            idPropuesta,
+            payloadVinculacion("favorable", "", idDocumento),
+          );
+          state.stage = resultado.nombre_estado;
+          state.viewProposalId = idPropuesta;
+          save();
+          closeModal();
+          await Promise.all([cargarBandejaVinculacion(), cargarDossier(idPropuesta), cargarVinculacion(idPropuesta)]);
+          modal(
+            "Decisión registrada",
+            notice(
+              "Registro guardado y sincronizado con PostgreSQL",
+              `Nuevo estado: ${resultado.nombre_estado}. Se notificó al Comité Técnico y se conservó la trazabilidad.`,
+            ),
+            btn("Volver a la bandeja", "21", "secondary") +
+              btn("Ver expediente", "22", "", "arrow"),
+            false,
+            "decision-saved",
+          );
+        } catch (err) {
+          toast(err.message || "No se pudo registrar el dictamen de Vinculación.");
+        }
+        break;
+      }
       state.stage = {
         23: "En evaluación técnica",
         24: scoreResult().recommended
@@ -4239,6 +4796,7 @@ async function handleAction(action, el) {
       {
         const q = state.saved["history:query"] || "";
         state.search = q;
+        await buscarPropuestas({ ...filtrosHistorial(), q });
         save();
         go("30");
       }
@@ -4248,6 +4806,7 @@ async function handleAction(action, el) {
         .filter((k) => k.startsWith("history:"))
         .forEach((k) => delete state.saved[k]);
       state.search = "";
+      historialPropuestas = null;
       save();
       render();
       break;
@@ -4256,6 +4815,7 @@ async function handleAction(action, el) {
         .filter((k) => k.startsWith("history:"))
         .forEach((k) => delete state.saved[k]);
       state.search = "";
+      historialPropuestas = null;
       save();
       go("29");
       break;
@@ -4362,6 +4922,13 @@ document.addEventListener("click", (e) => {
   const nav = e.target.closest("[data-go]");
   if (nav) {
     e.preventDefault();
+    if (nav.dataset.proposalId) {
+      state.viewProposalId = Number(nav.dataset.proposalId) || null;
+    } else if (nav.dataset.proposal) {
+      const encontrada = [...(bandejaPropuestas || []), ...(historialPropuestas || []), ...(top3propuestasmasrecientes || [])]
+        .find((p) => p.code === nav.dataset.proposal);
+      if (encontrada) state.viewProposalId = encontrada.id;
+    }
     if (nav.dataset.proposal) {
       state.viewProposal = nav.dataset.proposal;
       save();
@@ -4369,6 +4936,9 @@ document.addEventListener("click", (e) => {
     if (nav.dataset.convocatoria) {
       state.viewCall = Number(nav.dataset.convocatoria);
       save();
+    }
+    if (nav.dataset.notif) {
+      marcarLeida(Number(nav.dataset.notif));
     }
     go(nav.dataset.go);
     return;

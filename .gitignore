@@ -4,3 +4,11 @@
 __pycache__/
 *.pyc
 .venv/
+
+# graft/trail local code-map cache
+graft/
+
+.ignore
+
+AGENTS.md
+skills-lock.json
