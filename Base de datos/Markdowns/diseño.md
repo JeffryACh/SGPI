@@ -460,9 +460,100 @@ Detalle de la evaluación cuando el evaluador es el Comité Técnico: rúbrica n
     - descripcion: evaluacion base a la que pertenece este detalle
 
 - puntaje:
+    - tipo: numeric(5,1)
+    - nullable: no
+    - descripcion: calificacion ponderada oficial calculada a partir de los criterios (0.0 a 100.0)
+
+- decision:
+    - tipo: varchar(20)
+    - nullable: no
+    - default: 'favorable'
+    - descripcion: resolucion tecnica del Comite ('favorable', 'observaciones', 'rechazo')
+
+- justificacion:
+    - tipo: text
+    - nullable: si
+    - descripcion: justificacion y sustento tecnico del dictamen emitido
+
+- tiene_bloqueo_obligatorio:
+    - tipo: boolean
+    - nullable: no
+    - default: false
+    - descripcion: indica si algun criterio obligatorio obtuvo calificacion insuficiente (< 8)
+
+### RubricSections (`rubric_sections`)
+Secciones temáticas en que se divide la rúbrica oficial de evaluación del Comité Técnico.
+
+- id_seccion:
+    - tipo: integer
+    - pk: si
+    - descripcion: identificador unico de la seccion
+- nombre_seccion:
+    - tipo: varchar
+    - nullable: no
+    - descripcion: nombre tematico (Equipo, Fundamentacion, Metodologia, Plan de accion, etc.)
+- peso_porcentual:
+    - tipo: numeric
+    - nullable: no
+    - descripcion: peso porcentual de la seccion sobre la nota final (suma 100)
+- orden:
     - tipo: integer
     - nullable: no
-    - descripcion: rubrica oficial con valores de cero a cien
+    - descripcion: orden secuencial de visualizacion en la rubrica
+
+### RubricCriteria (`rubric_criteria`)
+Criterios individuales evaluados por el Comité Técnico dentro de cada sección.
+
+- id_criterio_rubrica:
+    - tipo: integer
+    - pk: si
+    - descripcion: identificador unico del criterio
+- id_seccion:
+    - tipo: integer
+    - fk: si (referencia a rubric_sections.id_seccion)
+    - nullable: no
+    - descripcion: seccion tematica a la que pertenece el criterio
+- nombre_criterio:
+    - tipo: varchar
+    - nullable: no
+    - descripcion: enunciado del criterio evaluado
+- peso_relativo:
+    - tipo: numeric
+    - nullable: no
+    - descripcion: peso relativo individual del criterio
+- es_obligatorio:
+    - tipo: boolean
+    - nullable: no
+    - default: false
+    - descripcion: indica si el criterio es obligatorio (requiere calificacion >= 8 para dictamen favorable)
+- orden:
+    - tipo: integer
+    - nullable: no
+    - descripcion: posicion del criterio dentro de su seccion
+
+### TechnicalCommitteeScores (`technical_committee_scores`)
+Calificación asignada por el Comité Técnico a cada criterio específico dentro de una evaluación.
+
+- id_evaluacion:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a evaluations.id_evaluacion)
+    - nullable: no
+    - descripcion: evaluacion a la que corresponde la calificacion
+- id_criterio_rubrica:
+    - tipo: integer
+    - pk: si
+    - fk: si (referencia a rubric_criteria.id_criterio_rubrica)
+    - nullable: no
+    - descripcion: criterio de la rubrica evaluado
+- puntaje:
+    - tipo: integer
+    - nullable: no
+    - descripcion: nivel asignado en la escala cerrada institucional (0, 6, 8 o 10)
+- justificacion:
+    - tipo: varchar
+    - nullable: si
+    - descripcion: observaciones o justificacion especifica para este criterio
 
 ### VIEDictamenVerifications
 Detalle del dictamen de admisibilidad de la VIE: una fila por criterio verificado, no una fila por evaluación.

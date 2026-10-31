@@ -1,3 +1,23 @@
+-- ============================================================================
+-- ARCHIVO: Base de datos/Scripts/V11__indices_rendimiento.sql
+-- ============================================================================
+-- 2.1. OBJETIVO DEL ARCHIVO:
+--      Crear índices B-tree optimizados sobre columnas de filtrado frecuente,
+--      ordenamiento cronológico y claves foráneas en Supabase PostgreSQL.
+--
+-- 2.2. RELACIONES CON OTRAS PARTES DEL SISTEMA:
+--      2.2.1. De dónde obtiene datos:
+--             - Patrones de consulta del Backend FastAPI y navegación de la SPA.
+--      2.2.2. A dónde envía datos / Qué entidades modifica:
+--             - Crea índices en 'propuestas', 'research_team', 'action_plans',
+--               'risks', 'proposal_state_history', 'evaluations', 'notificaciones', etc.
+--
+-- 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
+--      Crea índices idempotentes (CREATE INDEX IF NOT EXISTS) para acelerar el
+--      dashboard del investigador, la bandeja de Vinculación, el historial de estados
+--      y la consulta de expedientes completos, asegurando latencias bajas.
+-- ============================================================================
+
 -- =====================================================================
 -- MIGRACIÓN V11: ÍNDICES DE RENDIMIENTO PARA CONSULTAS FRECUENTES
 -- Sistema de Gestión de Propuestas de Investigación (SGPI - TEC)
@@ -16,9 +36,11 @@
 -- ---------------------------------------------------------------------
 -- 1. Propuestas: dashboard, listados, filtros y orden cronológico
 -- ---------------------------------------------------------------------
+-- [Línea clave]: ¿Por qué soy importante? Índice compuesto (id_usuario_lider, fecha_creacion DESC). ¿Para qué? Acelerar el dashboard de propuestas del investigador y consultas de top 3 recientes. ¿Dónde me usan? En backend/app/routers/propuestas.py.
 CREATE INDEX IF NOT EXISTS idx_propuestas_lider_fecha
   ON public.propuestas (id_usuario_lider, fecha_creacion DESC);
 
+-- [Línea clave]: ¿Por qué soy importante? Índice compuesto (estado_actual, fecha_creacion DESC). ¿Para qué? Optimizar la carga de bandejas de evaluadores y conteos por estado. ¿Dónde me usan? En vinculacion.py, comite.py y filtros de la SPA.
 CREATE INDEX IF NOT EXISTS idx_propuestas_estado_fecha
   ON public.propuestas (estado_actual, fecha_creacion DESC);
 
