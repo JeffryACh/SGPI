@@ -102,7 +102,7 @@ def login(datos: LoginIn, conn: Connection = Depends(get_conn)):
     """
     Autenticar a un usuario institucional y retornar su perfil con sus roles asignados.
 
-    Busca al usuario por correo en la tabla 'usuarios' con 'lower(correo)'. Si existe, compara el hash
+    Busca al usuario por correo en la tabla 'usuarios' con 'lower(btrim(correo))'. Si existe, compara el hash
     de la contraseña suministrada contra el almacenado usando 'hmac.compare_digest'. Si la verificación
     falla o el usuario está inactivo, responde con HTTP 401. Si es exitoso, consolida los roles y retorna UsuarioOut.
 
@@ -126,7 +126,7 @@ def login(datos: LoginIn, conn: Connection = Depends(get_conn)):
         FROM public.usuarios u
         LEFT JOIN public.user_roles ur ON ur.id_usuario = u.id_usuario
         LEFT JOIN public.roles r       ON r.id_rol = ur.id_rol
-        WHERE lower(u.correo) = lower(%s)
+        WHERE lower(btrim(u.correo)) = lower(btrim(%s))
         GROUP BY u.id_usuario
         """,
         (datos.correo.strip(),),

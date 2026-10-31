@@ -24,6 +24,8 @@ ARCHIVO: backend/app/routers/catalogos.py
 ========================================================================================
 """
 
+import time
+from contextlib import ExitStack
 from typing import Any
 from fastapi import APIRouter, Depends
 from psycopg import Connection
@@ -33,6 +35,10 @@ from ..db import get_conn
 
 # [Línea clave]: Declara el router bajo el prefijo /catalogos para agrupar las rutas de catálogos generales.
 router = APIRouter(prefix="/catalogos", tags=["catalogos"])
+
+# [Línea clave]: Catálogos institucionales casi estáticos: se memorizan por proceso durante 5 minutos.
+_CATALOGOS_TTL_SEGUNDOS = 300
+_catalogos_cache: tuple[float, dict[str, Any]] | None = None
 
 
 class CatalogosResponse(BaseModel):
@@ -78,50 +84,62 @@ def obtener_todos_catalogos(
     return:
         + CatalogosResponse : response Objeto con los 7 catálogos institucionales listos para poblar la interfaz.
     """
-    with conn.cursor() as cur:
-        # [Línea clave]: Consulta las escuelas ordenadas alfabéticamente para desplegables y filtros.
-        cur.execute("SELECT id_escuela, nombre, siglas FROM escuelas ORDER BY nombre ASC")
-        escuelas = cur.fetchall()
+    global _catalogos_cache
 
-        # [Línea clave]: Consulta las modalidades activas protegiendo contra valores nulos en montos o descripciones.
-        cur.execute("""
-            SELECT id_modalidad, nombre_modalidad,
-                   COALESCE(descripcion, '') AS descripcion,
-                   COALESCE(duracion_maxima, 'Hasta 2 años') AS duracion_maxima,
-                   COALESCE(monto_financiamiento, 0) AS monto_financiamiento
-            FROM modalidades
-            WHERE COALESCE(activo, true) = true
-            ORDER BY id_modalidad ASC
-        """)
-        modalidades = cur.fetchall()
+    ahora = time.monotonic()
+    if _catalogos_cache and ahora - _catalogos_cache[0] < _CATALOGOS_TTL_SEGUNDOS:
+        return CatalogosResponse(**_catalogos_cache[1])
 
-        # [Línea clave]: Consulta las líneas de investigación institucionales para clasificar las propuestas.
-        cur.execute("SELECT id_linea_investigacion, nombre_linea FROM lineas_investigacion ORDER BY nombre_linea ASC")
-        lineas = cur.fetchall()
+    with ExitStack() as stack:
+        escuelas_cur = stack.enter_context(conn.cursor())
+        modalidades_cur = stack.enter_context(conn.cursor())
+        lineas_cur = stack.enter_context(conn.cursor())
+        tipos_hora_cur = stack.enter_context(conn.cursor())
+        rubros_cur = stack.enter_context(conn.cursor())
+        niveles_cur = stack.enter_context(conn.cursor())
+        estados_cur = stack.enter_context(conn.cursor())
 
-        # [Línea clave]: Consulta los 6 tipos de hora oficiales (VIE, CONS, REC, DOC, etc.) para el equipo de investigación.
-        cur.execute("SELECT id_tipo_hora, nombre_tipo_hora FROM tipos_hora ORDER BY id_tipo_hora ASC")
-        tipos_hora = cur.fetchall()
+        # [Línea clave]: Envía las 7 consultas en un solo pipeline para pagar un único round-trip.
+        with conn.pipeline():
+            # [Línea clave]: Consulta las escuelas ordenadas alfabéticamente para desplegables y filtros.
+            escuelas_cur.execute("SELECT id_escuela, nombre, siglas FROM escuelas ORDER BY nombre ASC")
 
-        # [Línea clave]: Consulta los rubros presupuestarios normados para el desglose financiero del proyecto.
-        cur.execute("SELECT id_rubro, nombre_rubro FROM rubros_presupuesto ORDER BY id_rubro ASC")
-        rubros = cur.fetchall()
+            # [Línea clave]: Consulta las modalidades activas protegiendo contra valores nulos en montos o descripciones.
+            modalidades_cur.execute("""
+                SELECT id_modalidad, nombre_modalidad,
+                       COALESCE(descripcion, '') AS descripcion,
+                       COALESCE(duracion_maxima, 'Hasta 2 años') AS duracion_maxima,
+                       COALESCE(monto_financiamiento, 0) AS monto_financiamiento
+                FROM modalidades
+                WHERE COALESCE(activo, true) = true
+                ORDER BY id_modalidad ASC
+            """)
 
-        # [Línea clave]: Consulta los niveles de riesgo aplicables tanto a probabilidad como a impacto.
-        cur.execute("SELECT id_nivel_riesgo, nombre_nivel FROM niveles_riesgo ORDER BY id_nivel_riesgo ASC")
-        niveles = cur.fetchall()
+            # [Línea clave]: Consulta las líneas de investigación institucionales para clasificar las propuestas.
+            lineas_cur.execute("SELECT id_linea_investigacion, nombre_linea FROM lineas_investigacion ORDER BY nombre_linea ASC")
 
-        # [Línea clave]: Consulta el catálogo de los 12 estados oficiales de la Convocatoria Fondos VIE 2027.
-        cur.execute("SELECT id_estado, nombre_estado FROM estados ORDER BY id_estado ASC")
-        estados = cur.fetchall()
+            # [Línea clave]: Consulta los 6 tipos de hora oficiales (VIE, CONS, REC, DOC, etc.) para el equipo de investigación.
+            tipos_hora_cur.execute("SELECT id_tipo_hora, nombre_tipo_hora FROM tipos_hora ORDER BY id_tipo_hora ASC")
 
+            # [Línea clave]: Consulta los rubros presupuestarios normados para el desglose financiero del proyecto.
+            rubros_cur.execute("SELECT id_rubro, nombre_rubro FROM rubros_presupuesto ORDER BY id_rubro ASC")
+
+            # [Línea clave]: Consulta los niveles de riesgo aplicables tanto a probabilidad como a impacto.
+            niveles_cur.execute("SELECT id_nivel_riesgo, nombre_nivel FROM niveles_riesgo ORDER BY id_nivel_riesgo ASC")
+
+            # [Línea clave]: Consulta el catálogo de los 12 estados oficiales de la Convocatoria Fondos VIE 2027.
+            estados_cur.execute("SELECT id_estado, nombre_estado FROM estados ORDER BY id_estado ASC")
+
+        data = {
+            "escuelas": escuelas_cur.fetchall(),
+            "modalidades": modalidades_cur.fetchall(),
+            "lineas_investigacion": lineas_cur.fetchall(),
+            "tipos_hora": tipos_hora_cur.fetchall(),
+            "rubros_presupuesto": rubros_cur.fetchall(),
+            "niveles_riesgo": niveles_cur.fetchall(),
+            "estados": estados_cur.fetchall(),
+        }
+
+    _catalogos_cache = (ahora, data)
     # [Línea clave]: Instancia y retorna el modelo Pydantic unificado con todos los catálogos institucionales.
-    return CatalogosResponse(
-        escuelas=escuelas,
-        modalidades=modalidades,
-        lineas_investigacion=lineas,
-        tipos_hora=tipos_hora,
-        rubros_presupuesto=rubros,
-        niveles_riesgo=niveles,
-        estados=estados,
-    )
+    return CatalogosResponse(**data)

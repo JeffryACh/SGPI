@@ -95,7 +95,10 @@ try {
 const setSession = (s) => {
   session = s;
   if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s));
-  else localStorage.removeItem(SESSION_KEY);
+  else {
+    localStorage.removeItem(SESSION_KEY);
+    invalidarCatalogos();
+  }
 };
 
 /**
@@ -236,6 +239,10 @@ const SCREEN_LOADERS = {
     await cargarDossier();
     await cargarVinculacion();
   },
+  "24": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
+  "25": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
+  "26": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
+  "27": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
   "28": () => cargarDossier(),
   "30": () => buscarPropuestas(),
 };
@@ -388,6 +395,23 @@ function marcarTodasLeidas() {
     .catch((e) => console.warn("Error marcando todas leídas:", e));
 }
 
+const CATALOGOS_TTL_MS = 5 * 60 * 1000;
+const catalogsLoadedAt = { modalidades: 0, escuelas: 0, lineas: 0, convocatorias: 0, catalogos: 0 };
+
+function catalogoVigente(clave, valor) {
+  return Boolean(valor) && Date.now() - (catalogsLoadedAt[clave] || 0) < CATALOGOS_TTL_MS;
+}
+
+function marcarCatalogo(clave) {
+  catalogsLoadedAt[clave] = Date.now();
+}
+
+function invalidarCatalogos() {
+  Object.keys(catalogsLoadedAt).forEach((clave) => {
+    catalogsLoadedAt[clave] = 0;
+  });
+}
+
 let modalidades = null;
 
 /**
@@ -399,9 +423,13 @@ let modalidades = null;
  *     + Promise<Array<Object>|null> : modalidades Lista de modalidades disponibles.
  */
 async function Modalidades() {
+  if (catalogoVigente("modalidades", modalidades)) return modalidades;
   try {
     const res = await fetch(`${API_URL}/modalidades/totalmodalidades`);
-    if (res.ok) modalidades = await res.json();
+    if (res.ok) {
+      modalidades = await res.json();
+      marcarCatalogo("modalidades");
+    }
   } catch (err) {
     console.warn("Modalidades error:", err);
   }
@@ -421,9 +449,13 @@ let escuelas = null;
 async function obtener_escuelas() {
   const idUsuario = session?.user?.id_usuario;
   if (!idUsuario) return null;
+  if (catalogoVigente("escuelas", escuelas)) return escuelas;
   try {
     const res = await fetch(`${API_URL}/escuelas/totalescuelas?id_usuario=${idUsuario}`);
-    if (res.ok) escuelas = await res.json();
+    if (res.ok) {
+      escuelas = await res.json();
+      marcarCatalogo("escuelas");
+    }
   } catch (err) {
     console.warn("obtener_escuelas error:", err);
   }
@@ -441,9 +473,13 @@ let lineas_investigacion = null;
  *     + Promise<Array<Object>|null> : lineas_investigacion Lista de líneas activas.
  */
 async function obtener_lineas_investigacion() {
+  if (catalogoVigente("lineas", lineas_investigacion)) return lineas_investigacion;
   try {
     const res = await fetch(`${API_URL}/lineas_de_investigacion/totalLineas`);
-    if (res.ok) lineas_investigacion = await res.json();
+    if (res.ok) {
+      lineas_investigacion = await res.json();
+      marcarCatalogo("lineas");
+    }
   } catch (err) {
     console.warn("obtener_lineas_investigacion error:", err);
   }
@@ -462,9 +498,13 @@ let catalogos = null;
  *     + Promise<Array<Object>|null> : convocatorias Lista completa de convocatorias.
  */
 async function obtener_convocatorias() {
+  if (catalogoVigente("convocatorias", convocatorias)) return convocatorias;
   try {
     const res = await fetch(`${API_URL}/convocatorias/totalConvocatorias`);
-    if (res.ok) convocatorias = await res.json();
+    if (res.ok) {
+      convocatorias = await res.json();
+      marcarCatalogo("convocatorias");
+    }
   } catch (err) {
     console.warn("obtener_convocatorias error:", err);
   }
@@ -480,9 +520,13 @@ async function obtener_convocatorias() {
  *     + Promise<Object|null> : catalogos Catálogos institucionales consolidados.
  */
 async function obtenerCatalogos() {
+  if (catalogoVigente("catalogos", catalogos)) return catalogos;
   try {
     const res = await fetch(`${API_URL}/catalogos`);
-    if (res.ok) catalogos = await res.json();
+    if (res.ok) {
+      catalogos = await res.json();
+      marcarCatalogo("catalogos");
+    }
   } catch (err) {
     console.warn("obtenerCatalogos error:", err);
   }
@@ -537,13 +581,12 @@ let evaluacionPreliminarIA = null;
  */
 async function obtenerEvaluacionPreliminarIA(idPropuesta = 1) {
   try {
-    // [Línea clave]: ¿Por qué soy importante? Descarga el dictamen preliminar de Gemini IA desde el Backend en Render/Local. ¿Para qué? Mostrar a cada nivel evaluador su guía de referencia según criterios VIE 2027. ¿Dónde me usan? En obtenerDatosBackend(), dossier() y evaluation().
+    // [Línea clave]: ¿Por qué soy importante? Descarga el dictamen preliminar ya guardado desde el Backend. ¿Para qué? Mostrar a cada nivel evaluador su guía de referencia sin bloquear la lectura generando IA. ¿Dónde me usan? En dossier() y evaluation().
     const res = await fetch(`${API_URL}/ia/evaluacion-preliminar/${idPropuesta}`);
-    if (res.ok) {
-      evaluacionPreliminarIA = await res.json();
-    }
+    evaluacionPreliminarIA = res.ok ? await res.json() : null;
   } catch (err) {
     console.warn("obtenerEvaluacionPreliminarIA error:", err);
+    evaluacionPreliminarIA = null;
   }
   return evaluacionPreliminarIA;
 }
@@ -567,7 +610,7 @@ async function generarEvaluacionPreliminarIA() {
     );
     const equipoActual = proposalTeamMembers();
     const payload = {
-      id_propuesta: currentProposalId(),
+      id_propuesta: propuestaActivaId(),
       codigo: state.created?.code || state.viewProposal || "SI-2027-014",
       titulo: draftValue("08:Título de la propuesta", screenDefault("08", "Título de la propuesta")),
       modalidad: state.mode || "Desarrollo tecnológico",
@@ -717,6 +760,7 @@ function renderizarPanelReferenciaIA(idPantalla) {
  *     + Promise<void> : undefined Resuelve cuando todas las consultas han retornado.
  */
 async function obtenerDatosBackend() {
+  if (!session?.user) return;
   await Promise.all([
     numsPropuestas(), 
     propuestaMasReciente(), 
@@ -727,14 +771,13 @@ async function obtenerDatosBackend() {
     obtener_lineas_investigacion(),
     obtener_convocatorias(),
     obtenerCatalogos(),
-    obtenerEvaluacionPreliminarIA(currentProposalId()),
-    state.role === "vinculacion" ? cargarBandejaVinculacion() : Promise.resolve(null),
   ]);
 }
 
 let bandejaPropuestas = null;
 let misPropuestas = null;
 let dossierActual = null;
+let dossierCargadoEn = 0;
 let evaluacionVinculacion = null;
 let documentosVinculacion = [];
 let historialPropuestas = null;
@@ -886,16 +929,24 @@ async function cargarBandejaVinculacion() {
  * return:
  *     + Promise<Object|null> : dossierActual Expediente consolidado con documentos e historial.
  */
-async function cargarDossier(idPropuesta = propuestaActivaId()) {
+async function cargarDossier(idPropuesta = propuestaActivaId(), forzar = false) {
   if (!idPropuesta) return null;
+  const mismoExpediente =
+    dossierActual &&
+    Number(dossierActual.id_propuesta) === Number(idPropuesta) &&
+    Date.now() - dossierCargadoEn < 3000;
+  if (mismoExpediente && !forzar) return dossierActual;
   try {
     const res = await fetch(`${API_URL}/propuestas/${idPropuesta}`);
     if (res.ok) {
       dossierActual = await res.json();
+      dossierCargadoEn = Date.now();
+      evaluacionPreliminarIA = dossierActual.evaluacion_ia || null;
       state.viewProposalId = Number(dossierActual.id_propuesta) || idPropuesta;
       state.viewProposal = dossierActual.codigo || state.viewProposal;
     } else {
       dossierActual = null;
+      evaluacionPreliminarIA = null;
     }
   } catch (err) {
     console.warn("cargarDossier error:", err);
@@ -4030,9 +4081,16 @@ async function doLogin() {
     if (!key) throw new AuthError("noroles");
     setSession({ user });
     applyRole(key);
-    await obtenerDatosBackend()
     save();
     go(homeFor());
+    // [Línea clave]: La precarga de catálogos y métricas corre en segundo plano para no retener el login.
+    obtenerDatosBackend()
+      .then(() => {
+        if (!session) return;
+        render();
+        loadScreenData();
+      })
+      .catch((e) => console.warn("SGPI: precarga en segundo plano:", e));
   } catch (err) {
     if (box?.isConnected)
       box.innerHTML = notice(
@@ -4489,7 +4547,7 @@ async function handleAction(action, el) {
       try {
         await subirDocumentoPropuesta(propuestaReal, archivo, tipo);
         closeModal();
-        await cargarDossier(propuestaReal);
+        await cargarDossier(propuestaReal, true);
         render();
         toast(`Documento adjunto a ${dossierActual?.codigo || "la propuesta"}.`);
       } catch (err) {
@@ -4566,8 +4624,9 @@ async function handleAction(action, el) {
         clearProposalDraft();
         save();
         closeModal();
-        await obtenerDatosBackend();
         go("19");
+        // [Línea clave]: Refresca métricas y catálogos sin retrasar la confirmación del envío.
+        obtenerDatosBackend().catch((e) => console.warn("SGPI: precarga tras envío:", e));
         if (fallidos.length) {
           modal(
             "La propuesta se registró, pero faltan documentos",
@@ -4611,7 +4670,7 @@ async function handleAction(action, el) {
         render();
         toast("Puntajes de referencia IA aplicados a la rúbrica.");
       } else {
-        await obtenerEvaluacionPreliminarIA(currentProposalId());
+        await obtenerEvaluacionPreliminarIA(propuestaActivaId());
         if (evaluacionPreliminarIA?.criterios_sugeridos) {
           state.scores = {
             ...state.scores,
@@ -4624,7 +4683,7 @@ async function handleAction(action, el) {
       }
       break;
     case "modal-ai-detail": {
-      if (!evaluacionPreliminarIA) await obtenerEvaluacionPreliminarIA(currentProposalId());
+      if (!evaluacionPreliminarIA) await obtenerEvaluacionPreliminarIA(propuestaActivaId());
       const ia = evaluacionPreliminarIA || {};
       const fortalezasHtml = (ia.fortalezas || [])
         .map((f) => `<li>${esc(f)}</li>`)
@@ -4721,7 +4780,7 @@ async function handleAction(action, el) {
           state.viewProposalId = idPropuesta;
           save();
           closeModal();
-          await Promise.all([cargarBandejaVinculacion(), cargarDossier(idPropuesta), cargarVinculacion(idPropuesta)]);
+          await Promise.all([cargarBandejaVinculacion(), cargarDossier(idPropuesta, true), cargarVinculacion(idPropuesta)]);
           go("21");
           toast("Devolución registrada. El investigador podrá atender las observaciones.");
         } catch (err) {
@@ -4778,7 +4837,7 @@ async function handleAction(action, el) {
           state.viewProposalId = idPropuesta;
           save();
           closeModal();
-          await Promise.all([cargarBandejaVinculacion(), cargarDossier(idPropuesta), cargarVinculacion(idPropuesta)]);
+          await Promise.all([cargarBandejaVinculacion(), cargarDossier(idPropuesta, true), cargarVinculacion(idPropuesta)]);
           modal(
             "Decisión registrada",
             notice(
@@ -5099,8 +5158,9 @@ window.addEventListener("hashchange", () => {
 // [Línea clave]: ¿Por qué soy importante? Punto de arranque del ciclo de vida del Frontend. ¿Para qué? Renderizar la vista inicial y sincronizar catálogos y datos desde PostgreSQL asíncronamente. ¿Dónde me usan? Al pie del archivo app.js autoejecutándose como IIFE.
 (async function initApp() {
   render();
+  if (!session?.user) return;
   try {
-    await obtenerDatosBackend()
+    await obtenerDatosBackend();
     render();
     loadScreenData();
   } catch (e) {

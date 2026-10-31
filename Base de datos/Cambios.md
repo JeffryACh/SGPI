@@ -117,3 +117,21 @@ Este documento registra la evolución del modelo de base de datos relacional par
 - **Project Ref:** `pxlrplbyggoywqbcgjdu`.
 - **Pooler:** Supavisor IPv4 en `aws-0-us-west-2.pooler.supabase.com:6543`.
 - **Total de tablas activas:** 37 tablas relacionales con integridad referencial, triggers automáticos y Row Level Security (RLS).
+
+---
+
+## 6. Migración V11 — Índices de Rendimiento
+
+### Script: `Base de datos/Scripts/V11__indices_rendimiento.sql`
+- **Propósito:** Acelerar las consultas más frecuentes del dashboard, la bandeja de Vinculación, el expediente completo, el historial, las notificaciones y los catálogos de convocatoria, sin tocar la estructura de las tablas.
+- **Naturaleza:** Script idempotente (`CREATE INDEX IF NOT EXISTS`) y de solo índices; seguro de reejecutar en el SQL Editor de Supabase.
+- **Cobertura principal:**
+  - `propuestas`: líder + fecha, estado + fecha, fecha de creación, escuela, modalidad, línea y convocatoria.
+  - `research_team (id_usuario, id_propuesta)`: pertenencia del usuario a propuestas (la PK ya cubre el acceso por propuesta).
+  - Tablas hijas del expediente por `id_propuesta`: objetivos, productos académicos, plan de acción, riesgos, ética, colaboradores y avales de consejo.
+  - `proposal_documents`, `proposal_state_history` y `evaluations`: acceso por propuesta ordenado por fecha.
+  - `notificaciones`: historial por usuario e índice parcial de no leídas.
+  - `convocatoria_etapas` y `convocatoria_documentos`: acceso por convocatoria y orden.
+  - `usuarios (lower(btrim(correo)))`: respalda el login y la resolución de responsables por correo, que ahora usan `lower(btrim(...))`.
+- **Refresco de estadísticas:** termina con `ANALYZE` sobre las tablas indexadas para que el planificador aproveche los índices de inmediato.
+- **Fuera de alcance:** búsquedas `ILIKE '%texto%'` sobre título o código (requerirían la extensión `pg_trgm`).

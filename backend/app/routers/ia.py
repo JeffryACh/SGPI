@@ -47,6 +47,7 @@ import math
 import os
 import urllib.error
 import urllib.request
+from contextlib import ExitStack
 from datetime import datetime
 from typing import Any, Optional
 
@@ -268,12 +269,16 @@ class BorradorEvaluacionIAIn(BaseModel):
 # FUNCIONES AUXILIARES DE BASE DE DATOS Y AUDITORÍA NORMATIVA
 # =====================================================================
 
+_TABLA_IA_VERIFICADA = False
+
+
 def _asegurar_tabla_ia(cur) -> None:
     """
     Garantizar que la tabla 'ai_preliminary_evaluations' exista en Supabase antes de leer o escribir.
 
     Ejecuta una sentencia DDL idempotente 'CREATE TABLE IF NOT EXISTS' para que el despliegue en Render
     y las pruebas locales funcionen de inmediato sin fallar si aún no se ha corrido el script V6 manualmente.
+    La verificación se memoriza por proceso para sacar el DDL del camino caliente de cada petición.
 
     parametros:
         - Cursor : cur Cursor activo de la conexión transaccional a PostgreSQL.
@@ -281,6 +286,9 @@ def _asegurar_tabla_ia(cur) -> None:
     return:
         + None : None Crea la tabla si no existía.
     """
+    global _TABLA_IA_VERIFICADA
+    if _TABLA_IA_VERIFICADA:
+        return
     # [Línea clave]: Crea de forma idempotente la tabla de evaluaciones preliminares de IA en PostgreSQL.
     cur.execute(
         """
@@ -305,6 +313,7 @@ def _asegurar_tabla_ia(cur) -> None:
         );
         """
     )
+    _TABLA_IA_VERIFICADA = True
 
 
 def _extraer_expediente_para_ia(cur, id_propuesta: int) -> dict[str, Any]:
@@ -321,92 +330,99 @@ def _extraer_expediente_para_ia(cur, id_propuesta: int) -> dict[str, Any]:
     return:
         + dict[str, Any] : expediente Diccionario consolidado con las métricas y textos de la propuesta.
     """
-    # [Línea clave]: Recupera los datos principales de la propuesta uniendo escuela, modalidad, línea y estado.
-    cur.execute(
-        """
-        SELECT
-            p.id_propuesta,
-            COALESCE(p.codigo, 'SI-2027-' || LPAD(p.id_propuesta::text, 3, '0')) AS codigo,
-            p.titulo,
-            COALESCE(p.resumen, '') AS resumen,
-            m.nombre_modalidad AS modalidad,
-            esc.nombre AS escuela,
-            esc.siglas AS escuela_siglas,
-            lin.nombre_linea AS linea_investigacion,
-            e.nombre_estado AS estado,
-            u.nombre AS lider_nombre
-        FROM propuestas p
-        JOIN modalidades m ON m.id_modalidad = p.id_modalidad
-        JOIN escuelas esc ON esc.id_escuela = p.id_escuela
-        JOIN lineas_investigacion lin ON lin.id_linea_investigacion = p.id_linea_investigacion
-        JOIN estados e ON e.id_estado = p.estado_actual
-        JOIN usuarios u ON u.id_usuario = p.id_usuario_lider
-        WHERE p.id_propuesta = %s;
-        """,
-        (id_propuesta,),
-    )
-    prop = cur.fetchone()
-    if not prop:
-        raise HTTPException(status_code=404, detail=f"Propuesta {id_propuesta} no encontrada para análisis de IA.")
+    conn = cur.connection
+    with ExitStack() as stack:
+        prop_cur = stack.enter_context(conn.cursor())
+        equipo_cur = stack.enter_context(conn.cursor())
+        presupuesto_cur = stack.enter_context(conn.cursor())
+        planes_cur = stack.enter_context(conn.cursor())
+        riesgos_cur = stack.enter_context(conn.cursor())
+        objetivos_cur = stack.enter_context(conn.cursor())
+        productos_cur = stack.enter_context(conn.cursor())
+        eticas_cur = stack.enter_context(conn.cursor())
 
-    cur.execute(
-        """
-        SELECT u.nombre, th.nombre_tipo_hora, rt.horas_asignadas
-        FROM research_team rt
-        JOIN usuarios u ON u.id_usuario = rt.id_usuario
-        JOIN tipos_hora th ON th.id_tipo_hora = rt.id_tipo_hora
-        WHERE rt.id_propuesta = %s;
-        """,
-        (id_propuesta,),
-    )
-    equipo = cur.fetchall()
+        # [Línea clave]: Envía las 8 consultas en un solo pipeline para pagar un único round-trip a Supabase.
+        with conn.pipeline():
+            # [Línea clave]: Recupera los datos principales de la propuesta uniendo escuela, modalidad, línea y estado.
+            prop_cur.execute(
+                """
+                SELECT
+                    p.id_propuesta,
+                    COALESCE(p.codigo, 'SI-2027-' || LPAD(p.id_propuesta::text, 3, '0')) AS codigo,
+                    p.titulo,
+                    COALESCE(p.resumen, '') AS resumen,
+                    m.nombre_modalidad AS modalidad,
+                    esc.nombre AS escuela,
+                    esc.siglas AS escuela_siglas,
+                    lin.nombre_linea AS linea_investigacion,
+                    e.nombre_estado AS estado,
+                    u.nombre AS lider_nombre
+                FROM propuestas p
+                JOIN modalidades m ON m.id_modalidad = p.id_modalidad
+                JOIN escuelas esc ON esc.id_escuela = p.id_escuela
+                JOIN lineas_investigacion lin ON lin.id_linea_investigacion = p.id_linea_investigacion
+                JOIN estados e ON e.id_estado = p.estado_actual
+                JOIN usuarios u ON u.id_usuario = p.id_usuario_lider
+                WHERE p.id_propuesta = %s;
+                """,
+                (id_propuesta,),
+            )
+            equipo_cur.execute(
+                """
+                SELECT u.nombre, th.nombre_tipo_hora, rt.horas_asignadas
+                FROM research_team rt
+                JOIN usuarios u ON u.id_usuario = rt.id_usuario
+                JOIN tipos_hora th ON th.id_tipo_hora = rt.id_tipo_hora
+                WHERE rt.id_propuesta = %s;
+                """,
+                (id_propuesta,),
+            )
+            presupuesto_cur.execute(
+                """
+                SELECT rp.nombre_rubro, pb.monto, COALESCE(pb.anio, 1) AS anio
+                FROM proposal_budget pb
+                JOIN rubros_presupuesto rp ON rp.id_rubro = pb.id_rubro
+                WHERE pb.id_propuesta = %s;
+                """,
+                (id_propuesta,),
+            )
+            planes_cur.execute(
+                "SELECT descripcion_actividad, fecha_inicio, fecha_fin FROM action_plans WHERE id_propuesta = %s;",
+                (id_propuesta,),
+            )
+            riesgos_cur.execute(
+                """
+                SELECT r.descripcion_riesgo, np.nombre_nivel AS probabilidad, ni.nombre_nivel AS impacto, r.medida_mitigacion
+                FROM risks r
+                JOIN niveles_riesgo np ON np.id_nivel_riesgo = r.id_nivel_probabilidad
+                JOIN niveles_riesgo ni ON ni.id_nivel_riesgo = r.id_nivel_impacto
+                WHERE r.id_propuesta = %s;
+                """,
+                (id_propuesta,),
+            )
+            objetivos_cur.execute(
+                "SELECT codigo_objetivo, descripcion FROM proposal_objectives WHERE id_propuesta = %s ORDER BY orden ASC;",
+                (id_propuesta,),
+            )
+            productos_cur.execute(
+                "SELECT tipo_producto, descripcion, meta_esperada, categoria FROM academic_product_commitments WHERE id_propuesta = %s;",
+                (id_propuesta,),
+            )
+            eticas_cur.execute(
+                "SELECT tipo_aspecto, aplica, justificacion_exencion, ente_regulatorio FROM proposal_ethics_declarations WHERE id_propuesta = %s;",
+                (id_propuesta,),
+            )
 
-    cur.execute(
-        """
-        SELECT rp.nombre_rubro, pb.monto, COALESCE(pb.anio, 1) AS anio
-        FROM proposal_budget pb
-        JOIN rubros_presupuesto rp ON rp.id_rubro = pb.id_rubro
-        WHERE pb.id_propuesta = %s;
-        """,
-        (id_propuesta,),
-    )
-    presupuesto = cur.fetchall()
-
-    cur.execute("SELECT descripcion_actividad, fecha_inicio, fecha_fin FROM action_plans WHERE id_propuesta = %s;", (id_propuesta,))
-    planes = cur.fetchall()
-
-    cur.execute(
-        """
-        SELECT r.descripcion_riesgo, np.nombre_nivel AS probabilidad, ni.nombre_nivel AS impacto, r.medida_mitigacion
-        FROM risks r
-        JOIN niveles_riesgo np ON np.id_nivel_riesgo = r.id_nivel_probabilidad
-        JOIN niveles_riesgo ni ON ni.id_nivel_riesgo = r.id_nivel_impacto
-        WHERE r.id_propuesta = %s;
-        """,
-        (id_propuesta,),
-    )
-    riesgos = cur.fetchall()
-
-    objetivos = []
-    try:
-        cur.execute("SELECT codigo_objetivo, descripcion FROM proposal_objectives WHERE id_propuesta = %s ORDER BY orden ASC;", (id_propuesta,))
-        objetivos = cur.fetchall()
-    except Exception:
-        pass
-
-    productos = []
-    try:
-        cur.execute("SELECT tipo_producto, descripcion, meta_esperada, categoria FROM academic_product_commitments WHERE id_propuesta = %s;", (id_propuesta,))
-        productos = cur.fetchall()
-    except Exception:
-        pass
-
-    eticas = []
-    try:
-        cur.execute("SELECT tipo_aspecto, aplica, justificacion_exencion, ente_regulatorio FROM proposal_ethics_declarations WHERE id_propuesta = %s;", (id_propuesta,))
-        eticas = cur.fetchall()
-    except Exception:
-        pass
+        prop = prop_cur.fetchone()
+        if not prop:
+            raise HTTPException(status_code=404, detail=f"Propuesta {id_propuesta} no encontrada para análisis de IA.")
+        equipo = equipo_cur.fetchall()
+        presupuesto = presupuesto_cur.fetchall()
+        planes = planes_cur.fetchall()
+        riesgos = riesgos_cur.fetchall()
+        objetivos = objetivos_cur.fetchall()
+        productos = productos_cur.fetchall()
+        eticas = eticas_cur.fetchall()
 
     return {
         **prop,
@@ -805,11 +821,11 @@ Responde ÚNICAMENTE con un objeto JSON válido que contenga exactamente las sig
     }
     body_bytes = json.dumps(payload_gemini).encode("utf-8")
 
-    # [Línea clave]: Recorre los modelos del plan gratuito de Google AI Studio con tolerancia a fallos de cuota.
+    # [Línea clave]: Prueba el modelo configurado y un respaldo gratuito para acotar la espera en la re-evaluación manual.
     modelos_a_probar = [
         os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
-        *FREE_TIER_MODELS,
-    ]
+        *FREE_TIER_MODELS[:2],
+    ][:2]
     for model_name in dict.fromkeys(m.strip() for m in modelos_a_probar if m and m.strip()):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
         req = urllib.request.Request(
@@ -819,7 +835,7 @@ Responde ÚNICAMENTE con un objeto JSON válido que contenga exactamente las sig
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=25) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 resp_data = json.loads(resp.read().decode("utf-8"))
                 candidates = resp_data.get("candidates") or []
                 if candidates:
@@ -844,7 +860,7 @@ Responde ÚNICAMENTE con un objeto JSON válido que contenga exactamente las sig
     return None, "gemini-3.5-flash (respaldo normativo por cuota/red)", "motor_normativo_respaldo"
 
 
-def generar_y_guardar_evaluacion_ia(id_propuesta: int, conn: Connection) -> dict[str, Any]:
+def generar_y_guardar_evaluacion_ia(id_propuesta: int, conn: Connection, usar_gemini: bool = True) -> dict[str, Any]:
     """
     Orquestar la generación de la evaluación preliminar con Gemini y su persistencia en Supabase.
 
@@ -855,6 +871,7 @@ def generar_y_guardar_evaluacion_ia(id_propuesta: int, conn: Connection) -> dict
     parametros:
         - int : id_propuesta Identificador de la propuesta en la tabla 'propuestas'.
         - Connection : conn Conexión activa a Supabase PostgreSQL.
+        - bool : usar_gemini Si es True consulta Gemini; si es False solo aplica el motor normativo local.
 
     return:
         + dict[str, Any] : evaluacion Diccionario con la evaluación preliminar lista para los 5 niveles.
@@ -863,7 +880,10 @@ def generar_y_guardar_evaluacion_ia(id_propuesta: int, conn: Connection) -> dict
         _asegurar_tabla_ia(cur)
         expediente = _extraer_expediente_para_ia(cur, id_propuesta)
         auditoria = _auditar_reglas_v2027(expediente)
-        ia_json, modelo_usado, modo_gen = _invocar_gemini_online_free_tier(expediente, auditoria)
+        if usar_gemini:
+            ia_json, modelo_usado, modo_gen = _invocar_gemini_online_free_tier(expediente, auditoria)
+        else:
+            ia_json, modelo_usado, modo_gen = None, "motor_normativo_respaldo", "motor_normativo_respaldo"
         resultado = _construir_evaluacion_estructura_completa(
             expediente=expediente,
             auditoria=auditoria,
@@ -1085,16 +1105,17 @@ def consultar_evaluacion_preliminar(
     Obtener la evaluación preliminar de IA de una propuesta para mostrarla a los evaluadores.
 
     Si la propuesta ya cuenta con evaluación preliminar en 'ai_preliminary_evaluations', la retorna
-    inmediatamente desde Supabase; de lo contrario la genera y persiste en el acto.
+    inmediatamente desde Supabase. Si no existe, retorna None: la generación con Gemini solo se
+    dispara con una acción explícita (POST /ia/evaluar-propuesta) para no bloquear las lecturas.
 
     parametros:
         - int : id_propuesta Identificador numérico de la propuesta en Supabase.
         - Connection : conn Conexión transaccional inyectada desde el pool de base de datos.
 
     return:
-        + dict[str, Any] : evaluacion Dictamen preliminar estructurado para los 5 niveles evaluadores.
+        + Optional[dict[str, Any]] : evaluacion Dictamen preliminar o None si aún no se ha generado.
     """
-    return obtener_evaluacion_ia_guardada(id_propuesta, conn, autogenerar=True)
+    return obtener_evaluacion_ia_guardada(id_propuesta, conn, autogenerar=False)
 
 
 @router.post("/evaluar-propuesta/{id_propuesta}", status_code=status.HTTP_200_OK)

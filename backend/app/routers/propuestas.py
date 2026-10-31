@@ -37,6 +37,7 @@ ARCHIVO: backend/app/routers/propuestas.py
 import logging
 import math
 import os
+from contextlib import ExitStack
 from datetime import date, datetime
 from typing import Any, Optional
 from uuid import UUID
@@ -472,12 +473,16 @@ class EvaluacionIn(BaseModel):
     cambiar_a_estado: Optional[int] = None
 
 
+_TABLE_COLUMNS_CACHE: dict[str, set[str]] = {}
+
+
 def _get_table_columns(cur, table_name: str) -> set[str]:
     """
     Inspeccionar dinámicamente las columnas existentes en una tabla de PostgreSQL.
 
     Consulta 'information_schema.columns' para el esquema público y retorna un conjunto
     con los nombres de columnas presentes, previniendo excepciones de columnas inexistentes.
+    El resultado se memoriza por proceso: el esquema cambia solo con migraciones manuales.
 
     parametros:
         - Cursor : cur Cursor activo de la conexión a PostgreSQL.
@@ -486,6 +491,10 @@ def _get_table_columns(cur, table_name: str) -> set[str]:
     return:
         + set[str] : columnas Conjunto de nombres de columnas en minúsculas presentes en la tabla.
     """
+    columnas_cacheadas = _TABLE_COLUMNS_CACHE.get(table_name)
+    if columnas_cacheadas is not None:
+        return columnas_cacheadas
+
     # [Línea clave]: Consulta el catálogo del sistema PostgreSQL para verificar la presencia de columnas migratadas.
     cur.execute(
         """
@@ -495,7 +504,9 @@ def _get_table_columns(cur, table_name: str) -> set[str]:
         """,
         (table_name,),
     )
-    return {row["column_name"] for row in cur.fetchall()}
+    columnas = {row["column_name"] for row in cur.fetchall()}
+    _TABLE_COLUMNS_CACHE[table_name] = columnas
+    return columnas
 
 
 # =====================================================================
@@ -871,6 +882,9 @@ def obtener_dossier_propuesta(
         has_fechas = "fecha_inicio" in cols and "fecha_fin" in cols
         code_expr = "COALESCE(p.codigo, 'SI-' || p.id_propuesta)" if has_codigo else "'SI-' || p.id_propuesta"
 
+        budget_cols = _get_table_columns(cur, "proposal_budget")
+        anio_col = "pb.anio" if "anio" in budget_cols else "1 AS anio"
+
         sql_prop = f"""
             SELECT
                 p.id_propuesta,
@@ -899,30 +913,42 @@ def obtener_dossier_propuesta(
             JOIN usuarios u ON u.id_usuario = p.id_usuario_lider
             WHERE p.id_propuesta = %s
         """
-        cur.execute(sql_prop, (id_propuesta,))
-        prop = cur.fetchone()
 
-        if not prop:
-            raise HTTPException(status_code=404, detail="Propuesta no encontrada")
+    with ExitStack() as stack:
+        prop_cur = stack.enter_context(conn.cursor())
+        equipo_cur = stack.enter_context(conn.cursor())
+        objetivos_cur = stack.enter_context(conn.cursor())
+        productos_cur = stack.enter_context(conn.cursor())
+        planes_cur = stack.enter_context(conn.cursor())
+        riesgos_cur = stack.enter_context(conn.cursor())
+        presupuesto_cur = stack.enter_context(conn.cursor())
+        eticas_cur = stack.enter_context(conn.cursor())
+        secciones_cur = stack.enter_context(conn.cursor())
+        documentos_cur = stack.enter_context(conn.cursor())
+        colaboradores_cur = stack.enter_context(conn.cursor())
+        historial_cur = stack.enter_context(conn.cursor())
+        evaluaciones_cur = stack.enter_context(conn.cursor())
+        vinculacion_cur = stack.enter_context(conn.cursor())
 
-        # [Línea clave]: Consulta los miembros del equipo investigador con nombres de usuario y tipo de hora.
-        cur.execute(
-            """
-            SELECT rt.id_usuario, u.nombre, u.correo, rt.id_tipo_hora,
-                   th.nombre_tipo_hora, rt.horas_asignadas
-            FROM research_team rt
-            JOIN usuarios u ON u.id_usuario = rt.id_usuario
-            JOIN tipos_hora th ON th.id_tipo_hora = rt.id_tipo_hora
-            WHERE rt.id_propuesta = %s
-            """,
-            (id_propuesta,),
-        )
-        equipo = cur.fetchall()
+        # [Línea clave]: Envía las 14 consultas del expediente en un solo pipeline para pagar un único round-trip.
+        with conn.pipeline():
+            prop_cur.execute(sql_prop, (id_propuesta,))
 
-        # [Línea clave]: Consulta los objetivos ordenados por su posición ordinal.
-        objetivos = []
-        try:
-            cur.execute(
+            # [Línea clave]: Consulta los miembros del equipo investigador con nombres de usuario y tipo de hora.
+            equipo_cur.execute(
+                """
+                SELECT rt.id_usuario, u.nombre, u.correo, rt.id_tipo_hora,
+                       th.nombre_tipo_hora, rt.horas_asignadas
+                FROM research_team rt
+                JOIN usuarios u ON u.id_usuario = rt.id_usuario
+                JOIN tipos_hora th ON th.id_tipo_hora = rt.id_tipo_hora
+                WHERE rt.id_propuesta = %s
+                """,
+                (id_propuesta,),
+            )
+
+            # [Línea clave]: Consulta los objetivos ordenados por su posición ordinal.
+            objetivos_cur.execute(
                 """
                 SELECT id_objetivo, codigo_objetivo, descripcion, orden
                 FROM proposal_objectives
@@ -931,14 +957,9 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            objetivos = cur.fetchall()
-        except Exception:
-            pass
 
-        # [Línea clave]: Consulta los productos académicos comprometidos y su estado de cumplimiento.
-        productos = []
-        try:
-            cur.execute(
+            # [Línea clave]: Consulta los productos académicos comprometidos y su estado de cumplimiento.
+            productos_cur.execute(
                 """
                 SELECT id_producto, id_objetivo, tipo_producto, descripcion,
                        meta_esperada, categoria, es_obligatorio, cumplido
@@ -947,14 +968,9 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            productos = cur.fetchall()
-        except Exception:
-            pass
 
-        # [Línea clave]: Consulta las actividades del plan de acción ordenadas por fecha de inicio.
-        planes = []
-        try:
-            cur.execute(
+            # [Línea clave]: Consulta las actividades del plan de acción ordenadas por fecha de inicio.
+            planes_cur.execute(
                 """
                 SELECT ap.id_plan_accion, ap.descripcion_actividad, ap.fecha_inicio,
                        ap.fecha_fin, ap.id_usuario_responsable, u.nombre AS responsable_nombre
@@ -965,14 +981,9 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            planes = cur.fetchall()
-        except Exception:
-            pass
 
-        # [Línea clave]: Consulta los riesgos y sus niveles textuales de probabilidad e impacto.
-        riesgos = []
-        try:
-            cur.execute(
+            # [Línea clave]: Consulta los riesgos y sus niveles textuales de probabilidad e impacto.
+            riesgos_cur.execute(
                 """
                 SELECT r.id_riesgo, r.descripcion_riesgo, r.id_nivel_probabilidad,
                        np.nombre_nivel AS probabilidad, r.id_nivel_impacto,
@@ -984,16 +995,9 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            riesgos = cur.fetchall()
-        except Exception:
-            pass
 
-        # [Línea clave]: Consulta el presupuesto anualizado por rubro.
-        presupuesto = []
-        try:
-            budget_cols = _get_table_columns(cur, "proposal_budget")
-            anio_col = "pb.anio" if "anio" in budget_cols else "1 AS anio"
-            cur.execute(
+            # [Línea clave]: Consulta el presupuesto anualizado por rubro.
+            presupuesto_cur.execute(
                 f"""
                 SELECT pb.id_rubro, rp.nombre_rubro, pb.monto, {anio_col}
                 FROM proposal_budget pb
@@ -1002,14 +1006,9 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            presupuesto = cur.fetchall()
-        except Exception:
-            pass
 
-        # [Línea clave]: Consulta las declaraciones éticas registradas para la propuesta.
-        eticas = []
-        try:
-            cur.execute(
+            # [Línea clave]: Consulta las declaraciones éticas registradas para la propuesta.
+            eticas_cur.execute(
                 """
                 SELECT id_etica, tipo_aspecto, aplica, justificacion_exencion,
                        ente_regulatorio, numero_permiso, estado_tramite
@@ -1018,14 +1017,9 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            eticas = cur.fetchall()
-        except Exception:
-            pass
 
-        # [Línea clave]: Consulta las secciones narrativas extensas del formulario.
-        secciones = []
-        try:
-            cur.execute(
+            # [Línea clave]: Consulta las secciones narrativas extensas del formulario.
+            secciones_cur.execute(
                 """
                 SELECT codigo_seccion, contenido
                 FROM proposal_sections
@@ -1034,14 +1028,9 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            secciones = cur.fetchall()
-        except Exception:
-            pass
 
-        # [Línea clave]: Consulta los metadatos de los documentos adjuntos.
-        documentos = []
-        try:
-            cur.execute(
+            # [Línea clave]: Consulta los metadatos de los documentos adjuntos.
+            documentos_cur.execute(
                 """
                 SELECT id_documento, nombre_archivo, tipo_documento, extension,
                        file_path, tamano_bytes, version, fecha_subida
@@ -1051,17 +1040,9 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            documentos = [
-                {**documento, "file_url": _url_publica_documento(documento["file_path"])}
-                for documento in cur.fetchall()
-            ]
-        except Exception:
-            pass
 
-        # [Línea clave]: Consulta los colaboradores externos y sus compromisos.
-        colaboradores_externos = []
-        try:
-            cur.execute(
+            # [Línea clave]: Consulta los colaboradores externos y sus compromisos.
+            colaboradores_cur.execute(
                 """
                 SELECT id_colaborador, nombre_completo, identificacion_orcid,
                        institucion_empresa, rol_desempenado, carta_compromiso_adjunta,
@@ -1072,14 +1053,9 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            colaboradores_externos = cur.fetchall()
-        except Exception:
-            pass
 
-        # [Línea clave]: Consulta la bitácora inmutable de cambios de estado para trazabilidad.
-        historial = []
-        try:
-            cur.execute(
+            # [Línea clave]: Consulta la bitácora inmutable de cambios de estado para trazabilidad.
+            historial_cur.execute(
                 """
                 SELECT psh.id_historial, psh.fecha_cambio, psh.observaciones,
                        e1.nombre_estado AS estado_anterior,
@@ -1094,14 +1070,9 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            historial = cur.fetchall()
-        except Exception:
-            pass
 
-        # [Línea clave]: Consulta las evaluaciones registradas por Comité Técnico, Vinculación y CIE.
-        evaluaciones = []
-        try:
-            cur.execute(
+            # [Línea clave]: Consulta las evaluaciones registradas por Comité Técnico, Vinculación y CIE.
+            evaluaciones_cur.execute(
                 """
                 SELECT ev.id_evaluacion, ev.fecha_evaluacion, ev.observaciones,
                        u.nombre AS evaluador_nombre, r.nombre_rol AS rol_evaluador,
@@ -1118,14 +1089,9 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            evaluaciones = cur.fetchall()
-        except Exception:
-            pass
 
-        # [Línea clave]: Recupera el detalle del dictamen técnico emitido por Vinculación.
-        vinculacion_evaluaciones = []
-        try:
-            cur.execute(
+            # [Línea clave]: Recupera el detalle del dictamen técnico emitido por Vinculación.
+            vinculacion_cur.execute(
                 """
                 SELECT ev.id_evaluacion, ev.fecha_evaluacion, ev.observaciones,
                        u.nombre AS evaluador_nombre, ve.numero_oficio_dictamen,
@@ -1140,14 +1106,32 @@ def obtener_dossier_propuesta(
                 """,
                 (id_propuesta,),
             )
-            vinculacion_evaluaciones = cur.fetchall()
-        except Exception:
-            pass
 
-    # [Línea clave]: Incluye la evaluación preliminar generada por Gemini IA para apoyo de los 5 niveles evaluadores.
+        prop = prop_cur.fetchone()
+        if not prop:
+            raise HTTPException(status_code=404, detail="Propuesta no encontrada")
+
+        equipo = equipo_cur.fetchall()
+        objetivos = objetivos_cur.fetchall()
+        productos = productos_cur.fetchall()
+        planes = planes_cur.fetchall()
+        riesgos = riesgos_cur.fetchall()
+        presupuesto = presupuesto_cur.fetchall()
+        eticas = eticas_cur.fetchall()
+        secciones = secciones_cur.fetchall()
+        documentos = [
+            {**documento, "file_url": _url_publica_documento(documento["file_path"])}
+            for documento in documentos_cur.fetchall()
+        ]
+        colaboradores_externos = colaboradores_cur.fetchall()
+        historial = historial_cur.fetchall()
+        evaluaciones = evaluaciones_cur.fetchall()
+        vinculacion_evaluaciones = vinculacion_cur.fetchall()
+
+    # [Línea clave]: Incluye la evaluación preliminar ya guardada, sin generarla en la ruta de lectura.
     evaluacion_ia = None
     try:
-        evaluacion_ia = obtener_evaluacion_ia_guardada(id_propuesta, conn, autogenerar=True)
+        evaluacion_ia = obtener_evaluacion_ia_guardada(id_propuesta, conn, autogenerar=False)
     except Exception:
         pass
 
@@ -1381,15 +1365,18 @@ def crear_propuesta(
                 )
 
         # 3. Equipo Investigador
-        for miembro in equipo_resuelto:
-            cur.execute(
+        if equipo_resuelto:
+            cur.executemany(
                 """
                 INSERT INTO research_team (id_propuesta, id_usuario, id_tipo_hora, horas_asignadas)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (id_propuesta, id_usuario, id_tipo_hora)
                 DO UPDATE SET horas_asignadas = EXCLUDED.horas_asignadas;
                 """,
-                (id_propuesta, miembro.id_usuario, miembro.id_tipo_hora, miembro.horas_asignadas),
+                [
+                    (id_propuesta, miembro.id_usuario, miembro.id_tipo_hora, miembro.horas_asignadas)
+                    for miembro in equipo_resuelto
+                ],
             )
 
         # 4. Objetivos
@@ -1426,6 +1413,25 @@ def crear_propuesta(
                     False,
                 ),
             )
+
+        # Precarga los responsables por correo en una sola consulta para evitar un viaje por actividad/riesgo.
+        correos_responsables = {
+            (correo or "").strip().lower()
+            for correo in [
+                *[plan.correo_responsable for plan in payload.plan_accion],
+                *[riesgo.correo_responsable for riesgo in payload.riesgos],
+            ]
+            if correo and correo.strip()
+        }
+        if correos_responsables:
+            cur.execute(
+                f"SELECT id_usuario, lower(trim(correo)) AS correo FROM usuarios WHERE lower(trim(correo)) = ANY(%s){active_filter};",
+                (list(correos_responsables),),
+            )
+            for fila in cur.fetchall():
+                usuarios_por_correo[fila["correo"]] = fila["id_usuario"]
+            for correo in correos_responsables:
+                usuarios_por_correo.setdefault(correo, None)
 
         # 6. Plan de Acción
         plan_ids: list[int] = []
@@ -1481,103 +1487,136 @@ def crear_propuesta(
             )
 
         # 8. Presupuesto Anualizado
-        for b in payload.presupuesto:
-            if b.monto <= 0:
-                continue
+        rubros_validos = [b for b in payload.presupuesto if b.monto > 0]
+        if rubros_validos:
             if has_anio_col and has_budget_just:
-                cur.execute(
+                cur.executemany(
                     """
                     INSERT INTO proposal_budget (id_propuesta, id_rubro, monto, anio, justificacion)
                     VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (id_propuesta, id_rubro, anio)
                     DO UPDATE SET monto = EXCLUDED.monto, justificacion = EXCLUDED.justificacion;
                     """,
-                    (id_propuesta, b.id_rubro, b.monto, b.anio, b.justificacion),
+                    [(id_propuesta, b.id_rubro, b.monto, b.anio, b.justificacion) for b in rubros_validos],
                 )
             elif has_anio_col:
-                cur.execute(
+                cur.executemany(
                     """
                     INSERT INTO proposal_budget (id_propuesta, id_rubro, monto, anio)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (id_propuesta, id_rubro, anio)
                     DO UPDATE SET monto = EXCLUDED.monto;
                     """,
-                    (id_propuesta, b.id_rubro, b.monto, b.anio),
+                    [(id_propuesta, b.id_rubro, b.monto, b.anio) for b in rubros_validos],
                 )
             else:
-                cur.execute(
+                cur.executemany(
                     """
                     INSERT INTO proposal_budget (id_propuesta, id_rubro, monto)
                     VALUES (%s, %s, %s)
                     ON CONFLICT (id_propuesta, id_rubro)
                     DO UPDATE SET monto = EXCLUDED.monto;
                     """,
-                    (id_propuesta, b.id_rubro, b.monto),
+                    [(id_propuesta, b.id_rubro, b.monto) for b in rubros_validos],
                 )
 
         # 9. Declaraciones Éticas
-        for etica in payload.declaraciones_eticas:
-            cur.execute(
+        if payload.declaraciones_eticas:
+            cur.executemany(
                 """
                 INSERT INTO proposal_ethics_declarations (
                     id_propuesta, tipo_aspecto, aplica, justificacion_exencion,
                     ente_regulatorio, numero_permiso, estado_tramite
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s);
                 """,
-                (
-                    id_propuesta,
-                    etica.tipo_aspecto,
-                    etica.aplica,
-                    etica.justificacion_exencion or "",
-                    etica.ente_regulatorio,
-                    etica.numero_permiso,
-                    etica.estado_tramite,
-                ),
+                [
+                    (
+                        id_propuesta,
+                        etica.tipo_aspecto,
+                        etica.aplica,
+                        etica.justificacion_exencion or "",
+                        etica.ente_regulatorio,
+                        etica.numero_permiso,
+                        etica.estado_tramite,
+                    )
+                    for etica in payload.declaraciones_eticas
+                ],
             )
 
         # 10. Secciones narrativas extensas
-        if _get_table_columns(cur, "proposal_sections"):
-            for orden, seccion in enumerate(payload.secciones, start=1):
-                cur.execute(
-                    """
-                    INSERT INTO proposal_sections (id_propuesta, codigo_seccion, contenido)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (id_propuesta, codigo_seccion)
-                    DO UPDATE SET contenido = EXCLUDED.contenido;
-                    """,
-                    (id_propuesta, seccion.codigo_seccion, seccion.contenido),
-                )
+        if payload.secciones and _get_table_columns(cur, "proposal_sections"):
+            cur.executemany(
+                """
+                INSERT INTO proposal_sections (id_propuesta, codigo_seccion, contenido)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (id_propuesta, codigo_seccion)
+                DO UPDATE SET contenido = EXCLUDED.contenido;
+                """,
+                [(id_propuesta, seccion.codigo_seccion, seccion.contenido) for seccion in payload.secciones],
+            )
 
         # 11. Colaboradores externos
         collab_cols = _get_table_columns(cur, "external_collaborators")
-        if collab_cols:
-            for colaborador in payload.colaboradores_externos:
-                columnas = {
-                    "id_propuesta": id_propuesta,
-                    "nombre_completo": colaborador.nombre_completo,
-                    "identificacion_orcid": colaborador.orcid,
-                    "institucion_empresa": colaborador.institucion,
-                    "rol_desempenado": colaborador.rol,
-                    "carta_compromiso_adjunta": False,
-                    "horas_semana": colaborador.horas_asignadas,
-                    "responsabilidad": colaborador.responsabilidad,
-                }
-                columnas = {k: v for k, v in columnas.items() if k in collab_cols}
-                cur.execute(
-                    f"INSERT INTO external_collaborators ({', '.join(columnas)}) VALUES ({', '.join(['%s'] * len(columnas))});",
-                    tuple(columnas.values()),
-                )
+        if collab_cols and payload.colaboradores_externos:
+            ejemplo = {
+                "id_propuesta": id_propuesta,
+                "nombre_completo": None,
+                "identificacion_orcid": None,
+                "institucion_empresa": None,
+                "rol_desempenado": None,
+                "carta_compromiso_adjunta": False,
+                "horas_semana": None,
+                "responsabilidad": None,
+            }
+            columnas = [k for k in ejemplo if k in collab_cols]
+            cur.executemany(
+                f"INSERT INTO external_collaborators ({', '.join(columnas)}) VALUES ({', '.join(['%s'] * len(columnas))});",
+                [
+                    tuple(
+                        {
+                            "id_propuesta": id_propuesta,
+                            "nombre_completo": colaborador.nombre_completo,
+                            "identificacion_orcid": colaborador.orcid,
+                            "institucion_empresa": colaborador.institucion,
+                            "rol_desempenado": colaborador.rol,
+                            "carta_compromiso_adjunta": False,
+                            "horas_semana": colaborador.horas_asignadas,
+                            "responsabilidad": colaborador.responsabilidad,
+                        }[columna]
+                        for columna in columnas
+                    )
+                    for colaborador in payload.colaboradores_externos
+                ],
+            )
 
         # 12. Documentos reales: la creación no registra metadatos sin archivo.
         # Los archivos se suben después con POST /propuestas/{id}/documentos.
         doc_cols = _get_table_columns(cur, "proposal_documents")
-        if doc_cols:
-            for documento in payload.documentos:
-                if not documento.file_path or (documento.tamano_bytes or 0) <= 0:
-                    continue
+        documentos_validos = [
+            documento
+            for documento in payload.documentos
+            if documento.file_path and (documento.tamano_bytes or 0) > 0
+        ]
+        if doc_cols and documentos_validos:
+            columnas = [
+                columna
+                for columna in (
+                    "id_propuesta",
+                    "nombre_archivo",
+                    "tipo_documento",
+                    "extension",
+                    "file_path",
+                    "tamano_bytes",
+                    "version",
+                    "id_usuario_subio",
+                )
+                if columna in doc_cols
+            ]
+            filas = []
+            for documento in documentos_validos:
                 nombre = documento.nombre_archivo
                 extension = documento.extension or (nombre.rsplit(".", 1)[-1].lower() if "." in nombre else "pdf")
-                columnas = {
+                fila = {
                     "id_propuesta": id_propuesta,
                     "nombre_archivo": nombre,
                     "tipo_documento": documento.tipo_documento,
@@ -1587,11 +1626,11 @@ def crear_propuesta(
                     "version": "1.0",
                     "id_usuario_subio": payload.id_usuario_lider,
                 }
-                columnas = {k: v for k, v in columnas.items() if k in doc_cols}
-                cur.execute(
-                    f"INSERT INTO proposal_documents ({', '.join(columnas)}) VALUES ({', '.join(['%s'] * len(columnas))});",
-                    tuple(columnas.values()),
-                )
+                filas.append(tuple(fila[columna] for columna in columnas))
+            cur.executemany(
+                f"INSERT INTO proposal_documents ({', '.join(columnas)}) VALUES ({', '.join(['%s'] * len(columnas))});",
+                filas,
+            )
 
         # 13. Registrar en historial de estados
         cur.execute(
@@ -1622,10 +1661,11 @@ def crear_propuesta(
         )
         propuesta_creada = cur.fetchone()
 
-    # La evaluación preliminar es complementaria: un fallo de IA no revierte el registro.
+    # La evaluación preliminar es complementaria: se calcula con el motor normativo local para no
+    # bloquear la creación esperando a Gemini. La re-evaluación online queda como acción explícita.
     evaluacion_preliminar_ia = None
     try:
-        evaluacion_preliminar_ia = generar_y_guardar_evaluacion_ia(id_propuesta, conn)
+        evaluacion_preliminar_ia = generar_y_guardar_evaluacion_ia(id_propuesta, conn, usar_gemini=False)
     except Exception as exc:
         logger.warning("No se pudo generar la evaluación preliminar IA para la propuesta %s: %s", id_propuesta, exc)
 
@@ -1698,14 +1738,15 @@ def actualizar_estado_propuesta(
 
     nombre_estado_str = estado_nombre["nombre_estado"] if estado_nombre else "Desconocido"
 
-    # [Línea clave]: Cuando la propuesta es enviada a revisión o evaluación, dispara la evaluación preliminar de Gemini IA.
+    # [Línea clave]: Al cambiar de estado solo se refresca la auditoría normativa local; Gemini se reserva
+    # para la re-evaluación explícita del evaluador.
     evaluacion_preliminar_ia = None
     if any(
         palabra in nombre_estado_str.lower()
         for palabra in ("revisión", "revision", "evaluación", "evaluacion", "sometida", "vinculación", "comité")
     ):
         try:
-            evaluacion_preliminar_ia = generar_y_guardar_evaluacion_ia(id_propuesta, conn)
+            evaluacion_preliminar_ia = generar_y_guardar_evaluacion_ia(id_propuesta, conn, usar_gemini=False)
         except Exception:
             pass
 

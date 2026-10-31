@@ -32,6 +32,7 @@ from contextlib import asynccontextmanager
 import psycopg
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 # [Línea clave]: Importa el pool de conexiones centralizado para controlar su ciclo de vida al arrancar/apagar el servidor.
@@ -79,6 +80,8 @@ app = FastAPI(title="SGPI API", version="1.0.0", lifespan=lifespan)
 
 # [Línea clave]: Habilita CORS permisivo para que el frontend servido en Nginx (puerto 8080) consuma la API (puerto 3001).
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# [Línea clave]: Comprime respuestas JSON mayores a 500 bytes para reducir el tiempo de descarga del expediente y catálogos.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # [Línea clave]: Monta el router de autenticación para login de usuarios institucionales.
 app.include_router(auth.router)

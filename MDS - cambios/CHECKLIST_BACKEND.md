@@ -23,7 +23,7 @@
 - [x] Consulta de expediente completo.
 - [x] Cambio genérico de estado con historial y notificación.
 - [x] Registro genérico de evaluaciones para Comité Técnico y CIE.
-- [x] Evaluación preliminar con Gemini o motor normativo de respaldo.
+- [x] Evaluación preliminar: auditoría normativa local al crear/cambiar estado y Gemini solo en re-evaluación manual.
 - [ ] Autorización real por rol en el backend.
 - [ ] Flujos específicos de Vinculación, Comité, Consejo, Dirección y CIE.
 - [ ] Administración de convocatorias, catálogos y rúbricas.
@@ -136,7 +136,7 @@
 | OK | POST | `/propuestas/{id_propuesta}/evaluaciones` | Evaluación genérica |
 | OK | GET | `/ia/estado` | Estado del servicio IA |
 | OK | GET | `/ia/criterios` | Criterios normativos |
-| OK | GET | `/ia/evaluacion-preliminar/{id_propuesta}` | Evaluación IA guardada/generada |
+| OK | GET | `/ia/evaluacion-preliminar/{id_propuesta}` | Evaluación IA guardada (null si no existe; no genera) |
 | OK | POST | `/ia/evaluar-propuesta/{id_propuesta}` | Regenerar evaluación IA |
 | OK | POST | `/ia/evaluar-borrador` | Evaluar borrador en vivo |
 

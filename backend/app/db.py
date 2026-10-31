@@ -53,12 +53,13 @@ def configure_conn(conn):
     conn.prepare_threshold = None
 
 
-# [Línea clave]: Instancia el pool de conexiones compartidas entre 1 y 10 conexiones simultáneas con formato dict_row y prepare_threshold=None.
+# [Línea clave]: Instancia el pool de conexiones compartidas entre 2 y 10 conexiones simultáneas con formato dict_row y prepare_threshold=None.
+# min_size=2 mantiene una conexión extra ya abierta para que dos peticiones concurrentes no paguen el handshake TLS con Supabase.
 # check_connection valida cada conexión antes de entregarla: Supabase cierra sesiones ociosas y, sin esta
 # verificación, el pool puede servir una conexión muerta y la primera consulta falla con "SSL error: unexpected eof".
 pool = ConnectionPool(
     DATABASE_URL,
-    min_size=1,
+    min_size=2,
     max_size=10,
     max_idle=180,
     max_lifetime=1800,

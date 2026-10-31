@@ -1,0 +1,1 @@
+1. En vinculacion, cuando se devuelve una propuesta, esta pasa directamente a la etapa "ejecucion"
