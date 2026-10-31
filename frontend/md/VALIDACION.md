@@ -1,12 +1,12 @@
 # Validación del Sistema SGPI · Convocatoria Fondos VIE 2027
 
-Este documento resume las pruebas de validación funcional, interfaz de usuario, endpoints de la API REST y el motor de **Google Gemini IA (Plan Gratuito)** ejecutadas y comprobadas con éxito.
+Este documento resume las pruebas de validación funcional, interfaz de usuario, endpoints de la API REST y el motor de **Google Gemini IA (Plan Gratuito: `gemini-3.5-flash` con fallback a `gemini-3.5-flash-lite` y `gemini-3.1-flash-lite`)** ejecutadas y comprobadas con éxito.
 
 ---
 
 ## 1. Validación Automatizada de Endpoints (Backend API, Supabase & Gemini IA)
 
-Se ejecutó la suite de verificación automatizada [`test_endpoints.ps1`](../../test_endpoints.ps1), comprobando **15 casos de uso de extremo a extremo** contra la base de datos PostgreSQL en Supabase y el servicio de IA:
+Se ejecutó la suite de verificación automatizada [`test_endpoints.ps1`](../../test_endpoints.ps1), comprobando **20 casos de uso de extremo a extremo en 5 fases** contra la base de datos PostgreSQL en Supabase y el servicio de IA (`gemini-3.5-flash`):
 
 | N° | Endpoint Probado | Método | Resultado | Verificación Normativa / Técnica |
 | :---: | :--- | :---: | :---: | :--- |
@@ -14,17 +14,22 @@ Se ejecutó la suite de verificación automatizada [`test_endpoints.ps1`](../../
 | **2** | `/catalogos` | `GET` | `[OK 200]` | Retorno unificado de escuelas, 3 modalidades oficiales, 6 tipos de hora, rubros y estados. |
 | **3** | `/tipos_hora/totalTiposHora` | `GET` | `[OK 200]` | Retorno de tipos oficiales: `VIE`, `VIE-Centros`, `CONS`, `REC`, `DOC`, `VIESA`. |
 | **4** | `/escuelas/totalescuelas` | `GET` | `[OK 200]` | Catálogo abierto de escuelas del TEC sin obligatoriedad de usuario asignado. |
-| **5** | `/convocatorias/documentos_convocatoria?id_convocatoria=1` | `GET` | `[OK 200]` | Carga de los 9 instrumentos oficiales descargables de Fondos VIE 2027. |
-| **6** | `/propuestas/dashboardpropuestas?id_usuario=1` | `GET` | `[OK 200]` | Contadores dinámicos para los estados (`formulacion`, `ejecucion`, `cerradas`). |
-| **7** | `/propuestas/top3PropuestaMasReciente?id_usuario=1` | `GET` | `[OK 200]` | Obtención de códigos institucionales `SI-YYYY-NNN` y período calculado `2027–2028`. |
-| **8** | `/propuestas` (Listado general) | `GET` | `[OK 200]` | Filtros combinados por escuela, modalidad, línea de investigación y estado. |
-| **9** | `/propuestas` (Creación atómica) | `POST` | `[OK 201]` | Inserción multitabla en `propuestas`, `team`, `objetivos`, `productos`, `plan`, `riesgos`, `presupuesto` y `ética`. |
-| **10**| `/propuestas/{id_propuesta}` | `GET` | `[OK 200]` | Generación del dossier completo, incluyendo la clave `"evaluacion_ia"`. |
-| **11**| `/propuestas/{id_propuesta}/estado` | `PATCH` | `[OK 200]` | Transición de estado con inserción automática en `proposal_state_history`. |
-| **12**| `/notificaciones/leer-todas?id_usuario=1` | `PATCH` | `[OK 200]` | Actualización masiva de lectura de notificaciones en Supabase. |
-| **13**| `/ia/estado` | `GET` | `[OK 200]` | Verificación de `GEMINI_API_KEY`, cuotas del Plan Gratuito y modelo activo (`gemini-2.5-flash`). |
-| **14**| `/ia/criterios` | `GET` | `[OK 200]` | Retorno de los 19 criterios oficiales de la Rúbrica VIE 2027 y reglas de los 5 niveles. |
-| **15**| `/ia/evaluacion-preliminar/{id}` | `GET` | `[OK 200]` | Consulta y generación en Supabase de la evaluación preliminar estructurada en 5 niveles. |
+| **5** | `/modalidades/totalmodalidades` | `GET` | `[OK 200]` | Catálogo de las 3 modalidades oficiales de Fondos VIE 2027. |
+| **6** | `/lineas_de_investigacion/totalLineas` | `GET` | `[OK 200]` | Catálogo de líneas de investigación institucionales del TEC. |
+| **7** | `/auth/login` | `POST` | `[OK 200]` | Autenticación institucional (`laura.mendez@example.com` / `demostracion`) con verificación HMAC-SHA256. |
+| **8** | `/convocatorias/totalConvocatorias` | `GET` | `[OK 200]` | Consulta de convocatorias institucionales vigentes. |
+| **9** | `/convocatorias/etapas_convocatorias?id_convocatoria=1` | `GET` | `[OK 200]` | Carga de las 11 etapas cronológicas oficiales de Fondos VIE 2027. |
+| **10**| `/convocatorias/documentos_convocatoria?id_convocatoria=1` | `GET` | `[OK 200]` | Carga de los 9 instrumentos oficiales descargables de Fondos VIE 2027. |
+| **11**| `/propuestas/dashboardpropuestas?id_usuario=1` | `GET` | `[OK 200]` | Contadores dinámicos para los estados (`formulacion`, `ejecucion`, `cerradas`). |
+| **12**| `/propuestas/top3PropuestaMasReciente?id_usuario=1` | `GET` | `[OK 200]` | Obtención de códigos institucionales `SI-YYYY-NNN` y período calculado `2027–2028`. |
+| **13**| `/propuestas` (Listado general) | `GET` | `[OK 200]` | Filtros combinados por escuela, modalidad, línea de investigación y estado. |
+| **14**| `/propuestas` (Creación atómica) | `POST` | `[OK 201]` | Inserción multitabla en `propuestas`, `team`, `objetivos`, `productos`, `plan`, `riesgos`, `presupuesto` y `ética`. |
+| **15**| `/propuestas/{id_propuesta}` | `GET` | `[OK 200]` | Generación del dossier completo, incluyendo la clave `"evaluacion_ia"`. |
+| **16**| `/propuestas/{id_propuesta}/estado` | `PATCH` | `[OK 200]` | Transición de estado con inserción automática en `proposal_state_history`. |
+| **17**| `/notificaciones/leer-todas?id_usuario=1` | `PATCH` | `[OK 200]` | Actualización masiva de lectura de notificaciones en Supabase. |
+| **18**| `/ia/estado` | `GET` | `[OK 200]` | Verificación de `GEMINI_API_KEY`, cuotas del Plan Gratuito y modelo activo (`gemini-3.5-flash`). |
+| **19**| `/ia/criterios` | `GET` | `[OK 200]` | Retorno de los 19 criterios oficiales de la Rúbrica VIE 2027 y reglas de los 5 niveles. |
+| **20**| `/ia/evaluar-borrador`, `/ia/evaluacion-preliminar/{id}` y `/ia/evaluar-propuesta/{id}` | `POST`/`GET` | `[OK 200]` | Evaluación preliminar en vivo con `gemini-3.5-flash` (`gemini_online`) y persistencia en Supabase para los 5 niveles. |
 
 ---
 
@@ -34,7 +39,7 @@ Se ejecutó la suite de verificación automatizada [`test_endpoints.ps1`](../../
 2. **Validación de Formularios de Formulación:** Los campos obligatorios vacíos bloquean el avance; la dedicación horaria exige $\ge 4\text{ h/semana}$ por investigador.
 3. **Control Presupuestario en Tiempo Real:** Recalcula dinámicamente y bloquea el avance al superar el tope anual de la modalidad; valida estrictamente que partidas de equipo e instrumentación científica se presupuesten solo en el Año 1 (Sección 2.3.9).
 4. **Repositorio de Instrumentos VIE 2027:** La tarjeta de instrumentos en Pantalla 05 carga los 9 documentos oficiales dinámicamente desde el Backend.
-5. **Generación Asíncrona de Evaluación IA:** Al confirmar el envío de la propuesta (Pantalla 18 $\rightarrow$ 19), el frontend dispara la evaluación preliminar con Gemini Online y muestra el puntaje sugerido en la pantalla de éxito.
+5. **Generación Asíncrona de Evaluación IA:** Al confirmar el envío de la propuesta (Pantalla 18 $\rightarrow$ 19), el frontend dispara la evaluación preliminar con Gemini Online (`gemini-3.5-flash`) y muestra el puntaje sugerido en la pantalla de éxito.
 6. **Paneles de Referencia IA Adaptados por Nivel:**
    - **Vinculación (Pantalla 23):** Diagnóstico preliminar de activos de propiedad intelectual y madurez tecnológica (TRL).
    - **Comité Técnico (Pantalla 24):** Desglose de los 19 criterios en escala `0/6/8/10`, advertencia de bloqueo si un obligatorio tiene $< 8$, y botón interactivo **«Aplicar puntajes IA como base»**.

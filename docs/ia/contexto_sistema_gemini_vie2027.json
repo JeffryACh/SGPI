@@ -32,31 +32,40 @@
   },
   "modelos_gemini_free_tier": [
     {
-      "id": "gemini-2.5-flash",
+      "id": "gemini-3.5-flash",
       "prioridad": 1,
-      "rpm": 10,
-      "rpd": 250,
-      "tpm": 250000,
-      "costo_usd": 0.0,
-      "uso": "Modelo primario para evaluación preliminar estructurada en JSON"
-    },
-    {
-      "id": "gemini-2.5-flash-lite",
-      "prioridad": 2,
       "rpm": 15,
       "rpd": 1000,
-      "tpm": 250000,
+      "tpm": 1000000,
       "costo_usd": 0.0,
-      "uso": "Primer respaldo automático ante cuota o latencia en el modelo primario"
+      "uso": "Modelo primario activo (Plan Gratuito) para evaluación preliminar estructurada en JSON"
     },
     {
-      "id": "gemini-2.0-flash",
+      "id": "gemini-3.5-flash-lite",
+      "prioridad": 2,
+      "rpm": 15,
+      "rpd": 1500,
+      "tpm": 1000000,
+      "costo_usd": 0.0,
+      "uso": "Primer respaldo automático de baja latencia ante cuota o saturación del modelo primario"
+    },
+    {
+      "id": "gemini-3.1-flash-lite",
       "prioridad": 3,
       "rpm": 15,
       "rpd": 1500,
       "tpm": 1000000,
       "costo_usd": 0.0,
       "uso": "Segundo respaldo automático dentro del plan gratuito de Google AI Studio"
+    },
+    {
+      "id": "gemini-flash-lite-latest",
+      "prioridad": 4,
+      "rpm": 15,
+      "rpd": 1500,
+      "tpm": 1000000,
+      "costo_usd": 0.0,
+      "uso": "Alias dinámico que apunta automáticamente a la versión lite gratuita más reciente"
     }
   ],
   "reglas_globales_convocatoria_vie_2027": {

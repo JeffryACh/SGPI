@@ -9,12 +9,13 @@
 
 - **Endpoint Oficial REST (Google AI Studio Free Tier):**
   ```text
-  POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}
+  POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}
   ```
 - **Modelos Gratuitos Soportados en Orden de Prioridad:**
-  1. `gemini-2.5-flash` *(Modelo primario recomendado: equilibra razonamiento normativo profundo y baja latencia)*.
-  2. `gemini-2.5-flash-lite` *(Primer fallback gratuito de alta cuota: hasta 1.000 peticiones diarias gratis)*.
-  3. `gemini-2.0-flash` *(Segundo fallback gratuito)*.
+  1. `gemini-3.5-flash` *(Modelo primario activo recomendado: equilibra razonamiento normativo profundo, 15 RPM y hasta 1.000 RPD gratis)*.
+  2. `gemini-3.5-flash-lite` *(Primer fallback gratuito de baja latencia: hasta 1.500 peticiones diarias gratis)*.
+  3. `gemini-3.1-flash-lite` *(Segundo fallback gratuito)*.
+  4. `gemini-flash-lite-latest` *(Alias dinámico hacia la versión lite gratuita vigente)*.
 - **Parámetros de Generación (`generationConfig`):**
   ```json
   {
@@ -68,7 +69,7 @@ Responde ÚNICAMENTE con un objeto JSON válido que contenga exactamente las sig
   "id_propuesta": 1,
   "codigo": "SI-2027-014",
   "titulo": "Agua Inteligente: monitoreo de cuencas",
-  "modelo_ia": "gemini-2.5-flash",
+  "modelo_ia": "gemini-3.5-flash",
   "modo_generacion": "gemini_online",
   "es_plan_gratuito": true,
   "caracter": "Referencia preliminar no vinculante para apoyo de instancias evaluadoras",

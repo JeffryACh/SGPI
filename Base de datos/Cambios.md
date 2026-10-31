@@ -87,11 +87,11 @@ Este documento registra la evolución del modelo de base de datos relacional par
 
 ### Script: `Base de datos/Scripts/V6__evaluacion_preliminar_ia.sql`
 - **Tabla:** `public.ai_preliminary_evaluations`
-- **Propósito:** Almacenar de forma persistente la evaluación preliminar no vinculante generada por **Google Gemini IA (Plan Gratuito: `gemini-2.5-flash`)** cuando una persona investigadora o grupo somete su propuesta a revisión.
+- **Propósito:** Almacenar de forma persistente la evaluación preliminar no vinculante generada por **Google Gemini IA (Plan Gratuito: `gemini-3.5-flash`)** cuando una persona investigadora o grupo somete su propuesta a revisión.
 - **Estructura y Campos:**
   - `id_evaluacion_ia`: Llave primaria autoincremental (`BIGINT GENERATED ALWAYS AS IDENTITY`).
   - `id_propuesta`: Llave foránea hacia `propuestas(id_propuesta)` con restricción `UNIQUE` y borrado en cascada (`ON DELETE CASCADE`), garantizando una única evaluación activa por propuesta.
-  - `modelo_ia`: Identificador del modelo Gemini utilizado (`gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash`).
+  - `modelo_ia`: Identificador del modelo Gemini utilizado (`gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-flash-lite-latest`).
   - `modo_generacion`: Trazabilidad del origen (`gemini_online` o `motor_normativo_respaldo`).
   - `puntaje_preliminar`: Calificación cuantitativa $0\text{–}100$ derivada de la rúbrica oficial.
   - `recomendacion_global`: Estado preliminar (*Recomendada*, *No Recomendada*, *Requiere ajustes*).

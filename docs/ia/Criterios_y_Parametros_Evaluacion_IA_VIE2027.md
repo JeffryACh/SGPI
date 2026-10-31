@@ -9,7 +9,7 @@
 
 ## 🎯 1. Objetivo de la Evaluación Preliminar con IA
 
-Cuando un investigador o grupo de investigadores envía una propuesta a revisión, el motor de **Google Gemini (`gemini-2.5-flash` — Plan Gratuito)** evalúa de forma transversal todos los componentes del expediente y genera un **Dictamen Preliminar Estructurado en 5 Niveles**.
+Cuando un investigador o grupo de investigadores envía una propuesta a revisión, el motor de **Google Gemini (`gemini-3.5-flash` — Plan Gratuito)** evalúa de forma transversal todos los componentes del expediente y genera un **Dictamen Preliminar Estructurado en 5 Niveles**.
 
 > [!IMPORTANT]
 > **Carácter Referencial No Vinculante:** La evaluación generada por Gemini no sustituye el criterio académico ni emite acuerdos oficiales por sí sola; su propósito es ofrecer a los evaluadores de cada instancia una **línea base objetiva, pre-verificada contra las reglas numéricas de la VIE**, que agiliza la revisión y previene omisiones normativas.

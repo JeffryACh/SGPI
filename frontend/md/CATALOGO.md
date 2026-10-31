@@ -46,6 +46,6 @@ Este catálogo define las **33 pantallas base** del prototipo interactivo del SG
 
 ## Resumen de Interacciones Clave con la IA de Google Gemini
 
-1. **Pre-evaluación al enviar propuesta (18 $\rightarrow$ 19):** Al pulsar *«Confirmar y enviar propuesta»*, el sistema invoca de forma asíncrona la API de Gemini (Plan Gratuito: `gemini-2.5-flash`), calcula el puntaje ponderado preliminar y persiste el dictamen en Supabase.
+1. **Pre-evaluación al enviar propuesta (18 $\rightarrow$ 19):** Al pulsar *«Confirmar y enviar propuesta»*, el sistema invoca de forma asíncrona la API de Gemini (Plan Gratuito: `gemini-3.5-flash` con fallback a `gemini-3.5-flash-lite` y `gemini-3.1-flash-lite`), calcula el puntaje ponderado preliminar y persiste el dictamen en Supabase.
 2. **Asistencia interactiva en el Comité Técnico (24):** El evaluador puede consultar la justificación sugerida para cada uno de los 19 criterios y hacer clic en **«Aplicar puntajes IA como base»** para pre-poblar los selectores sin necesidad de transcripción manual.
 3. **Checklist automatizado para la VIE (26):** Pre-audita de forma determinista la ausencia de compras de equipo en Año 2 (Sección 2.3.9), la cuota de productos académicos (Sección 2.4.1) y la inclusión de becas para asistentes.

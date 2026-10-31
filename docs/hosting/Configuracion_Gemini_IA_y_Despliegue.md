@@ -20,7 +20,7 @@ sequenceDiagram
     actor INV as 👩‍🔬 Investigador(a)
     participant VER as 🌐 Frontend (Vercel)\nSGPI.html + app.js
     participant REN as ⚡ Backend (Render)\nFastAPI (propuestas.py + ia.py)
-    participant GEM as 🧠 Google Gemini API\n(Plan Gratuito: gemini-2.5-flash)
+    participant GEM as 🧠 Google Gemini API\n(Plan Gratuito: gemini-3.5-flash)
     participant SUP as 🗄️ Supabase Cloud\nPostgreSQL (ai_preliminary_evaluations)
     actor EVAL as ⚖️ Evaluadores (5 Niveles)\nPantallas 22 a 27
 
@@ -46,8 +46,8 @@ Para garantizar **costo \$0 absoluto y sin requerir tarjeta de crédito**, la in
 | Parámetro del Plan Gratuito | Configuración Aplicada en SGPI | Beneficio en el Proyecto |
 | :--- | :--- | :--- |
 | **Plataforma de API Key** | [Google AI Studio](https://aistudio.google.com/apikey) (`Plan Free of Charge`) | No exige tarjeta bancaria ni cuenta de facturación de Google Cloud. |
-| **Modelo Principal** | `gemini-2.5-flash` | Modelo multimodal y de razonamiento rápido incluido en la capa gratuita (10–15 RPM, 250.000 TPM, hasta 500 RPD gratis). |
-| **Cadena de Respaldo Gratuita** | `gemini-2.5-flash-lite` $\rightarrow$ `gemini-2.0-flash` | Si en algún minuto se alcanza el límite por minuto de `gemini-2.5-flash`, `backend/app/routers/ia.py` conmuta automáticamente al siguiente modelo gratuito. |
+| **Modelo Principal** | `gemini-3.5-flash` | Modelo multimodal y de razonamiento rápido vigente en la capa gratuita (15 RPM, 1.000.000 TPM, hasta 1.000 RPD gratis). |
+| **Cadena de Respaldo Gratuita** | `gemini-3.5-flash-lite` $\rightarrow$ `gemini-3.1-flash-lite` $\rightarrow$ `gemini-flash-lite-latest` | Si en algún minuto se alcanza el límite por minuto de `gemini-3.5-flash`, `backend/app/routers/ia.py` conmuta automáticamente al siguiente modelo gratuito activo. |
 | **Caché Persistente en Supabase** | Tabla `public.ai_preliminary_evaluations` | La IA se invoca **una sola vez** cuando la propuesta se envía a revisión. Cuando los 5 evaluadores abren sus pantallas, leen el JSON guardado en Supabase sin gastar peticiones adicionales. |
 | **Motor Normativo de Respaldo** | Función `_auditar_reglas_v2027()` en `ia.py` | Si aún no se ha colocado la `GEMINI_API_KEY` o no hay internet, el sistema genera de forma determinista la evaluación preliminar completa para que la demostración académica nunca falle. |
 
@@ -73,7 +73,7 @@ Se prepararon y actualizaron los siguientes archivos en el repositorio del proye
 | [`render.yaml`](file:///C:/Proyecto-Diseño/SGPI/render.yaml) | Blueprint declarativo para desplegar el Backend en **Render** (región `oregon` junto a Supabase, plan `free`, healthcheck `/health` y variables `DATABASE_URL`, `GEMINI_API_KEY`, `GEMINI_MODEL`). |
 | [`vercel.json`](file:///C:/Proyecto-Diseño/SGPI/vercel.json) | Configuración declarativa para desplegar el Frontend en **Vercel**, mapeando `/`, `/html/*`, `/css/*`, `/js/*` y `/assets/*`. |
 | [`frontend/js/app.js`](file:///C:/Proyecto-Diseño/SGPI/frontend/js/app.js) | Conmutación automática de `API_URL` (entre `localhost:3001` y Render), disparo de la evaluación IA al enviar propuesta a revisión (`send-confirm`), y renderizado del **Panel de Evaluación Preliminar IA** en las pantallas `22`, `23`, `24`, `25`, `26` y `27`, incluyendo el botón **«Aplicar puntajes IA como base»** en la rúbrica del Comité Técnico. |
-| [`.env.example`](file:///C:/Proyecto-Diseño/SGPI/.env.example) y [`docker-compose.yml`](file:///C:/Proyecto-Diseño/SGPI/docker-compose.yml) | Variables `GEMINI_API_KEY` y `GEMINI_MODEL=gemini-2.5-flash` incorporadas para ejecución local y en la nube. |
+| [`.env.example`](file:///C:/Proyecto-Diseño/SGPI/.env.example) y [`docker-compose.yml`](file:///C:/Proyecto-Diseño/SGPI/docker-compose.yml) | Variables `GEMINI_API_KEY` y `GEMINI_MODEL=gemini-3.5-flash` incorporadas para ejecución local y en la nube. |
 
 ---
 
@@ -102,7 +102,7 @@ Se prepararon y actualizaron los siguientes archivos en el repositorio del proye
 4. En la sección **Environment Variables** de Render, agrega estas 3 variables:
    - `DATABASE_URL` = `postgresql://postgres.pxlrplbyggoywqbcgjdu:Password,SGPI-012345.@aws-0-us-west-2.pooler.supabase.com:6543/postgres`
    - `GEMINI_API_KEY` = `AIzaSy...` *(tu clave gratuita de Google AI Studio)*
-   - `GEMINI_MODEL` = `gemini-2.5-flash`
+   - `GEMINI_MODEL` = `gemini-3.5-flash`
 5. Haz clic en **"Create Web Service"**. Al terminar el build tendrás tu URL pública (por ejemplo, `https://sgpi-backend-api.onrender.com`).
 6. Verifica en tu navegador:
    - `https://sgpi-backend-api.onrender.com/health` $\rightarrow$ `{"status": "ok"}`
@@ -120,7 +120,7 @@ Se prepararon y actualizaron los siguientes archivos en el repositorio del proye
 
 | Método y Ruta | Cuándo se usa | Qué retorna |
 | :--- | :--- | :--- |
-| `GET /ia/estado` | Diagnóstico de configuración en Render o Docker local. | Estado de `GEMINI_API_KEY`, modelo gratuito activo (`gemini-2.5-flash`) y lista de los 5 niveles cubiertos. |
+| `GET /ia/estado` | Diagnóstico de configuración en Render o Docker local. | Estado de `GEMINI_API_KEY`, modelo gratuito activo (`gemini-3.5-flash`) y lista de los 5 niveles cubiertos. |
 | `GET /ia/criterios` | Consulta de parámetros normativos. | El catálogo completo de criterios, pesos y reglas de bloqueo de Fondos VIE 2027. |
 | `GET /ia/evaluacion-preliminar/{id_propuesta}` | Cuando un evaluador abre el Expediente (Pantalla 22) o su pantalla de revisión (Pantallas 23 a 27). | El dictamen preliminar almacenado en Supabase (si no existe aún, lo genera automáticamente). |
 | `POST /ia/evaluar-propuesta/{id_propuesta}` | Automáticamente al cambiar estado a revisión o cuando un evaluador pulsa *«Actualizar IA»*. | Fuerza una nueva evaluación de la propuesta en Supabase con Gemini y actualiza `ai_preliminary_evaluations`. |

@@ -9,7 +9,7 @@
 ![Vercel](https://img.shields.io/badge/Frontend-Vercel_SPA-000000?style=for-the-badge&logo=vercel&logoColor=white)
 ![Google Gemini](https://img.shields.io/badge/Google_Gemini-Free_Tier_AI-4285F4?style=for-the-badge&logo=googlegemini&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker_Compose-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-![Estado](https://img.shields.io/badge/Flujo-Full--Stack_Verificado_(15_Tests_OK)-28a745?style=for-the-badge)
+![Estado](https://img.shields.io/badge/Flujo-Full--Stack_Verificado_(20_Tests_OK)-28a745?style=for-the-badge)
 
 </div>
 
@@ -34,7 +34,7 @@ El proyecto transforma un proceso tradicionalmente fragmentado en múltiples doc
 | **Etapa 1**<br>*Arquitectura de Información* | Análisis profundo de *Disposiciones Fondos VIE 2027*, perfiles (*user personas*), *user journeys* y mapa del sitio. | Reglas de negocio, matriz de roles y trazabilidad en [`frontend/md/REQUISITOS_Y_TRAZABILIDAD.md`](./frontend/md/REQUISITOS_Y_TRAZABILIDAD.md). | ✅ Completado |
 | **Etapa 2**<br>*Diseño de Interfaz (UI/UX)* | Wireframes, guía de estilos institucional (`#002855`, `#EF3340`, `#FFFFFF`) y prototipo navegable de 33 pantallas. | Prototipo interactivo en [`frontend/html/SGPI.html`](./frontend/html/SGPI.html), catálogo en [`frontend/md/CATALOGO.md`](./frontend/md/CATALOGO.md) y plugin [`figma-import/`](./figma-import/). | ✅ Completado |
 | **Etapa 3**<br>*Base de Datos y Arquitectura* | Modelo Entidad-Relación normalizado (37 tablas), diccionario de datos y persistencia en la nube. | Scripts DDL y semillas en [`Base de datos/Scripts/`](./Base%20de%20datos/Scripts/), diccionario en [`Base de datos/Markdowns/diseño.md`](./Base%20de%20datos/Markdowns/diseño.md) y bitácora en [`Base de datos/Cambios.md`](./Base%20de%20datos/Cambios.md). | ✅ Completado |
-| **Etapa 4**<br>*Prototipo Funcional Full-Stack + IA* | Integración Frontend (Vercel) + Backend REST (Render) + PostgreSQL (Supabase Cloud) + Evaluación Preliminar IA (Gemini Free Tier). | Despliegue en [`render.yaml`](./render.yaml), [`vercel.json`](./vercel.json), 10 routers en [`backend/app/routers/`](./backend/app/routers/) y suite de 15 pruebas pasando en [`test_endpoints.ps1`](./test_endpoints.ps1). | ✅ Completado |
+| **Etapa 4**<br>*Prototipo Funcional Full-Stack + IA* | Integración Frontend (Vercel) + Backend REST (Render) + PostgreSQL (Supabase Cloud) + Evaluación Preliminar IA (Gemini Free Tier). | Despliegue en [`render.yaml`](./render.yaml), [`vercel.json`](./vercel.json), 10 routers en [`backend/app/routers/`](./backend/app/routers/) y suite de 20 pruebas pasando en [`test_endpoints.ps1`](./test_endpoints.ps1). | ✅ Completado |
 
 ---
 
@@ -101,7 +101,7 @@ sequenceDiagram
     INV->>FE: 1. Confirma envío de propuesta (Pantalla 18 -> 19)
     FE->>BE: 2. POST /propuestas o POST /ia/evaluar-borrador
     BE->>DB: 3. Inserta expediente y ejecuta pre-auditoría matemática VIE 2027
-    BE->>GEM: 4. POST gemini-2.5-flash (responseMimeType: "application/json")
+    BE->>GEM: 4. POST gemini-3.5-flash (responseMimeType: "application/json")
     GEM-->>BE: 5. Retorna dictamen estructurado en 5 niveles y 19 criterios
     BE->>DB: 6. UPSERT en public.ai_preliminary_evaluations
     BE-->>FE: 7. Retorna código SI-YYYY-NNN y puntaje preliminar IA
@@ -113,7 +113,7 @@ sequenceDiagram
 
 ### Características del Motor de IA:
 - **Costo \$0 y Sin Tarjeta Bancaria:** Opera sobre **Google AI Studio (`generativelanguage.googleapis.com`)**.
-- **Modelos Gratuitos con Fallback Automático:** Prioridad `gemini-2.5-flash` $\rightarrow$ `gemini-2.5-flash-lite` $\rightarrow$ `gemini-2.0-flash`.
+- **Modelos Gratuitos con Fallback Automático:** Prioridad `gemini-3.5-flash` $\rightarrow$ `gemini-3.5-flash-lite` $\rightarrow$ `gemini-3.1-flash-lite` $\rightarrow$ `gemini-flash-lite-latest`.
 - **Motor Normativo Determinista de Respaldo:** Si la API Key no está configurada o no hay red, la función `_auditar_reglas_v2027()` en `backend/app/routers/ia.py` evalúa de forma determinista la propuesta para garantizar que las pruebas nunca fallen.
 - **Rúbrica de 19 Criterios (Escala 0/6/8/10):** Aplica la regla bloqueante institucional: si un criterio obligatorio obtiene $< 8$ (`0` o `6`), la propuesta queda marcada como *No Recomendada*.
 - **Pre-Auditoría de Reglas Críticas:** Verifica la **Sección 2.3.9** (Equipo dura solo en Año 1), la **Sección 2.4.1** (cuota de productos académicos) y los topes presupuestarios de la modalidad.
@@ -133,7 +133,7 @@ SGPI/
 ├── docker-compose.yml                  # Orquestador local: FastAPI (backend) + Nginx (frontend)
 ├── render.yaml                         # Blueprint de infraestructura en la nube para Render (Docker Web Service)
 ├── vercel.json                         # Configuración declarativa de rutas estáticas y headers para Vercel
-├── test_endpoints.ps1                  # Suite automatizada de pruebas HTTP (15 endpoints probados)
+├── test_endpoints.ps1                  # Suite automatizada de pruebas HTTP (20 endpoints probados)
 ├── README.md                           # Documentación principal, arquitectura y guía de inicio rápido
 ├── .env.example                        # Plantilla de variables de entorno (Supabase, Gemini API, Render)
 │
@@ -240,7 +240,7 @@ SGPI/
 
 ## 🧪 Verificación Automatizada (`test_endpoints.ps1`)
 
-El proyecto incluye un script en PowerShell que comprueba **15 endpoints de extremo a extremo** contra el backend y la base de datos en Supabase:
+El proyecto incluye un script en PowerShell que comprueba **20 endpoints de extremo a extremo** contra el backend, la IA de Google Gemini (`gemini-3.5-flash`), la base de datos en Supabase y el servidor de Frontend:
 
 ```powershell
 # Ejecución local o contra el backend desplegado
@@ -248,8 +248,8 @@ El proyecto incluye un script en PowerShell que comprueba **15 endpoints de extr
 ```
 
 ### Resultados de la Suite:
-- **15 / 15 pruebas pasando exitosamente (`[OK 200]` / `[OK 201]`).**
-- Valida salud de base de datos, catálogos, convocatorias, inserción atómica con código `SI-YYYY-NNN`, transición con auditoría, notificaciones y los endpoints de **Google Gemini IA (`/ia/estado`, `/ia/criterios`, `/ia/evaluacion-preliminar/1`)**.
+- **20 / 20 pruebas pasando exitosamente (`[OK 200]` / `[OK 201]`).**
+- Valida salud de base de datos, autenticación institucional (`POST /auth/login`), catálogos, convocatorias, inserción atómica con código `SI-YYYY-NNN`, transición con auditoría, registro de calificaciones, notificaciones, disponibilidad del Frontend SPA y los 5 endpoints de **Google Gemini IA (`/ia/estado`, `/ia/criterios`, `/ia/evaluacion-preliminar/1`, `/ia/evaluar-borrador`, `/ia/evaluar-propuesta/{id}`)**.
 
 ---
 
@@ -263,7 +263,7 @@ El proyecto está diseñado y configurado para desplegarse de manera desacoplada
    - 37 tablas relacionales con scripts Flyway en [`Base de datos/Scripts/`](./Base%20de%20datos/Scripts/).
 2. **Backend API (Render Web Service):**
    - Configurado en [`render.yaml`](./render.yaml).
-   - Variables requeridas: `DATABASE_URL`, `GEMINI_API_KEY`, `GEMINI_MODEL=gemini-2.5-flash`.
+   - Variables requeridas: `DATABASE_URL`, `GEMINI_API_KEY`, `GEMINI_MODEL=gemini-3.5-flash`.
    - Healthcheck en `/health`.
 3. **Frontend SPA (Vercel):**
    - Configurado en [`vercel.json`](./vercel.json).
