@@ -253,7 +253,130 @@ if ($regenEval) {
 }
 
 # -------------------------------------------------------------
-# FASE 5: DISPONIBILIDAD DEL SERVIDOR FRONTEND (SPA)
+# FASE 5: COMITÉ TÉCNICO (RÚBRICA PONDERADA Y DICTAMEN - V12)
+# -------------------------------------------------------------
+
+# C1. Rúbrica oficial cargada en PostgreSQL (8 secciones / 23 criterios / 100 puntos)
+$rubricaComite = Test-Endpoint -Name "Rúbrica del Comité Técnico (V12)" -Endpoint "/propuestas/comite/rubrica"
+$criteriosComite = @()
+if ($rubricaComite) {
+    foreach ($seccion in $rubricaComite.secciones) {
+        foreach ($criterio in $seccion.criterios) {
+            $criteriosComite += @{
+                id_criterio_rubrica = $criterio.id_criterio_rubrica
+                puntaje = 10
+            }
+        }
+    }
+    Write-Host "  -> Secciones: $($rubricaComite.secciones.Count) | Criterios: $($rubricaComite.total_criterios) | Peso total: $($rubricaComite.total_peso)" -ForegroundColor Gray
+} else {
+    Write-Host "  [AVISO] Aplica la migración V12 en el SQL Editor de Supabase antes de probar el Comité Técnico." -ForegroundColor Yellow
+}
+
+# C2. Autenticación del usuario con rol Comité Técnico
+$loginComite = Test-Endpoint -Name "Login del Comité Técnico" -Method "POST" -Endpoint "/auth/login" -Body @{
+    correo = "gabriel.sanchez@example.com"
+    password = "demostracion"
+}
+$idUsuarioComite = if ($loginComite) { $loginComite.id_usuario } else { 5 }
+if ($loginComite) {
+    Write-Host "  -> Usuario: $($loginComite.nombre) | ID: $idUsuarioComite | Roles: $($loginComite.roles -join ', ')" -ForegroundColor Gray
+}
+
+# C3. Bandeja del Comité Técnico (200 con Gabriel, 403 con un investigador)
+$bandejaComite = Test-Endpoint -Name "Bandeja del Comité Técnico" -Endpoint "/propuestas/comite/bandeja?rol=Comit%C3%A9%20T%C3%A9cnico&id_usuario=$idUsuarioComite"
+if ($bandejaComite) {
+    Write-Host "  -> Expedientes en la bandeja: $($bandejaComite.Count)" -ForegroundColor Gray
+}
+$bandejaProhibida = Test-Endpoint -Name "Bandeja del Comité con rol Investigador (403 esperado)" -Endpoint "/propuestas/comite/bandeja?rol=Comit%C3%A9%20T%C3%A9cnico&id_usuario=1"
+if ($bandejaProhibida) {
+    Write-Host "  [AVISO] El backend permitió la bandeja a un usuario sin rol Comité Técnico." -ForegroundColor Yellow
+} else {
+    Write-Host "  -> Rechazo correcto: el usuario 1 no tiene rol Comité Técnico." -ForegroundColor Gray
+}
+
+# C4. Propuesta de prueba creada directamente en estado 3 (En evaluación del Comité Técnico)
+$propuestaComite = $nuevaPropuesta.Clone()
+$propuestaComite.titulo = "Test Comité Técnico - Rúbrica ponderada $marcaHora"
+$propuestaComite.estado_inicial = 3
+$creacionComite = Test-Endpoint -Name "Creación de propuesta para el Comité Técnico" -Method "POST" -Endpoint "/propuestas" -Body $propuestaComite
+$idPropuestaComite = if ($creacionComite -and $creacionComite.propuesta) { $creacionComite.propuesta.id_propuesta } else { $null }
+if ($idPropuestaComite) {
+    Write-Host "  -> Propuesta en evaluación del Comité: ID $idPropuestaComite" -ForegroundColor Cyan
+
+    # C5. Expediente de evaluación del Comité (aún sin dictamen)
+    $detalleComite = Test-Endpoint -Name "Expediente sin dictamen del Comité" -Endpoint "/propuestas/comite/$idPropuestaComite?id_usuario=$idUsuarioComite"
+
+    # C6. Caso negativo: obligatorio en 6 con decisión favorable (409 esperado, sin cambios en BD)
+    $criteriosBloqueo = @()
+    $marcado = $false
+    if ($rubricaComite) {
+        foreach ($seccion in $rubricaComite.secciones) {
+            foreach ($criterio in $seccion.criterios) {
+                $nivel = 10
+                if (-not $marcado -and $criterio.es_obligatorio) {
+                    $nivel = 6
+                    $marcado = $true
+                }
+                $criteriosBloqueo += @{
+                    id_criterio_rubrica = $criterio.id_criterio_rubrica
+                    puntaje = $nivel
+                }
+            }
+        }
+    }
+    $bodyBloqueo = @{
+        id_usuario_eval = $idUsuarioComite
+        puntajes = $criteriosBloqueo
+        justificacion = "Prueba negativa: criterio obligatorio con nivel insuficiente."
+        observaciones = ""
+        produccion_conforme = $true
+        decision = "favorable"
+    }
+    $resBloqueo = Test-Endpoint -Name "Bloqueo por obligatorio insuficiente (409 esperado)" -Method "POST" -Endpoint "/propuestas/comite/$idPropuestaComite" -Body $bodyBloqueo
+    if ($resBloqueo) {
+        Write-Host "  [AVISO] El backend permitió recomendar con un obligatorio en 6." -ForegroundColor Yellow
+    } else {
+        Write-Host "  -> Rechazo correcto: la recomendación exige obligatorios en 8 o 10." -ForegroundColor Gray
+    }
+
+    # C7. Dictamen favorable con todos los criterios en 10 (100/100 -> estado 4)
+    $bodyFavorable = @{
+        id_usuario_eval = $idUsuarioComite
+        puntajes = $criteriosComite
+        justificacion = "La propuesta acredita todos los criterios obligatorios de la rúbrica oficial."
+        observaciones = "Evaluación técnica de prueba registrada por el script."
+        produccion_conforme = $true
+        decision = "favorable"
+    }
+    $resComite = Test-Endpoint -Name "Dictamen favorable del Comité Técnico" -Method "POST" -Endpoint "/propuestas/comite/$idPropuestaComite" -Body $bodyFavorable
+    if ($resComite) {
+        Write-Host "  -> Puntaje: $($resComite.puntaje)/100 | Estado: $($resComite.nombre_estado) ($($resComite.estado_actual))" -ForegroundColor Cyan
+    }
+
+    # C8. Relectura del expediente con los puntajes persistidos por criterio
+    $detalleComite = Test-Endpoint -Name "Dictamen del Comité persistido" -Endpoint "/propuestas/comite/$idPropuestaComite?id_usuario=$idUsuarioComite"
+    if ($detalleComite -and $detalleComite.evaluacion) {
+        Write-Host "  -> Evaluación: $($detalleComite.evaluacion.id_evaluacion) | Puntajes: $($detalleComite.puntajes.Count) | Total: $($detalleComite.puntaje_total)" -ForegroundColor Gray
+    }
+
+    # C9. Segunda evaluación sobre la misma propuesta (409 esperado)
+    $resDuplicado = Test-Endpoint -Name "Dictamen duplicado (409 esperado)" -Method "POST" -Endpoint "/propuestas/comite/$idPropuestaComite" -Body $bodyFavorable
+    if ($resDuplicado) {
+        Write-Host "  [AVISO] El backend permitió dos dictámenes del Comité sobre la misma propuesta." -ForegroundColor Yellow
+    } else {
+        Write-Host "  -> Rechazo correcto: ya existe un dictamen del Comité para esta propuesta." -ForegroundColor Gray
+    }
+
+    # C10. El expediente general refleja los puntajes del Comité
+    $dossierComite = Test-Endpoint -Name "Expediente con puntajes del Comité" -Endpoint "/propuestas/$idPropuestaComite"
+    if ($dossierComite) {
+        Write-Host "  -> Criterios en el expediente: $($dossierComite.comite_evaluacion.Count) | Estado: $($dossierComite.nombre_estado)" -ForegroundColor Gray
+    }
+}
+
+# -------------------------------------------------------------
+# FASE 6: DISPONIBILIDAD DEL SERVIDOR FRONTEND (SPA)
 # -------------------------------------------------------------
 
 # 20. Servidor Frontend Nginx / HTML

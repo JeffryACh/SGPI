@@ -23,9 +23,10 @@
 - [x] Consulta de expediente completo.
 - [x] Cambio genérico de estado con historial y notificación.
 - [x] Registro genérico de evaluaciones para Comité Técnico y CIE.
+- [x] Flujo específico del Comité Técnico: bandeja, rúbrica ponderada y dictamen con transición de estado.
 - [x] Evaluación preliminar: auditoría normativa local al crear/cambiar estado y Gemini solo en re-evaluación manual.
 - [ ] Autorización real por rol en el backend.
-- [ ] Flujos específicos de Vinculación, Comité, Consejo, Dirección y CIE.
+- [ ] **Parcial:** flujos específicos de Vinculación y Comité implementados; faltan Consejo, Dirección y CIE.
 - [ ] Administración de convocatorias, catálogos y rúbricas.
 - [ ] Guardado de borrador en servidor.
 - [x] Carga real de documentos de propuesta.
@@ -102,6 +103,7 @@
 - [ ] Pruebas de expediente y documentos.
 - [ ] Pruebas de cada transición de estado.
 - [ ] Pruebas de cada dictamen por rol.
+- [x] Pruebas manuales del Comité Técnico en `test_endpoints.ps1` (FASE 5): rúbrica, bandeja, 403 sin rol, bloqueo por obligatorio, dictamen favorable, duplicado y expediente.
 - [ ] Pruebas de notificaciones y lectura.
 - [ ] Pruebas de autorización: un rol no puede ejecutar acciones de otro.
 - [ ] Pruebas de idempotencia y concurrencia.
@@ -134,6 +136,10 @@
 | OK | POST | `/propuestas` | Creación atómica |
 | OK | PATCH | `/propuestas/{id_propuesta}/estado` | Cambio genérico de estado |
 | OK | POST | `/propuestas/{id_propuesta}/evaluaciones` | Evaluación genérica |
+| OK | GET | `/propuestas/comite/bandeja` | Bandeja filtrada del Comité Técnico |
+| OK | GET | `/propuestas/comite/rubrica` | Rúbrica oficial ponderada (V12) |
+| OK | GET | `/propuestas/comite/{id_propuesta}` | Dictamen y puntajes por criterio |
+| OK | POST | `/propuestas/comite/{id_propuesta}` | Registrar dictamen y transición de estado |
 | OK | GET | `/ia/estado` | Estado del servicio IA |
 | OK | GET | `/ia/criterios` | Criterios normativos |
 | OK | GET | `/ia/evaluacion-preliminar/{id_propuesta}` | Evaluación IA guardada (null si no existe; no genera) |
@@ -204,21 +210,23 @@ Pantallas principales: `21`, `22`, `23`, `28`, `29`, `30`.
 
 Pantallas principales: `21`, `22`, `24`, `28`.
 
-- [ ] **21 · Bandeja:** filtrar propuestas en evaluación del Comité.
+- [x] **21 · Bandeja:** filtrar propuestas en evaluación del Comité (`GET /propuestas/comite/bandeja`).
 - [ ] **21 · Bandeja:** asignación explícita de evaluadores.
-- [ ] **22 · Expediente:** cargar dossier real.
-- [ ] **24 · Evaluación:** endpoint para consultar rúbrica por modalidad.
-- [ ] **24 · Evaluación:** endpoint para guardar puntaje por criterio en `technical_committee_scores`.
-- [ ] **24 · Evaluación:** guardar puntaje total en `technical_committee_evaluations`.
-- [ ] **24 · Evaluación:** guardar observaciones en `evaluations`.
-- [ ] **24 · Evaluación:** calcular suma ponderada en servidor.
-- [ ] **24 · Evaluación:** validar umbral de 70 y criterios obligatorios en servidor.
-- [ ] **24 · Evaluación:** validar productos académicos comprometidos.
-- [ ] **24 · Evaluación:** registrar evaluación individual por evaluador.
-- [ ] **24 · Evaluación:** consolidar resultado del comité cuando corresponda.
-- [ ] **24 · Evaluación:** transición controlada de estado `3` a `4` o `10`.
-- [ ] **24 · Evaluación:** adjuntar acta/informe del Comité.
-- [ ] **28 · Historial:** mostrar puntajes, criterios y observaciones.
+- [x] **22 · Expediente:** cargar dossier real.
+- [x] **24 · Evaluación:** endpoint para consultar la rúbrica oficial (`GET /propuestas/comite/rubrica`).
+- [ ] **Parcial:** la rúbrica aún no está versionada ni filtrada por modalidad; V12 siembra la de Desarrollo tecnológico.
+- [x] **24 · Evaluación:** endpoint para guardar puntaje por criterio en `technical_committee_scores`.
+- [x] **24 · Evaluación:** guardar puntaje total en `technical_committee_evaluations`.
+- [x] **24 · Evaluación:** guardar observaciones en `evaluations`.
+- [x] **24 · Evaluación:** calcular suma ponderada en servidor.
+- [x] **24 · Evaluación:** validar umbral de 70 y criterios obligatorios en servidor.
+- [x] **24 · Evaluación:** validar productos académicos comprometidos (`produccion_conforme` obligatorio para recomendar).
+- [ ] **Parcial:** se consolidó un único dictamen por propuesta; falta soportar evaluación individual por evaluador y su consolidación.
+- [x] **24 · Evaluación:** consolidar resultado del comité (409 si ya existe dictamen).
+- [x] **24 · Evaluación:** transición controlada de estado `3` a `4`, `9` o `10`.
+- [x] **24 · Evaluación:** asociar acta/informe del Comité mediante `id_documento` validado contra el expediente.
+- [x] **24 · Evaluación:** notificar al Consejo de Escuela cuando el dictamen es favorable.
+- [x] **28 · Historial:** mostrar puntajes, criterios y observaciones.
 
 ### 4.4 Consejo de Escuela
 
@@ -301,13 +309,13 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 | `convocatorias` | Lectura | CRUD administrativo |
 | `convocatoria_etapas` | Lectura | CRUD administrativo |
 | `convocatoria_documentos` | Lectura y subida | Edición, reemplazo, borrado |
-| `vinculacion_evaluations` | Sin uso | Endpoint/persistencia de pantalla 23 |
+| `vinculacion_evaluations` | Uso completo | Mantener al versionar el dictamen |
 | `council_endorsements` | Sin uso | Endpoint/persistencia de pantalla 25 |
-| `rubric_sections` | Sin uso | Endpoint de rúbrica |
-| `rubric_criteria` | Sin uso | Endpoint de criterios |
-| `technical_committee_scores` | Sin uso | Puntaje por criterio del Comité |
+| `rubric_sections` | Lectura | CRUD y versionado de la rúbrica |
+| `rubric_criteria` | Lectura | CRUD y versionado de criterios y pesos |
+| `technical_committee_scores` | Uso completo | Mantener la integridad al versionar rúbricas |
 | `vie_dictamen_verifications` | Sin uso | Verificación de criterios de Dirección |
-| `technical_committee_evaluations` | Uso parcial | Solo puntaje total desde endpoint genérico |
+| `technical_committee_evaluations` | Uso completo | `decision`, `justificacion`, `tiene_bloqueo_obligatorio` y `puntaje numeric(5,1)` (V12) |
 | `cie_resolution_evaluations` | Uso parcial | Solo `id_resolucion`; faltan datos del acuerdo |
 | `ai_preliminary_evaluations` | Uso completo | Mantener y versionar si cambia el modelo |
 | `proposal_documents` | Uso completo | Archivo real en Storage + metadatos; sin filas falsas de borrador |
@@ -349,8 +357,10 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 
 - [x] `POST /propuestas/{id}/vinculacion`.
 - [x] `GET /propuestas/{id}/vinculacion`.
-- [ ] `POST /propuestas/{id}/comite`.
-- [ ] `GET /propuestas/{id}/comite`.
+- [x] `GET /propuestas/comite/bandeja`.
+- [x] `GET /propuestas/comite/rubrica`.
+- [x] `GET /propuestas/comite/{id_propuesta}`.
+- [x] `POST /propuestas/comite/{id_propuesta}`.
 - [ ] `POST /propuestas/{id}/consejo`.
 - [ ] `GET /propuestas/{id}/consejo`.
 - [ ] `POST /propuestas/{id}/direccion`.

@@ -234,13 +234,26 @@ const SCREEN_LOADERS = {
     ]),
   "06": () => cargarMisPropuestas(),
   "20": () => cargarDossier(),
-  "21": () => cargarBandejaVinculacion(),
+  "21": () =>
+    state.role === "comite" ? cargarBandejaComite() : cargarBandejaVinculacion(),
   "22": () => cargarDossier(),
   "23": async () => {
     await cargarDossier();
     await cargarVinculacion();
   },
-  "24": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
+  "24": async () => {
+    // [Línea clave]: El Comité Técnico abre su expediente con la rúbrica oficial y el
+    // dictamen ya registrado; la evaluación preliminar de IA se conserva como referencia.
+    if (state.role === "comite") {
+      if (!bandejaComite?.length) await cargarBandejaComite();
+      await Promise.all([
+        cargarDossier(),
+        cargarRubricaComite(),
+        cargarEvaluacionComite(),
+      ]);
+    }
+    await obtenerEvaluacionPreliminarIA(propuestaActivaId());
+  },
   "25": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
   "26": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
   "27": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
@@ -784,6 +797,10 @@ let documentosVinculacion = [];
 let historialPropuestas = null;
 let vinculacionCargadaId = null;
 let archivosBorrador = [];
+let bandejaComite = null;
+let evaluacionComite = null;
+let rubricaComite = null;
+let comiteCargadoId = null;
 
 /**
  * Resolver el identificador de la propuesta que se está consultando en este momento.
@@ -1072,6 +1089,216 @@ async function subirDocumentoPropuesta(idPropuesta, archivo, tipoDocumento = "Di
   });
   if (!res.ok) throw new Error(await errorDesdeRespuesta(res));
   return res.json();
+}
+
+/**
+ * Determinar si una propuesta de la bandeja del Comité Técnico ya fue dictaminada.
+ * Tolera acentos y mayúsculas en el nombre del estado devuelto por el backend.
+ * parametros:
+ *     - Object : p Propuesta normalizada con la propiedad 'status'.
+ * return:
+ *     + boolean : pendiente Verdadero si espera el dictamen del Comité Técnico.
+ */
+const esPendienteComite = (p) => /evaluaci[oó]n del comit[eé]/i.test((p && p.status) || "");
+
+/**
+ * Descargar la bandeja del Comité Técnico desde PostgreSQL y conservar la propuesta activa.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>|null> : bandejaComite Propuestas asignadas al Comité Técnico.
+ */
+async function cargarBandejaComite() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) return null;
+  try {
+    const res = await fetch(
+      `${API_URL}/propuestas/comite/bandeja?rol=${encodeURIComponent("Comité Técnico")}&id_usuario=${idUsuario}`,
+    );
+    if (res.ok) {
+      bandejaComite = (await res.json()).map(mapearPropuestaBackend);
+      if (!state.viewProposalId && bandejaComite.length) {
+        // [Línea clave]: Prioriza la propuesta pendiente del dictamen; si no hay, usa la primera de la bandeja.
+        const objetivo = bandejaComite.find(esPendienteComite) || bandejaComite[0];
+        state.viewProposalId = objetivo.id;
+        state.viewProposal = objetivo.code;
+      }
+    } else {
+      console.warn("cargarBandejaComite:", await errorDesdeRespuesta(res));
+      bandejaComite = [];
+    }
+  } catch (err) {
+    console.warn("cargarBandejaComite error:", err);
+    bandejaComite = [];
+  }
+  return bandejaComite;
+}
+
+/**
+ * Descargar la rúbrica oficial del Comité Técnico cargada en PostgreSQL.
+ * Si la migración V12 no está aplicada, retorna null y la vista usa la rúbrica local de respaldo.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Object|null> : rubricaComite Secciones, criterios y reglas de recomendación.
+ */
+async function cargarRubricaComite() {
+  if (rubricaComite?.secciones?.length) return rubricaComite;
+  try {
+    const res = await fetch(`${API_URL}/propuestas/comite/rubrica`);
+    rubricaComite = res.ok ? await res.json() : null;
+  } catch (err) {
+    console.warn("cargarRubricaComite error:", err);
+    rubricaComite = null;
+  }
+  return rubricaComite;
+}
+
+/**
+ * Obtener la rúbrica activa en formato de grupos [sección, [[criterio, peso, obligatorio]]].
+ * Usa la rúbrica de PostgreSQL y cae a la matriz local si aún no está disponible.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Array : grupos Secciones ponderadas listas para renderizar y calcular.
+ */
+function gruposRubrica() {
+  const secciones = rubricaComite?.secciones || [];
+  if (!secciones.length) return criterionGroups;
+  return secciones.map((s) => [
+    s.nombre_seccion,
+    (s.criterios || []).map((c) => [
+      c.nombre_criterio,
+      Number(c.peso_relativo),
+      !!c.es_obligatorio,
+    ]),
+  ]);
+}
+
+/**
+ * Indexar los criterios de la rúbrica de PostgreSQL por nombre para construir el payload.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Map<string, Object> : mapa Criterio con id_criterio_rubrica, peso y obligatoriedad.
+ */
+function mapaCriteriosComite() {
+  const mapa = new Map();
+  (rubricaComite?.secciones || []).forEach((seccion) =>
+    (seccion.criterios || []).forEach((criterio) => mapa.set(criterio.nombre_criterio, criterio)),
+  );
+  return mapa;
+}
+
+/**
+ * Descargar el dictamen del Comité Técnico, sus puntajes por criterio y los documentos.
+ * parametros:
+ *     - number : idPropuesta Identificador del expediente; por defecto usa la propuesta activa.
+ * return:
+ *     + Promise<Object|null> : evaluacionComite Expediente de evaluación del Comité.
+ */
+async function cargarEvaluacionComite(idPropuesta = propuestaActivaId()) {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idPropuesta || !idUsuario) return null;
+  if (comiteCargadoId !== Number(idPropuesta)) {
+    Object.keys(state.saved)
+      .filter((clave) => clave.startsWith("comite:"))
+      .forEach((clave) => delete state.saved[clave]);
+    // [Línea clave]: Al cambiar de expediente se descartan los niveles del anterior para no
+    // mezclar rúbricas entre propuestas distintas.
+    state.scores = {};
+    state.notRecommended = false;
+    comiteCargadoId = Number(idPropuesta);
+  }
+  try {
+    const res = await fetch(
+      `${API_URL}/propuestas/comite/${idPropuesta}?id_usuario=${idUsuario}`,
+    );
+    if (res.ok) {
+      evaluacionComite = await res.json();
+      // [Línea clave]: Refleja en la rúbrica los niveles ya dictaminados para que la
+      // pantalla 24 se abra en modo consulta con los valores persistidos.
+      (evaluacionComite.puntajes || []).forEach((p) => {
+        state.scores[p.nombre_criterio] = Number(p.puntaje);
+      });
+      if (evaluacionComite.evaluacion?.justificacion) {
+        state.saved["comite:justificacion"] = evaluacionComite.evaluacion.justificacion;
+      }
+      if (evaluacionComite.evaluacion?.observaciones) {
+        state.saved["comite:observaciones"] = evaluacionComite.evaluacion.observaciones;
+      }
+      if (evaluacionComite.evaluacion?.decision) {
+        // [Línea clave]: Un dictamen de observaciones o rechazo mantiene la propuesta
+        // como no recomendada al reabrir el expediente en modo consulta.
+        state.notRecommended = evaluacionComite.evaluacion.decision !== "favorable";
+      }
+    } else {
+      console.warn("cargarEvaluacionComite:", await errorDesdeRespuesta(res));
+      evaluacionComite = null;
+    }
+  } catch (err) {
+    console.warn("cargarEvaluacionComite error:", err);
+    evaluacionComite = null;
+  }
+  save();
+  return evaluacionComite;
+}
+
+/**
+ * Registrar el dictamen del Comité Técnico y devolver el nuevo estado de la propuesta.
+ * parametros:
+ *     - number : idPropuesta Identificador de la propuesta.
+ *     - Object : payload Puntajes por criterio, justificación, decisión y documento.
+ * return:
+ *     + Promise<Object> : resultado Respuesta del backend con estado, puntaje y bloqueo.
+ */
+async function guardarEvaluacionComite(idPropuesta, payload) {
+  const res = await fetch(`${API_URL}/propuestas/comite/${idPropuesta}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await errorDesdeRespuesta(res));
+  return res.json();
+}
+
+/**
+ * Construir el payload del dictamen del Comité Técnico desde la rúbrica de la pantalla 24.
+ * parametros:
+ *     - string : decision Resultado favorable, observaciones o rechazo.
+ *     - string : observaciones Detalle de la devolución o rechazo.
+ *     - number|null : idDocumento Documento del acta ya registrado en el expediente.
+ * return:
+ *     + Object : payload Cuerpo JSON esperado por POST /propuestas/comite/{id}.
+ */
+function payloadEvaluacionComite(decision = "favorable", observaciones = "", idDocumento = null) {
+  const mapa = mapaCriteriosComite();
+  const puntajes = [];
+  for (const [, criterios] of gruposRubrica())
+    for (const [nombre] of criterios) {
+      const criterio = mapa.get(nombre);
+      if (!criterio)
+        throw new Error(
+          `La rúbrica del servidor no coincide con el criterio «${nombre}». Recarga la pantalla e intenta de nuevo.`,
+        );
+      puntajes.push({
+        id_criterio_rubrica: criterio.id_criterio_rubrica,
+        puntaje: Number(scoreValue(nombre)),
+      });
+    }
+  const produccion = document.getElementById("products-ok");
+  return {
+    id_usuario_eval: session?.user?.id_usuario,
+    puntajes,
+    justificacion:
+      state.saved["comite:justificacion"] ||
+      "La propuesta acredita los criterios obligatorios de la rúbrica oficial.",
+    observaciones:
+      observaciones || "Evaluación técnica registrada por el Comité Técnico.",
+    produccion_conforme: produccion ? produccion.checked : !state.notRecommended,
+    decision,
+    id_documento: idDocumento,
+  };
 }
 
 /**
@@ -1429,7 +1656,10 @@ const homeFor = () => (state.role === "investigador" ? "02" : "21");
 function applyRole(key) {
   const rolAnterior = state.role;
   state.role = key;
-  if (key === "vinculacion" && rolAnterior !== "vinculacion") state.viewProposalId = null;
+  // [Línea clave]: Las bandejas institucionales no deben reutilizar el expediente seleccionado
+  // por otro rol; se limpia el puntero al cambiar a Vinculación o Comité.
+  if (["vinculacion", "comite"].includes(key) && rolAnterior !== key)
+    state.viewProposalId = null;
   state.viewProposal = state.created?.code || "SI-2027-014";
   state.stage = {
     investigador: state.stage,
@@ -3196,23 +3426,41 @@ function tracking() {
  *     + string : inboxHtml Marcado HTML de la bandeja de trabajo.
  */
 function inbox() {
-  const list = state.role === "vinculacion" ? bandejaPropuestas || [] : top3propuestasmasrecientes || [];
+  // [Línea clave]: Cada instancia colegiada consume su propia bandeja real de PostgreSQL.
+  // El Comité Técnico usa bandejaComite; Vinculación mantiene bandejaPropuestas.
+  const list =
+    state.role === "vinculacion"
+      ? bandejaPropuestas || []
+      : state.role === "comite"
+        ? bandejaComite || []
+        : top3propuestasmasrecientes || [];
   const closedStatuses =
     state.role === "vinculacion"
       ? ["En evaluación del Comité Técnico", "Con observaciones", "Rechazada", "Aprobada por CIE", "Cerrada", "Resuelta"]
-      : ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"];
+      : state.role === "comite"
+        ? ["Pendiente de aval del Consejo", "Avalada", "Sometida ante VIE", "Dictaminada por Dirección", "Con observaciones", "Rechazada", "Aprobada por CIE", "En ejecución", "Cerrada"]
+        : ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"];
   const pending = list.filter((p) => !closedStatuses.includes(p.status));
   const closed = list.filter((p) => closedStatuses.includes(p.status));
 
   let filtered = activeFilter === "Finalizadas" ? closed : pending;
   if (activeFilter === "En revisión") filtered = pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación"));
 
-  const rows = filtered.map((p) => [
-    `<span class="project-code">${esc(p.code)}</span><strong>${esc(p.title)}</strong><br><span class="micro muted">${esc(p.leader || "Investigador")} · ${esc(p.school || "TEC")}</span>`,
-    esc(p.type),
-    badge(p.status),
-    btn("Abrir expediente", "22", "secondary compact", "arrow", `data-proposal="${p.code}" data-proposal-id="${p.id || ""}"`),
-  ]);
+  const rows = filtered.map((p) => {
+    const puedeEvaluar = state.role === "comite" && !closedStatuses.includes(p.status);
+    return [
+      `<span class="project-code">${esc(p.code)}</span><strong>${esc(p.title)}</strong><br><span class="micro muted">${esc(p.leader || "Investigador")} · ${esc(p.school || "TEC")}</span>`,
+      esc(p.type),
+      badge(p.status),
+      btn(
+        puedeEvaluar ? "Evaluar propuesta" : "Abrir expediente",
+        puedeEvaluar ? "24" : "22",
+        "secondary compact",
+        "arrow",
+        `data-proposal="${p.code}" data-proposal-id="${p.id || ""}"`,
+      ),
+    ];
+  });
 
   return shell(
     `<div class="grid three mb">${[
@@ -3310,7 +3558,30 @@ function dossier() {
     } else {
       filas.push(["Vinculación", "Sin dictamen registrado", act("Ver dictamen", "preview", "text")]);
     }
-    filas.push(["Comité Técnico", "Recomendada", act("Ver rúbrica", "rubric-summary", "text")]);
+    // [Línea clave]: El resultado del Comité Técnico se lee del expediente real (evaluations +
+    // technical_committee_evaluations) y solo cae al texto demostrativo si no hay dictamen.
+    const comite = (d?.evaluaciones || []).find((e) => e.rol_evaluador === "Comité Técnico");
+    if (comite) {
+      const decision =
+        {
+          favorable: "Recomendada",
+          observaciones: "Devuelta con observaciones",
+          rechazo: "No recomendada",
+        }[comite.decision] || "Registrada";
+      filas.push([
+        "Comité Técnico",
+        esc(
+          `${decision} · ${Number(comite.puntaje_comite || 0).toFixed(1)}/100 · ${comite.evaluador_nombre || "Comité Técnico"}${comite.tiene_bloqueo_obligatorio ? " · Bloqueo obligatorio" : ""}`,
+        ),
+        act("Ver rúbrica", "rubric-summary", "text"),
+      ]);
+    } else {
+      filas.push([
+        "Comité Técnico",
+        "Sin dictamen registrado",
+        act("Ver rúbrica oficial", "rubric-summary", "text"),
+      ]);
+    }
     filas.push(["Consejo de Escuela", "Aval otorgado", act("Ver acuerdo", "preview", "text")]);
     body = table(["Instancia", "Resultado", "Documento"], filas);
   } else if (dossierTab === "Resolución") {
@@ -3447,7 +3718,9 @@ const scoreValue = (name) =>
 function scoreResult() {
   let sum = 0,
     blocked = false;
-  for (const [g, cs] of criterionGroups)
+  // [Línea clave]: Usa la rúbrica de PostgreSQL cuando está disponible para que la nota
+  // previa coincida exactamente con la que valida el servidor; si no, usa la matriz local.
+  for (const [g, cs] of gruposRubrica())
     for (const [name, w, mandatory] of cs) {
       const val = Number(scoreValue(name));
       sum += (w * val) / 10;
@@ -3496,31 +3769,58 @@ function evaluation(id) {
   }
   if (id === "24") {
     const sc = scoreResult();
-    inner = `${notice("Rúbrica oficial · Desarrollo tecnológico", "Deficiente 0 · Regular 6 · Bueno 8 · Excelente 10. Un obligatorio con 0 o 6 impide recomendar, aun con nota ≥70.")}<div class="mt">${criterionGroups
+    const grupos = gruposRubrica();
+    const detalleComite = evaluacionComite;
+    const dictamen = detalleComite?.evaluacion || null;
+    const yaDictaminado = !!dictamen?.id_evaluacion;
+    const mapa = mapaCriteriosComite();
+    const persistidos = new Map(
+      (detalleComite?.puntajes || []).map((p) => [p.nombre_criterio, p]),
+    );
+    const fuente = rubricaComite?.secciones?.length
+      ? `Rúbrica desde PostgreSQL · ${rubricaComite.total_criterios} criterios · ${rubricaComite.total_peso} puntos`
+      : "Rúbrica local de respaldo · aplica la migración V12 para persistirla";
+    const resumenDictamen = yaDictaminado
+      ? notice(
+          "Dictamen del Comité Técnico ya registrado",
+          `${Number(dictamen.puntaje).toFixed(1)}/100 · ${
+            {
+              favorable: "Recomendada",
+              observaciones: "Devuelta con observaciones",
+              rechazo: "No recomendada",
+            }[dictamen.decision] || "Registrada"
+          } · ${esc(dictamen.evaluador_nombre || "Comité Técnico")} · ${esc(String(dictamen.fecha_evaluacion || "").slice(0, 10))}${dictamen.tiene_bloqueo_obligatorio ? " · Bloqueo por criterio obligatorio insuficiente" : ""}. Este formulario queda en modo consulta.`,
+        )
+      : "";
+    inner = `${notice("Rúbrica oficial · Desarrollo tecnológico", `${fuente}. Deficiente 0 · Regular 6 · Bueno 8 · Excelente 10. Un obligatorio con 0 o 6 impide recomendar, aun con nota ≥70.`)}${resumenDictamen}<div class="mt">${grupos
       .map(
         ([g, cs], i) =>
-          `<details class="accordion" ${i < 2 ? "open" : ""}><summary>${g} <span class="muted small">· ${cs.reduce((a, c) => a + c[1], 0)}%</span></summary>${table(
+          `<details class="accordion" ${i < 2 ? "open" : ""}><summary>${esc(g)} <span class="muted small">· ${cs.reduce((a, c) => a + c[1], 0)}%</span></summary>${table(
             ["Criterio", "Peso", "Nivel"],
-            cs.map(([n, w, m]) => [
-              `<strong>${n}</strong>${m ? '<br><span class="micro">Obligatorio</span>' : ""}`,
-              w + "%",
-              `<select data-score="${esc(n)}" aria-label="Nivel: ${esc(n)}" style="padding:8px;border:1px solid var(--line);border-radius:6px">${[
-                [0, "Deficiente"],
-                [6, "Regular"],
-                [8, "Bueno"],
-                [10, "Excelente"],
-              ]
-                .map(
-                  ([v, l]) =>
-                    `<option value="${v}" ${v === Number(scoreValue(n)) ? "selected" : ""}>${l} · ${v}</option>`,
-                )
-                .join("")}</select>`,
-            ]),
+            cs.map(([n, w, m]) => {
+              const criterio = mapa.get(n);
+              const valor = Number(persistidos.get(n)?.puntaje ?? scoreValue(n));
+              return [
+                `<strong>${esc(n)}</strong>${m ? '<br><span class="micro">Obligatorio</span>' : ""}`,
+                w + "%",
+                `<select data-score="${esc(n)}"${criterio ? ` data-criterion-id="${criterio.id_criterio_rubrica}"` : ""}${yaDictaminado ? " disabled" : ""} aria-label="Nivel: ${esc(n)}" style="padding:8px;border:1px solid var(--line);border-radius:6px">${[
+                  [0, "Deficiente"],
+                  [6, "Regular"],
+                  [8, "Bueno"],
+                  [10, "Excelente"],
+                ]
+                  .map(
+                    ([v, l]) =>
+                      `<option value="${v}" ${v === valor ? "selected" : ""}>${l} · ${v}</option>`,
+                  )
+                  .join("")}</select>`,
+              ];
+            }),
           )}</details>`,
       )
       .join(
         "",
-      )}</div><label class="checkline"><input type="checkbox" id="products-ok" ${!state.notRecommended ? "checked" : ""}>Producción no sumativa conforme: software + artículo WoS/Scopus + manual técnico para ${totalHorasEquipo()} h.</label>${field("Justificación de criterios obligatorios", "La propuesta identifica responsables, plazos, beca, riesgos y declaración ética; consta dictamen de Vinculación.", "textarea", "Justifica los criterios obligatorios con referencia a la evidencia.", true)}<div id="score-result" class="notice ${sc.recommended ? "" : "warning"}"><div><strong>${sc.sum.toFixed(1)} / 100 · ${sc.recommended ? "Recomendada" : "No recomendada"}</strong><p>${sc.blocked ? "Hay un criterio obligatorio con nivel insuficiente." : "La recomendación depende de la nota y de los requisitos obligatorios."}</p></div></div>`;
+      )}</div><label class="checkline"><input type="checkbox" id="products-ok" ${!state.notRecommended ? "checked" : ""}${yaDictaminado ? " disabled" : ""}>Producción no sumativa conforme: software + artículo WoS/Scopus + manual técnico para ${totalHorasEquipo()} h.</label>${field("Justificación de criterios obligatorios", dictamen?.justificacion || "La propuesta identifica responsables, plazos, beca, riesgos y declaración ética; consta dictamen de Vinculación.", "textarea", "Justifica los criterios obligatorios con referencia a la evidencia.", true, "comite:justificacion")}<div id="score-result" class="notice ${sc.recommended ? "" : "warning"}"><div><strong>${sc.sum.toFixed(1)} / 100 · ${sc.recommended ? "Recomendada" : "No recomendada"}</strong><p>${sc.blocked ? "Hay un criterio obligatorio con nivel insuficiente." : "La recomendación depende de la nota y de los requisitos obligatorios."}</p></div></div>`;
   }
   if (id === "25")
     inner = `${notice("El aval no somete automáticamente", "Después del acuerdo, el investigador realiza el sometimiento formal ante VIE.")}<div class="mt">${field("Instancia", ["Escuela de Ingeniería Ambiental · Coordinadora", "Escuela de Ingeniería Electrónica · Participante"], "select", "Cada consejo avala a su propio personal.", true)}<div class="field-row">${field("Sesión y artículo", "18-2026 · Artículo 4", "text", "", true)}${field("Fecha del acuerdo", "2026-09-17", "date", "", true)}</div>${field("Oficio", "IA-AVAL-014-2026", "text", "", true)}${["Aval de la propuesta y presupuesto de ₡9.400.000", "Participación y horas del personal de la instancia", "Ratificación de la calificación del Comité Técnico"].map((t) => `<label class="checkline"><input type="checkbox" checked required>${t}</label>`).join("")}${docPendiente("Acuerdo firmado de la coordinadora", "Se adjunta tras el aval")}${docPendiente("Acuerdo firmado de instancia participante", "Se adjunta tras el aval")}</div>`;
@@ -3547,7 +3847,9 @@ function evaluation(id) {
     26: "Emitir dictamen de Dirección",
     27: "Registrar resolución",
   }[id];
-  const dictamenExistente = id === "23" && !!evaluacionVinculacion?.id_evaluacion;
+  const dictamenExistente =
+    (id === "23" && !!evaluacionVinculacion?.id_evaluacion) ||
+    (id === "24" && !!evaluacionComite?.evaluacion?.id_evaluacion);
   const accionesEvaluacion = dictamenExistente
     ? btn("Volver a la bandeja", "21", "secondary", "back")
     : `${act("Devolver con observaciones", "return", "secondary")}${act(actionLabel, "decision", "", "check", `data-step="${id}"`)}`;
@@ -4814,7 +5116,11 @@ async function handleAction(action, el) {
         "Devolver con observaciones",
         `${field("Observaciones para el investigador", "Completar la justificación del riesgo de campo y vincular la medida con el responsable.", "textarea", "Explica el ajuste requerido y la evidencia esperada.", true, "modal:return")}${notice("La devolución permite corregir", "Se conserva la versión revisada y las observaciones. No equivale a una resolución negativa definitiva.")}`,
         act("Cancelar", "close", "secondary") +
-          confirmBtn("Registrar devolución", "return-confirm", current === "23" ? 'data-step="23"' : ""),
+          confirmBtn(
+            "Registrar devolución",
+            "return-confirm",
+            ["23", "24"].includes(current) ? `data-step="${current}"` : "",
+          ),
         false,
         "return",
       );
@@ -4845,6 +5151,31 @@ async function handleAction(action, el) {
         }
         break;
       }
+      if (el.dataset.step === "24" || current === "24") {
+        const idPropuesta = propuestaActivaId();
+        try {
+          const resultado = await guardarEvaluacionComite(
+            idPropuesta,
+            payloadEvaluacionComite("observaciones", state.saved["modal:return"] || ""),
+          );
+          state.stage = resultado.nombre_estado;
+          state.viewProposalId = idPropuesta;
+          save();
+          closeModal();
+          await Promise.all([
+            cargarBandejaComite(),
+            cargarDossier(idPropuesta, true),
+            cargarEvaluacionComite(idPropuesta),
+          ]);
+          go("21");
+          toast(
+            `Devolución registrada (${Number(resultado.puntaje).toFixed(1)}/100). El investigador podrá atender las observaciones.`,
+          );
+        } catch (err) {
+          toast(err.message || "No se pudo registrar la devolución del Comité Técnico.");
+        }
+        break;
+      }
       state.stage = "Con observaciones";
       save();
       closeModal();
@@ -4863,7 +5194,16 @@ async function handleAction(action, el) {
           negative = id === "24" && !sc.recommended;
         modal(
           "Confirmar decisión",
-          `<p>${negative ? "La evaluación no recomienda la propuesta por la nota o los requisitos obligatorios." : "Se conservarán los datos y el documento asociados a esta revisión."}</p>${id === "27" ? notice("Resolución seleccionada", state.saved.resolution || "Aprobada") : ""}${id === "23" ? notice("Registro en PostgreSQL", "El dictamen cambiará el estado de la propuesta y notificará al Comité Técnico.") : "<p>Esta acción es una simulación y no emite un acuerdo institucional real.</p>"}`,
+          `<p>${negative ? "La evaluación no recomienda la propuesta por la nota o los requisitos obligatorios." : "Se conservarán los datos y el documento asociados a esta revisión."}</p>${id === "27" ? notice("Resolución seleccionada", state.saved.resolution || "Aprobada") : ""}${
+            id === "23"
+              ? notice("Registro en PostgreSQL", "El dictamen cambiará el estado de la propuesta y notificará al Comité Técnico.")
+              : id === "24"
+                ? notice(
+                    "Registro en PostgreSQL",
+                    `${gruposRubrica().reduce((total, [, cs]) => total + cs.length, 0)} puntajes, la justificación y el resultado ponderado se guardarán en el expediente. El estado pasará a «${sc.recommended ? "Pendiente de aval del Consejo" : "Con observaciones"}».`,
+                  )
+                : "<p>Esta acción es una simulación y no emite un acuerdo institucional real.</p>"
+          }`,
           act("Revisar", "close", "secondary") +
             confirmBtn(
               "Registrar decisión",
@@ -4908,6 +5248,48 @@ async function handleAction(action, el) {
           );
         } catch (err) {
           toast(err.message || "No se pudo registrar el dictamen de Vinculación.");
+        }
+        break;
+      }
+      if (id === "24") {
+        const idPropuesta = propuestaActivaId();
+        const sc = scoreResult();
+        const decision = sc.recommended ? "favorable" : "observaciones";
+        const observaciones =
+          decision === "favorable"
+            ? ""
+            : `Evaluación técnica no recomendada: ${sc.sum.toFixed(1)}/100${sc.blocked ? " con criterio obligatorio con nivel insuficiente" : ""}.`;
+        try {
+          const resultado = await guardarEvaluacionComite(
+            idPropuesta,
+            payloadEvaluacionComite(decision, observaciones),
+          );
+          state.stage = resultado.nombre_estado;
+          state.viewProposalId = idPropuesta;
+          save();
+          closeModal();
+          await Promise.all([
+            cargarBandejaComite(),
+            cargarDossier(idPropuesta, true),
+            cargarEvaluacionComite(idPropuesta),
+          ]);
+          modal(
+            "Decisión registrada",
+            notice(
+              "Registro guardado y sincronizado con PostgreSQL",
+              `Puntaje: ${Number(resultado.puntaje).toFixed(1)}/100. Nuevo estado: ${resultado.nombre_estado}.${
+                resultado.decision === "favorable"
+                  ? " Se notificó al Consejo de Escuela."
+                  : " Se notificó al investigador con las observaciones."
+              }`,
+            ),
+            btn("Volver a la bandeja", "21", "secondary") +
+              btn("Ver expediente", "22", "", "arrow"),
+            false,
+            "decision-saved",
+          );
+        } catch (err) {
+          toast(err.message || "No se pudo registrar la evaluación del Comité Técnico.");
         }
         break;
       }
@@ -5030,21 +5412,46 @@ async function handleAction(action, el) {
       closeModal();
       toast("Configuración guardada.");
       break;
-    case "rubric-summary":
+    case "rubric-summary": {
+      // [Línea clave]: Si el expediente ya tiene puntajes por criterio, la rúbrica se muestra
+      // con los niveles realmente dictaminados y su ponderación; si no, con los pesos oficiales.
+      const puntajes = dossierActual?.comite_evaluacion || [];
+      const comite = (dossierActual?.evaluaciones || []).find(
+        (e) => e.rol_evaluador === "Comité Técnico",
+      );
+      const cuerpo = puntajes.length
+        ? `${table(
+            ["Sección", "Criterio", "Peso", "Nivel"],
+            puntajes.map((p) => [
+              esc(p.nombre_seccion),
+              `${esc(p.nombre_criterio)}${p.es_obligatorio ? ' <span class="micro">· Obligatorio</span>' : ""}`,
+              Number(p.peso_relativo) + "%",
+              `<strong>${Number(p.puntaje)}</strong> · ${
+                { 0: "Deficiente", 6: "Regular", 8: "Bueno", 10: "Excelente" }[Number(p.puntaje)] || "—"
+              }`,
+            ]),
+          )}<div class="mt">${notice(
+            "Resultado ponderado",
+            `${Number(comite?.puntaje_comite || 0).toFixed(1)}/100 · ${
+              { favorable: "Recomendada", observaciones: "Devuelta con observaciones", rechazo: "No recomendada" }[comite?.decision] || "Registrada"
+            }${comite?.tiene_bloqueo_obligatorio ? " · Bloqueo por criterio obligatorio insuficiente" : ""}.`,
+          )}</div>`
+        : `${table(
+            ["Sección", "Peso"],
+            gruposRubrica().map(([g, cs]) => [
+              esc(g),
+              cs.reduce((a, c) => a + c[1], 0) + "%",
+            ]),
+          )}<div class="mt">${notice("Regla de recomendación", "Nota ≥70, obligatorios con Bueno/Excelente y productos conformes. Niveles: 0, 6, 8, 10.")}</div>`;
       modal(
         "Rúbrica · Desarrollo tecnológico",
-        `${table(
-          ["Sección", "Peso"],
-          criterionGroups.map(([g, cs]) => [
-            g,
-            cs.reduce((a, c) => a + c[1], 0) + "%",
-          ]),
-        )}<div class="mt">${notice("Regla de recomendación", "Nota ≥70, obligatorios con Bueno/Excelente y productos conformes. Niveles: 0, 6, 8, 10.")}</div>`,
+        cuerpo,
         act("Cerrar", "close"),
         true,
         "rubric",
       );
       break;
+    }
     case "stages":
       modal(
         "Escenarios de seguimiento",

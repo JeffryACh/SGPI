@@ -135,3 +135,26 @@ Este documento registra la evolución del modelo de base de datos relacional par
   - `usuarios (lower(btrim(correo)))`: respalda el login y la resolución de responsables por correo, que ahora usan `lower(btrim(...))`.
 - **Refresco de estadísticas:** termina con `ANALYZE` sobre las tablas indexadas para que el planificador aproveche los índices de inmediato.
 - **Fuera de alcance:** búsquedas `ILIKE '%texto%'` sobre título o código (requerirían la extensión `pg_trgm`).
+
+---
+
+## 7. Migración V12 — Rúbrica y dictamen del Comité Técnico
+
+### Script: `Base de datos/Scripts/V12__rubrica_comite_tecnico.sql`
+- **Propósito:** habilitar la rúbrica ponderada oficial y el dictamen consolidado del Comité Técnico, de modo que el servidor calcule la nota, valide los criterios obligatorios y ejecute la transición de estado.
+- **Naturaleza:** script idempotente y aditivo; puede reejecutarse en el SQL Editor de Supabase sin duplicar datos ni romper filas existentes.
+- **Semilla de la rúbrica (`rubric_sections` y `rubric_criteria`):**
+  - 8 secciones y 23 criterios que suman 100 puntos, copiados de la matriz oficial usada por la pantalla 24.
+  - Cada criterio conserva `peso_relativo`, `es_obligatorio` y `orden`; las secciones conservan `peso_porcentual` y `orden`.
+  - La semilla solo inserta cuando `rubric_sections` y `rubric_criteria` están vacías (`IF NOT EXISTS`), por lo que reejecutar el script no duplica la rúbrica.
+- **Cambios en `technical_committee_evaluations`:**
+  - `decision character varying(20) NOT NULL DEFAULT 'favorable'` con `CHECK (decision IN ('favorable', 'observaciones', 'rechazo'))`.
+  - `justificacion text` para sustentar la recomendación.
+  - `tiene_bloqueo_obligatorio boolean NOT NULL DEFAULT false` para dejar constancia del bloqueo por criterio obligatorio insuficiente.
+  - `puntaje` pasa de `integer` a `numeric(5,1)` para conservar el decimal del cálculo ponderado.
+- **Uso desde el backend:**
+  - `GET /propuestas/comite/rubrica` entrega secciones, criterios y reglas (umbral 70, obligatorios ≥ 8).
+  - `POST /propuestas/comite/{id_propuesta}` valida los 23 criterios, calcula `Σ peso × nivel / 10`, rechaza un dictamen favorable si hay bloqueo o si la nota es menor a 70, inserta en `evaluations`, `technical_committee_evaluations` y `technical_committee_scores`, cambia el estado y registra el historial.
+  - Transiciones: `favorable → 4 (Pendiente de aval del Consejo)`, `observaciones → 9 (Con observaciones)` y `rechazo → 10 (Rechazada)`.
+  - Si el dictamen es favorable, notifica a los usuarios activos con rol `Consejo de Escuela`.
+- **Compatibilidad:** el router responde `503` con un mensaje explícito mientras la migración no esté aplicada, y el expediente general tolera la ausencia de las columnas nuevas.

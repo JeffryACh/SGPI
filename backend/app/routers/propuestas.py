@@ -380,7 +380,7 @@ class PropuestaCrearIn(BaseModel):
         * Optional[int] : id_convocatoria Convocatoria a la que se postula (por defecto 1 = Fondos VIE 2027).
         * Optional[date] : fecha_inicio Fecha prevista de inicio de actividades.
         * Optional[date] : fecha_fin Fecha prevista de finalización.
-        * Optional[int] : estado_inicial Estado de registro (2 = En revisión de Vinculación).
+        * Optional[int] : estado_inicial Estado de registro (2 = En revisión de Vinculación, 3 = En evaluación del Comité Técnico).
         * Optional[str] : client_uuid Identificador idempotente generado por el navegador.
         * Optional[str] : palabras_clave Palabras clave de la propuesta.
         * Optional[str] : resumen_en Resumen en inglés.
@@ -885,6 +885,21 @@ def obtener_dossier_propuesta(
         budget_cols = _get_table_columns(cur, "proposal_budget")
         anio_col = "pb.anio" if "anio" in budget_cols else "1 AS anio"
 
+        # [Línea clave]: La migración V12 agrega decisión, justificación y bloqueo al dictamen
+        # del Comité Técnico. Se detectan para que el expediente siga funcionando sin V12.
+        comite_cols = _get_table_columns(cur, "technical_committee_evaluations")
+        comite_decision_expr = (
+            "tce.decision" if "decision" in comite_cols else "NULL::character varying AS decision"
+        )
+        comite_justificacion_expr = (
+            "tce.justificacion" if "justificacion" in comite_cols else "NULL::text AS justificacion"
+        )
+        comite_bloqueo_expr = (
+            "tce.tiene_bloqueo_obligatorio"
+            if "tiene_bloqueo_obligatorio" in comite_cols
+            else "false AS tiene_bloqueo_obligatorio"
+        )
+
         sql_prop = f"""
             SELECT
                 p.id_propuesta,
@@ -929,8 +944,9 @@ def obtener_dossier_propuesta(
         historial_cur = stack.enter_context(conn.cursor())
         evaluaciones_cur = stack.enter_context(conn.cursor())
         vinculacion_cur = stack.enter_context(conn.cursor())
+        comite_cur = stack.enter_context(conn.cursor())
 
-        # [Línea clave]: Envía las 14 consultas del expediente en un solo pipeline para pagar un único round-trip.
+        # [Línea clave]: Envía las 15 consultas del expediente en un solo pipeline para pagar un único round-trip.
         with conn.pipeline():
             prop_cur.execute(sql_prop, (id_propuesta,))
 
@@ -1073,10 +1089,11 @@ def obtener_dossier_propuesta(
 
             # [Línea clave]: Consulta las evaluaciones registradas por Comité Técnico, Vinculación y CIE.
             evaluaciones_cur.execute(
-                """
+                f"""
                 SELECT ev.id_evaluacion, ev.fecha_evaluacion, ev.observaciones,
                        u.nombre AS evaluador_nombre, r.nombre_rol AS rol_evaluador,
                        tce.puntaje AS puntaje_comite,
+                       {comite_decision_expr}, {comite_justificacion_expr}, {comite_bloqueo_expr},
                        cr.nombre_resolucion AS resolucion_cie
                 FROM evaluations ev
                 JOIN usuarios u ON u.id_usuario = ev.id_usuario_eval
@@ -1088,6 +1105,32 @@ def obtener_dossier_propuesta(
                 ORDER BY ev.fecha_evaluacion DESC
                 """,
                 (id_propuesta,),
+            )
+
+            # [Línea clave]: Recupera el detalle por criterio del último dictamen del Comité Técnico
+            # para que la pantalla 22 pueda mostrar la rúbrica aplicada y su ponderación.
+            comite_cur.execute(
+                """
+                SELECT ev.id_evaluacion, tcs.id_criterio_rubrica, s.nombre_seccion,
+                       c.nombre_criterio, c.peso_relativo, c.es_obligatorio,
+                       tcs.puntaje, tcs.justificacion
+                FROM technical_committee_scores tcs
+                JOIN technical_committee_evaluations tce ON tce.id_evaluacion = tcs.id_evaluacion
+                JOIN evaluations ev ON ev.id_evaluacion = tce.id_evaluacion
+                JOIN rubric_criteria c ON c.id_criterio_rubrica = tcs.id_criterio_rubrica
+                JOIN rubric_sections s ON s.id_seccion = c.id_seccion
+                WHERE ev.id_propuesta = %s
+                  AND ev.id_evaluacion = (
+                      SELECT ev2.id_evaluacion
+                      FROM evaluations ev2
+                      JOIN roles r2 ON r2.id_rol = ev2.id_rol_evaluador AND r2.nombre_rol = 'Comité Técnico'
+                      WHERE ev2.id_propuesta = %s
+                      ORDER BY ev2.fecha_evaluacion DESC, ev2.id_evaluacion DESC
+                      LIMIT 1
+                  )
+                ORDER BY s.orden ASC, c.orden ASC
+                """,
+                (id_propuesta, id_propuesta),
             )
 
             # [Línea clave]: Recupera el detalle del dictamen técnico emitido por Vinculación.
@@ -1127,6 +1170,7 @@ def obtener_dossier_propuesta(
         historial = historial_cur.fetchall()
         evaluaciones = evaluaciones_cur.fetchall()
         vinculacion_evaluaciones = vinculacion_cur.fetchall()
+        comite_evaluacion = comite_cur.fetchall()
 
     # [Línea clave]: Incluye la evaluación preliminar ya guardada, sin generarla en la ruta de lectura.
     evaluacion_ia = None
@@ -1150,6 +1194,7 @@ def obtener_dossier_propuesta(
         "historial": historial,
         "evaluaciones": evaluaciones,
         "vinculacion_evaluaciones": vinculacion_evaluaciones,
+        "comite_evaluacion": comite_evaluacion,
         "evaluacion_ia": evaluacion_ia,
     }
 
