@@ -225,6 +225,7 @@ const LOGIN_ERRORS = {
  *     * Function : "05" Cargador de etapas de convocatoria según la seleccionada.
  */
 const SCREEN_LOADERS = {
+  "02": () => (state.role === "vinculacion" ? cargarBandejaVinculacion() : Promise.resolve(null)),
   "04": obtener_convocatorias,
   "05": () =>
     Promise.all([
@@ -892,6 +893,16 @@ async function cargarMisPropuestas() {
 }
 
 /**
+ * Determinar si una propuesta de la bandeja está en estado 2 ("En revisión de Vinculación").
+ * Tolera acentos y mayúsculas en el nombre del estado devuelto por el backend.
+ * parametros:
+ *     - Object : p Propuesta normalizada con la propiedad 'status'.
+ * return:
+ *     + boolean : pendiente Verdadero si espera el dictamen de Vinculación.
+ */
+const esPendienteVinculacion = (p) => /revisi[oó]n de vinculaci/i.test((p && p.status) || "");
+
+/**
  * Descargar la bandeja de Vinculación desde PostgreSQL y conservar la propuesta activa.
  * parametros:
  *     (ninguno)
@@ -909,8 +920,10 @@ async function cargarBandejaVinculacion() {
       const data = await res.json();
       bandejaPropuestas = data.map(mapearPropuestaBackend);
       if (!state.viewProposalId && bandejaPropuestas.length) {
-        state.viewProposalId = bandejaPropuestas[0].id;
-        state.viewProposal = bandejaPropuestas[0].code;
+        // [Línea clave]: Prioriza la propuesta más reciente en revisión de Vinculación; si no hay, usa la primera de la bandeja.
+        const objetivo = bandejaPropuestas.find(esPendienteVinculacion) || bandejaPropuestas[0];
+        state.viewProposalId = objetivo.id;
+        state.viewProposal = objetivo.code;
       }
     } else {
       bandejaPropuestas = [];
@@ -1888,24 +1901,68 @@ function login() {
  */
 function dashboard() {
   // [Línea clave]: ¿Por qué soy importante? Bifurcación condicional de interfaz según privilegios de rol. ¿Para qué? Mostrar métricas de evaluación a comités o panel de formulación a investigadores. ¿Dónde me usan? Al inicio de dashboard().
-  if (state.role !== "investigador")
+  if (state.role !== "investigador") {
+    // [Línea clave]: Vinculación muestra la propuesta real más reciente que espera su dictamen; el resto de roles conserva el escenario demo.
+    const esVinculacion = state.role === "vinculacion";
+    const bandeja = esVinculacion ? bandejaPropuestas || [] : [];
+    const pendientes = bandeja.filter(esPendienteVinculacion);
+    const reciente = pendientes[0] || null;
+    const dictaminadas = bandeja.length - pendientes.length;
+    const metricas = esVinculacion
+      ? [
+          ["Pendientes", String(pendientes.length)],
+          ["Dictaminadas", String(dictaminadas)],
+          ["Total", String(bandeja.length)],
+        ]
+      : [
+          ["Pendientes", "1"],
+          ["En revisión", "0"],
+          ["Resueltos", "3"],
+        ];
+    const fila = esVinculacion
+      ? reciente
+        ? [
+            `<span class="project-code">${esc(reciente.code)}</span><strong>${esc(reciente.title)}</strong>`,
+            esc(reciente.status),
+            badge("Dentro del plazo"),
+            btn(
+              "Revisar",
+              roles[state.role].screen,
+              "text",
+              "arrow",
+              `data-proposal="${esc(reciente.code)}" data-proposal-id="${reciente.id || ""}"`,
+            ),
+          ]
+        : [`<span class="muted">No hay propuestas pendientes de tu dictamen.</span>`, "", "", ""]
+      : [
+          `<span class="project-code">SI-2027-014</span><strong>Agua Inteligente: monitoreo de cuencas</strong>`,
+          roles[state.role].label,
+          badge("Dentro del plazo"),
+          btn("Revisar", roles[state.role].screen, "text", "arrow"),
+        ];
+    const heroTitulo = esVinculacion
+      ? reciente
+        ? pendientes.length === 1
+          ? "Una propuesta espera tu revisión"
+          : `${pendientes.length} propuestas esperan tu revisión`
+        : "No tienes propuestas pendientes"
+      : "Una propuesta espera tu revisión";
+    const heroTexto =
+      esVinculacion && reciente
+        ? `Más reciente: ${esc(reciente.code)} · ${esc(reciente.title)}.`
+        : `Consulta el expediente completo antes de registrar la decisión de ${roles[state.role].label}.`;
     return shell(
-      `<div class="hero"><div><h2>Una propuesta espera tu revisión</h2><p>Consulta el expediente completo antes de registrar la decisión de ${roles[state.role].label}.</p></div>${btn("Abrir bandeja", "21", "", "arrow")}</div><div class="grid three mt">${[
-        ["Pendientes", "1"],
-        ["En revisión", "0"],
-        ["Resueltos", "3"],
-      ]
+      `<div class="hero"><div><h2>${heroTitulo}</h2><p>${heroTexto}</p></div>${btn("Abrir bandeja", "21", "", "arrow")}</div><div class="grid three mt">${metricas
         .map(
           ([a, b]) =>
             `<div class="card metric"><span class="label">${a}</span><span class="value">${b}</span></div>`,
         )
-        .join(
-          "",
-        )}</div><div class="mt card">${table(["Expediente", "Etapa", "Prioridad", ""], [[`<span class="project-code">SI-2027-014</span><strong>Agua Inteligente: monitoreo de cuencas</strong>`, roles[state.role].label, badge("Dentro del plazo"), btn("Revisar", roles[state.role].screen, "text", "arrow")]])}</div>`,
+        .join("")}</div><div class="mt card">${table(["Expediente", "Etapa", "Prioridad", ""], [fila])}</div>`,
       `Hola, ${person().name.split(" ")[0]}`,
       "",
       "",
     );
+  }
   return shell(
     `<div class="hero"><div><h2> ${propuestamasreciente?.titulo ?? "Empieza una nueva propuesta"} </h2><p>Completa el presupuesto y los documentos para enviar a revisión.</p></div>${btn("Continuar propuesta", "15", "", "arrow")}</div><div class="grid four mt">${[
       ["Mis propuestas", numspropuestas?.total ?? "-", "folder"],
