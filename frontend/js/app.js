@@ -225,7 +225,11 @@ const LOGIN_ERRORS = {
  *     * Function : "05" Cargador de etapas de convocatoria según la seleccionada.
  */
 const SCREEN_LOADERS = {
-  "02": () => (state.role === "vinculacion" ? cargarBandejaVinculacion() : Promise.resolve(null)),
+  "02": () => {
+    if (state.role === "vinculacion") return cargarBandejaVinculacion();
+    if (state.role === "comite") return cargarBandejaComite();
+    return Promise.resolve(null);
+  },
   "04": obtener_convocatorias,
   "05": () =>
     Promise.all([
@@ -865,6 +869,8 @@ function mapearPropuestaBackend(p = {}) {
     leader: p.lider_nombre || p.nombre_lider || p.leader || "Investigador",
     school: p.escuela || p.nombre_escuela || p.school || "TEC",
     line: p.linea_investigacion || p.nombre_linea || p.line || "",
+    fechaIngreso: p.fecha_ingreso_comite || null,
+    fechaCreacion: p.fecha_creacion || null,
   };
 }
 
@@ -2132,13 +2138,19 @@ function login() {
 function dashboard() {
   // [Línea clave]: ¿Por qué soy importante? Bifurcación condicional de interfaz según privilegios de rol. ¿Para qué? Mostrar métricas de evaluación a comités o panel de formulación a investigadores. ¿Dónde me usan? Al inicio de dashboard().
   if (state.role !== "investigador") {
-    // [Línea clave]: Vinculación muestra la propuesta real más reciente que espera su dictamen; el resto de roles conserva el escenario demo.
+    // [Línea clave]: Vinculación y Comité Técnico muestran la propuesta real más reciente
+    // que espera su dictamen; el resto de roles conserva el escenario demo.
     const esVinculacion = state.role === "vinculacion";
-    const bandeja = esVinculacion ? bandejaPropuestas || [] : [];
-    const pendientes = bandeja.filter(esPendienteVinculacion);
+    const esComite = state.role === "comite";
+    const bandeja = esVinculacion
+      ? bandejaPropuestas || []
+      : esComite
+        ? bandejaComite || []
+        : [];
+    const pendientes = bandeja.filter(esComite ? esPendienteComite : esPendienteVinculacion);
     const reciente = pendientes[0] || null;
     const dictaminadas = bandeja.length - pendientes.length;
-    const metricas = esVinculacion
+    const metricas = esVinculacion || esComite
       ? [
           ["Pendientes", String(pendientes.length)],
           ["Dictaminadas", String(dictaminadas)],
@@ -2149,45 +2161,84 @@ function dashboard() {
           ["En revisión", "0"],
           ["Resueltos", "3"],
         ];
-    const fila = esVinculacion
+    const fila = esComite
       ? reciente
         ? [
             `<span class="project-code">${esc(reciente.code)}</span><strong>${esc(reciente.title)}</strong>`,
             esc(reciente.status),
-            badge("Dentro del plazo"),
+            badge("Sin dictamen"),
             btn(
-              "Revisar",
+              "Evaluar",
               roles[state.role].screen,
               "text",
               "arrow",
               `data-proposal="${esc(reciente.code)}" data-proposal-id="${reciente.id || ""}"`,
             ),
           ]
-        : [`<span class="muted">No hay propuestas pendientes de tu dictamen.</span>`, "", "", ""]
-      : [
-          `<span class="project-code">SI-2027-014</span><strong>Agua Inteligente: monitoreo de cuencas</strong>`,
-          roles[state.role].label,
-          badge("Dentro del plazo"),
-          btn("Revisar", roles[state.role].screen, "text", "arrow"),
-        ];
-    const heroTitulo = esVinculacion
+        : [`<span class="muted">No hay propuestas pendientes de dictamen.</span>`, "", "", ""]
+      : esVinculacion
+        ? reciente
+          ? [
+              `<span class="project-code">${esc(reciente.code)}</span><strong>${esc(reciente.title)}</strong>`,
+              esc(reciente.status),
+              badge("Dentro del plazo"),
+              btn(
+                "Revisar",
+                roles[state.role].screen,
+                "text",
+                "arrow",
+                `data-proposal="${esc(reciente.code)}" data-proposal-id="${reciente.id || ""}"`,
+              ),
+            ]
+          : [`<span class="muted">No hay propuestas pendientes de tu dictamen.</span>`, "", "", ""]
+        : [
+            `<span class="project-code">SI-2027-014</span><strong>Agua Inteligente: monitoreo de cuencas</strong>`,
+            roles[state.role].label,
+            badge("Dentro del plazo"),
+            btn("Revisar", roles[state.role].screen, "text", "arrow"),
+          ];
+    const heroTitulo = esVinculacion || esComite
       ? reciente
         ? pendientes.length === 1
-          ? "Una propuesta espera tu revisión"
-          : `${pendientes.length} propuestas esperan tu revisión`
-        : "No tienes propuestas pendientes"
+          ? esComite
+            ? "Una propuesta espera tu evaluación"
+            : "Una propuesta espera tu revisión"
+          : `${pendientes.length} propuestas esperan tu ${esComite ? "evaluación" : "revisión"}`
+        : esComite
+          ? "No tienes propuestas pendientes de evaluación"
+          : "No tienes propuestas pendientes"
       : "Una propuesta espera tu revisión";
+    const fechaLegible = (valor) =>
+      valor
+        ? new Date(valor).toLocaleString("es-CR", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "";
+    const momentoIngreso = esComite
+      ? fechaLegible(reciente?.fechaIngreso)
+        ? ` Ingresó al Comité el ${fechaLegible(reciente.fechaIngreso)}.`
+        : fechaLegible(reciente?.fechaCreacion)
+          ? ` Creada el ${fechaLegible(reciente.fechaCreacion)}.`
+          : ""
+      : "";
     const heroTexto =
-      esVinculacion && reciente
-        ? `Más reciente: ${esc(reciente.code)} · ${esc(reciente.title)}.`
+      (esVinculacion || esComite) && reciente
+        ? `Más reciente: ${esc(reciente.code)} · ${esc(reciente.title)}.${momentoIngreso}`
         : `Consulta el expediente completo antes de registrar la decisión de ${roles[state.role].label}.`;
+    const cabeceras = esComite
+      ? ["Expediente", "Etapa", "Dictamen", ""]
+      : ["Expediente", "Etapa", "Prioridad", ""];
     return shell(
       `<div class="hero"><div><h2>${heroTitulo}</h2><p>${heroTexto}</p></div>${btn("Abrir bandeja", "21", "", "arrow")}</div><div class="grid three mt">${metricas
         .map(
           ([a, b]) =>
             `<div class="card metric"><span class="label">${a}</span><span class="value">${b}</span></div>`,
         )
-        .join("")}</div><div class="mt card">${table(["Expediente", "Etapa", "Prioridad", ""], [fila])}</div>`,
+        .join("")}</div><div class="mt card">${table(cabeceras, [fila])}</div>`,
       `Hola, ${person().name.split(" ")[0]}`,
       "",
       "",

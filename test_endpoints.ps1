@@ -287,6 +287,17 @@ if ($loginComite) {
 $bandejaComite = Test-Endpoint -Name "Bandeja del Comité Técnico" -Endpoint "/propuestas/comite/bandeja?rol=Comit%C3%A9%20T%C3%A9cnico&id_usuario=$idUsuarioComite"
 if ($bandejaComite) {
     Write-Host "  -> Expedientes en la bandeja: $($bandejaComite.Count)" -ForegroundColor Gray
+    # C3b. La bandeja ordena por fecha de ingreso al estado 3 (proposal_state_history)
+    $pendientesComite = @($bandejaComite | Where-Object { $_.id_estado -eq 3 })
+    if ($pendientesComite.Count -gt 0) {
+        $masReciente = @($pendientesComite | Sort-Object { $_.fecha_ingreso_comite } -Descending)[0]
+        Write-Host "  -> Pendientes: $($pendientesComite.Count) | Más reciente: $($masReciente.codigo) (ingreso $($masReciente.fecha_ingreso_comite))" -ForegroundColor Gray
+        if ($pendientesComite[0].id_propuesta -eq $masReciente.id_propuesta) {
+            Write-Host "  -> Orden correcto: la bandeja inicia con la pendiente que ingresó al Comité Técnico más recientemente." -ForegroundColor Green
+        } else {
+            Write-Host "  [AVISO] El orden de la bandeja no coincide con la fecha de ingreso al Comité Técnico." -ForegroundColor Yellow
+        }
+    }
 }
 $bandejaProhibida = Test-Endpoint -Name "Bandeja del Comité con rol Investigador (403 esperado)" -Endpoint "/propuestas/comite/bandeja?rol=Comit%C3%A9%20T%C3%A9cnico&id_usuario=1"
 if ($bandejaProhibida) {

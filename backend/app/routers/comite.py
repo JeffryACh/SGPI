@@ -393,6 +393,7 @@ def obtener_bandeja_comite(
                     ELSE '2027–2028'
                 END AS periodo,
                 p.fecha_creacion,
+                ingreso.fecha_ingreso_comite,
                 COALESCE(
                     (SELECT SUM(pb.monto) FROM proposal_budget pb WHERE pb.id_propuesta = p.id_propuesta),
                     0
@@ -418,6 +419,12 @@ def obtener_bandeja_comite(
             JOIN lineas_investigacion lin ON lin.id_linea_investigacion = p.id_linea_investigacion
             JOIN estados e ON e.id_estado = p.estado_actual
             JOIN usuarios u ON u.id_usuario = p.id_usuario_lider
+            LEFT JOIN LATERAL (
+                SELECT MAX(h.fecha_cambio) AS fecha_ingreso_comite
+                FROM proposal_state_history h
+                WHERE h.id_propuesta = p.id_propuesta
+                  AND h.id_estado_nuevo = %s
+            ) ingreso ON TRUE
             WHERE p.estado_actual = %s
                OR EXISTS (
                     SELECT 1
@@ -425,9 +432,16 @@ def obtener_bandeja_comite(
                     JOIN roles r3 ON r3.id_rol = ev3.id_rol_evaluador AND r3.nombre_rol = %s
                     WHERE ev3.id_propuesta = p.id_propuesta
                )
-            ORDER BY p.fecha_creacion DESC, p.id_propuesta DESC
+            ORDER BY COALESCE(ingreso.fecha_ingreso_comite, p.fecha_creacion) DESC,
+                     p.id_propuesta DESC
             """,
-            (ROL_COMITE, ROL_COMITE, ESTADO_EN_EVALUACION_COMITE, ROL_COMITE),
+            (
+                ROL_COMITE,
+                ROL_COMITE,
+                ESTADO_EN_EVALUACION_COMITE,
+                ESTADO_EN_EVALUACION_COMITE,
+                ROL_COMITE,
+            ),
         )
         return cur.fetchall()
 

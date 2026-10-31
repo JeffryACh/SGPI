@@ -208,9 +208,12 @@ Pantallas principales: `21`, `22`, `23`, `28`, `29`, `30`.
 
 ### 4.3 Comité Técnico
 
-Pantallas principales: `21`, `22`, `24`, `28`.
+Pantallas principales: `02`, `21`, `22`, `24`, `28`.
 
+- [x] **02 · Inicio:** tarjetas de pendientes, dictaminadas y total calculadas desde la bandeja real del Comité.
+- [x] **02 · Inicio:** propuesta destacada = última propuesta que ingresó al estado 3, ordenada por `proposal_state_history`.
 - [x] **21 · Bandeja:** filtrar propuestas en evaluación del Comité (`GET /propuestas/comite/bandeja`).
+- [x] **21 · Bandeja:** ordenar por fecha de ingreso al estado 3 (`fecha_ingreso_comite`), no por fecha de creación.
 - [ ] **21 · Bandeja:** asignación explícita de evaluadores.
 - [x] **22 · Expediente:** cargar dossier real.
 - [x] **24 · Evaluación:** endpoint para consultar la rúbrica oficial (`GET /propuestas/comite/rubrica`).
