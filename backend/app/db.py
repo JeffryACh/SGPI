@@ -1,4 +1,4 @@
-﻿"""
+"""
 ========================================================================================
 ARCHIVO: backend/app/db.py
 ========================================================================================
@@ -13,12 +13,13 @@ ARCHIVO: backend/app/db.py
     2.2.2. A dónde envía datos:
            - Entrega conexiones transaccionales activas (Connection de psycopg 3) a los
              routers de la API (auth, propuestas, notificaciones, catalogos, convocatorias,
-             escuelas, modalidades, lineas_de_investigacion, tipos_hora) mediante FastAPI Depends(get_conn).
+             escuelas, modalidades, lineas_de_investigacion, tipos_hora, ia) mediante FastAPI Depends(get_conn).
            - Envía comandos SQL directamente al servidor PostgreSQL en Supabase.
 
 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
     Carga las credenciales de conexión, valida la existencia de la URL de base de datos,
-    instancia un ConnectionPool optimizado con factoría de filas como diccionarios (dict_row),
+    instancia un ConnectionPool optimizado con factoría de filas como diccionarios (dict_row)
+    y prepare_threshold=None (crucial para Supavisor/PgBouncer en modo transacción),
     y expone la función generadora 'get_conn()' que actúa como dependencia transaccional
     (haciendo COMMIT automático si todo finaliza con éxito o ROLLBACK si ocurre un error).
 ========================================================================================
@@ -39,12 +40,26 @@ if not DATABASE_URL:
         "Falta DATABASE_URL. Copia .env.example a .env y completa tus datos de Supabase."
     )
 
-# [Línea clave]: Instancia el pool de conexiones compartidas entre 1 y 10 conexiones simultáneas con formato dict_row.
+
+def configure_conn(conn):
+    """
+    Configurar cada conexión física del pool para deshabilitar prepared statements en el servidor.
+
+    Evita errores 'prepared statement already exists' o 'does not exist' en Supavisor / PgBouncer.
+
+    parametros:
+        - Connection : conn Conexión instanciada por psycopg 3.
+    """
+    conn.prepare_threshold = None
+
+
+# [Línea clave]: Instancia el pool de conexiones compartidas entre 1 y 10 conexiones simultáneas con formato dict_row y prepare_threshold=None.
 pool = ConnectionPool(
     DATABASE_URL,
     min_size=1,
     max_size=10,
-    kwargs={"row_factory": dict_row},
+    configure=configure_conn,
+    kwargs={"row_factory": dict_row, "prepare_threshold": None},
     open=False,
 )
 
@@ -67,4 +82,5 @@ def get_conn():
     """
     # [Línea clave]: Inicia la sesión transaccional asegurando aislamiento ACID y liberación de recursos al finalizar.
     with pool.connection() as conn:
+        conn.prepare_threshold = None
         yield conn

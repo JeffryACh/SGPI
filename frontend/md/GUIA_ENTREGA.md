@@ -6,8 +6,8 @@
 1. **Frontend SPA:** Prototipo interactivo de 33 pantallas base, seis roles institucionales y componentes modales. Configurado para despliegue en **Vercel** (`vercel.json`) o localmente mediante Nginx / navegador (`frontend/html/SGPI.html`).
 2. **Backend API REST:** Desarrollado en FastAPI 0.143.2 y Python 3.12, configurado para despliegue en **Render** (`render.yaml`) o Docker Compose local (`http://localhost:3001`), con documentación interactiva en `/docs`.
 3. **Base de Datos en Supabase Cloud:** Instancia de PostgreSQL 14.17 en AWS `us-west-2` (Oregon) con 37 tablas relacionales (incluyendo `public.ai_preliminary_evaluations`), triggers automáticos para generación de códigos `SI-YYYY-NNN`, trazabilidad inmutable y Row Level Security (RLS).
-4. **Motor de IA Google Gemini (Plan Gratuito):** Integración nativa con Google AI Studio Free Tier (`gemini-2.5-flash` con fallback a `gemini-2.5-flash-lite` y motor normativo determinista VIE 2027) para generar evaluaciones preliminares estructuradas en 5 niveles.
-5. **Verificación Automatizada:** Suite de pruebas en [`test_endpoints.ps1`](../../test_endpoints.ps1) con **15 verificaciones funcionales de extremo a extremo** pasando al 100% (código HTTP 200/201).
+4. **Motor de IA Google Gemini (Plan Gratuito):** Integración nativa con Google AI Studio Free Tier (`gemini-3.5-flash` con fallback automático a `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-flash-lite-latest` y motor normativo determinista VIE 2027) para generar evaluaciones preliminares estructuradas en 5 niveles.
+5. **Verificación Automatizada:** Suite de pruebas en [`test_endpoints.ps1`](../../test_endpoints.ps1) con **20 verificaciones funcionales de extremo a extremo** en 5 fases pasando al 100% (código HTTP 200/201).
 
 ---
 
@@ -67,7 +67,7 @@ Usa el selector interactivo de rol institucional en la barra superior o en Mi Pe
 
 ## Comprobación Automatizada de la API
 
-Para verificar el funcionamiento completo de los 15 endpoints en PowerShell:
+Para verificar el funcionamiento completo de las 20 pruebas de endpoints en PowerShell:
 ```powershell
 .\test_endpoints.ps1
 ```

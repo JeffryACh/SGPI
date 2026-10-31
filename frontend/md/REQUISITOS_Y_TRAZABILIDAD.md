@@ -82,7 +82,7 @@ Plantilla anual: objeto de gasto (OG), detalle, total y justificación. Totales 
 
 ---
 
-## Trazabilidad de la Evaluación Preliminar Asistida por IA (Google Gemini Free Tier)
+## Trazabilidad de la Evaluación Preliminar Asistida por IA (Google Gemini Free Tier: `gemini-3.5-flash`)
 
 | Componente Normativo VIE 2027 | Parámetros Verificados por la IA | Mapeo en el Backend (`routers/ia.py`) | Mapeo en Base de Datos |
 | :--- | :--- | :--- | :--- |

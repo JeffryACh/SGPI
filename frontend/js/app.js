@@ -611,7 +611,7 @@ async function generarEvaluacionPreliminarIA() {
  */
 function renderizarPanelReferenciaIA(idPantalla) {
   const ia = evaluacionPreliminarIA || {
-    modelo_ia: "gemini-2.5-flash",
+    modelo_ia: "gemini-3.5-flash",
     modo_generacion: "gemini_online",
     puntaje_preliminar: scoreResult().sum,
     recomendacion_global: scoreResult().recommended ? "Recomendada" : "Recomendada con observaciones",
@@ -704,7 +704,7 @@ function renderizarPanelReferenciaIA(idPantalla) {
 
   return card(
     "Evaluación preliminar IA (Gemini)",
-    `<div class="action-row mb">${badge(ia.recomendacion_global, ia.tiene_bloqueo_obligatorio ? "" : "solid")}${badge(ia.modelo_ia || "gemini-2.5-flash")}</div><p class="micro muted mb">Referencia automática no vinculante generada al enviar la propuesta a revisión (Plan Gratuito Google AI Studio).</p>${detalleNivel}${idPantalla !== "22" && idPantalla !== "24" ? `<div class="action-row mt">${act("Ver informe IA completo", "modal-ai-detail", "text compact")}${act("Actualizar IA", "refresh-ai-eval", "text compact")}</div>` : ""}`,
+    `<div class="action-row mb">${badge(ia.recomendacion_global, ia.tiene_bloqueo_obligatorio ? "" : "solid")}${badge(ia.modelo_ia || "gemini-3.5-flash")}</div><p class="micro muted mb">Referencia automática no vinculante generada al enviar la propuesta a revisión (Plan Gratuito Google AI Studio).</p>${detalleNivel}${idPantalla !== "22" && idPantalla !== "24" ? `<div class="action-row mt">${act("Ver informe IA completo", "modal-ai-detail", "text compact")}${act("Actualizar IA", "refresh-ai-eval", "text compact")}</div>` : ""}`,
   );
 }
 

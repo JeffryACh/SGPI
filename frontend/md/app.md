@@ -1,6 +1,6 @@
 # Integración Dinámica del Frontend (`app.js`) con el Backend (FastAPI / Supabase / Gemini IA)
 
-Este documento detalla la arquitectura de integración del Frontend SPA con la API REST del SGPI, incluyendo la conmutación de entornos (Local vs. Producción en Vercel/Render), el consumo de endpoints contra **PostgreSQL en Supabase** y el motor de **Evaluación Preliminar con Google Gemini IA (Plan Gratuito)**.
+Este documento detalla la arquitectura de integración del Frontend SPA con la API REST del SGPI, incluyendo la conmutación de entornos (Local vs. Producción en Vercel/Render), el consumo de endpoints contra **PostgreSQL en Supabase** y el motor de **Evaluación Preliminar con Google Gemini IA (Plan Gratuito: `gemini-3.5-flash` con fallback a `gemini-3.5-flash-lite` y `gemini-3.1-flash-lite`)**.
 
 ---
 

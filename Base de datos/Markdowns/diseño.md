@@ -717,7 +717,7 @@ Declaraciones de aspectos bioéticos y ambientales de la propuesta.
 
 
 ### AIPreliminaryEvaluations (`ai_preliminary_evaluations`)
-Almacena el dictamen preliminar no vinculante generado automáticamente por la IA de Google Gemini (Plan Gratuito: gemini-2.5-flash) estructurado en 5 niveles para asistir a los evaluadores institucionales de Fondos VIE 2027.
+Almacena el dictamen preliminar no vinculante generado automáticamente por la IA de Google Gemini (Plan Gratuito: `gemini-3.5-flash` con fallback a `gemini-3.5-flash-lite` y `gemini-3.1-flash-lite`) estructurado en 5 niveles para asistir a los evaluadores institucionales de Fondos VIE 2027.
 
 - id_evaluacion_ia:
     - tipo: bigint generated always as identity
@@ -732,8 +732,8 @@ Almacena el dictamen preliminar no vinculante generado automáticamente por la I
 - modelo_ia:
     - tipo: varchar(100)
     - nullable: no
-    - default: 'gemini-2.5-flash'
-    - descripcion: modelo de Gemini utilizado
+    - default: 'gemini-3.5-flash'
+    - descripcion: modelo de Gemini utilizado (`gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-flash-lite-latest`)
 - modo_generacion:
     - tipo: varchar(50)
     - nullable: no
