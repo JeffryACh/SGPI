@@ -169,7 +169,7 @@ Pantallas principales: `02`, `03`, `04`–`20`, `22`, `28`, `33`.
 - [x] **15 · Presupuesto:** rubros y montos por año persistidos.
 - [ ] **15 · Presupuesto:** validaciones completas del lado servidor.
 - [x] **16 · Información complementaria:** TRL, potencial PI y secciones persistidas.
-- [x] **17 · Documentos:** el borrador muestra placeholders; los archivos reales se adjuntan tras registrar la propuesta con `POST /propuestas/{id}/documentos`. Se eliminaron los documentos quemados.
+- [x] **17 · Documentos:** el borrador permite adjuntar archivos reales (opcionales) y, al confirmar el envío, el frontend crea la propuesta y los sube con `POST /propuestas/{id}/documentos`. Se eliminaron los documentos quemados.
 - [x] **18 · Revisión:** envío crea la propuesta completa.
 - [x] **19 · Confirmación:** muestra el código devuelto por backend.
 - [x] **20 · Seguimiento:** recarga el expediente real por ID y usa el estado de PostgreSQL.

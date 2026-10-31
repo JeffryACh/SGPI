@@ -739,6 +739,7 @@ let evaluacionVinculacion = null;
 let documentosVinculacion = [];
 let historialPropuestas = null;
 let vinculacionCargadaId = null;
+let archivosBorrador = [];
 
 /**
  * Resolver el identificador de la propuesta que se está consultando en este momento.
@@ -754,7 +755,7 @@ function propuestaActivaId() {
 
 /**
  * Resolver el id de una propuesta ya registrada en PostgreSQL, nunca de un borrador.
- * La creación (opción A) no sube archivos; esto evita asociar documentos a una propuesta anterior.
+ * Permite distinguir si un documento se adjunta al borrador o se sube a un expediente existente.
  * parametros:
  *     (ninguno)
  * return:
@@ -780,6 +781,7 @@ function iniciarNuevoBorrador() {
   evaluacionVinculacion = null;
   documentosVinculacion = [];
   vinculacionCargadaId = null;
+  archivosBorrador = [];
 }
 
 /**
@@ -2445,6 +2447,7 @@ function clearProposalDraft() {
   state.clientUuid = null;
   state.modeId = 3;
   state.mode = "Desarrollo tecnológico";
+  archivosBorrador = [];
 }
 
 function newProposal() {
@@ -2854,9 +2857,21 @@ function complementaryForm() {
  *     + string : docsFormHtml Marcado HTML de gestión documental.
  */
 function documentsForm() {
-  // [Línea clave]: Opción A: el borrador no sube archivos. Los documentos reales se adjuntan
-  // después de registrar la propuesta desde Seguimiento (pantalla 20) o desde cada dictamen.
-  return `${notice("Los documentos se adjuntan después de registrar la propuesta", "Al enviarla se asigna el código SI-YYYY-NNN. Desde Seguimiento (pantalla 20) puedes adjuntar los archivos reales en PDF, DOCX, XLSX o PPTX.")}<div class="mt">${docPendiente("Formulario institucional", "Opcional en el borrador")}${docPendiente("Plan de acción y riesgos", "Opcional en el borrador")}${docPendiente("Presupuesto 2027–2028", "Opcional en el borrador")}${docPendiente("Fundamentación", "Opcional en el borrador")}</div><div class="mt">${notice("Dictámenes y acuerdos se agregan en su etapa", "El dictamen de Vinculación precede al Comité; los avales se requieren para el sometimiento formal. No se exige un documento antes de que pueda ser emitido.")}</div>`;
+  // [Línea clave]: Los archivos elegidos en el borrador se guardan en memoria y se suben al confirmar el envío.
+  const esperados = ["Formulario institucional", "Plan de acción y riesgos", "Presupuesto 2027–2028", "Fundamentación"];
+  const adjuntos = archivosBorrador.length
+    ? archivosBorrador
+        .map((d, i) => {
+          const icono = /xlsx/i.test(d.file.name) ? "XLSX" : /docx/i.test(d.file.name) ? "DOCX" : "PDF";
+          return `<div class="doc-row"><span class="doc-icon">${icono}</span><div class="grow"><strong>${esc(d.file.name)}</strong><small>${esc(d.tipo)} · ${formatBytes(d.file.size)} · Se sube al confirmar el envío</small></div>${act("Quitar", "remove-draft-doc", "text compact", "", `data-index="${i}"`)}</div>`;
+        })
+        .join("")
+    : notice("Aún no has adjuntado documentos", "Puedes enviar la propuesta sin documentos y adjuntarlos después desde Seguimiento (pantalla 20).");
+  const pendientes = esperados
+    .filter((tipo) => !archivosBorrador.some((d) => d.tipo === tipo))
+    .map((tipo) => docPendiente(tipo, "Opcional"))
+    .join("");
+  return `${adjuntos}<div class="action-row mt">${act("Adjuntar documento", "upload", "secondary", "plus")}</div><div class="mt">${pendientes}</div><div class="mt">${notice("Los archivos se envían con la propuesta", "Al confirmar el envío se registra la propuesta y se suben estos archivos reales a su expediente (PDF, DOCX, XLSX o PPTX, máximo 20 MB).")}</div><div class="mt">${notice("Dictámenes y acuerdos se agregan en su etapa", "El dictamen de Vinculación precede al Comité; los avales se requieren para el sometimiento formal. No se exige un documento antes de que pueda ser emitido.")}</div>`;
 }
 
 /**
@@ -2881,7 +2896,7 @@ function reviewForm() {
     ["Gestión de riesgos", "14", !afectadas.has("14")],
     ["Presupuesto anual", "15", !afectadas.has("15")],
     ["Ética y propiedad intelectual", "16", !afectadas.has("16")],
-    ["Documentos (se adjuntan tras registrar)", "17", true],
+    [`Documentos (${archivosBorrador.length} adjunto${archivosBorrador.length === 1 ? "" : "s"}, opcionales)`, "17", true],
   ];
   return `<div class="mb"><span class="project-code">${esc(state.clientUuid ? "Borrador listo para registrar" : "Nueva propuesta")} · ${esc(modalidad || "Modalidad")}</span><h2>${esc(titulo)}</h2><p class="small muted" style="margin-top:8px">${esc(draftValue("08:Fecha de inicio", "2027-01-01"))} – ${esc(draftValue("08:Fecha de finalización", "2028-12-31"))} · ${money(totalA() + totalB())} · Versión 1.0</p></div><div class="review-grid">${filas
     .map(
@@ -4434,14 +4449,13 @@ async function handleAction(action, el) {
       );
       break;
     case "upload": {
-      const propuestaReal = propuestaRealActiva();
-      if (!propuestaReal) {
-        toast("Registra la propuesta antes de adjuntar documentos.");
-        break;
-      }
+      const enBorrador = Number(current) >= 8 && Number(current) <= 18;
+      const destino = enBorrador
+        ? "Se subirá automáticamente al confirmar el envío."
+        : "Se almacena en el expediente de la propuesta.";
       modal(
         "Adjuntar documento",
-        `<div class="mt">${field("Tipo de documento", ["Fundamentación", "Carta de compromiso", "Presupuesto", "Plan de acción", "Otro"], "select", "", false, "modal:upload:tipo")}<div class="field"><label for="propuesta-doc">Archivo (PDF, DOCX, XLSX o PPTX)</label><input id="propuesta-doc" type="file" accept=".pdf,.docx,.xlsx,.pptx"><span class="help">Máximo 20 MB. Se almacena en el expediente de la propuesta.</span></div></div>`,
+        `<div class="mt">${field("Tipo de documento", ["Formulario institucional", "Plan de acción y riesgos", "Presupuesto 2027–2028", "Fundamentación", "Carta de compromiso", "Otro"], "select", "", false, "modal:upload:tipo")}<div class="field"><label for="propuesta-doc">Archivo (PDF, DOCX, XLSX o PPTX)</label><input id="propuesta-doc" type="file" accept=".pdf,.docx,.xlsx,.pptx"><span class="help">Máximo 20 MB. ${destino}</span></div></div>`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Adjuntar", "upload-save"),
         false,
@@ -4450,15 +4464,26 @@ async function handleAction(action, el) {
       break;
     }
     case "upload-save": {
-      const propuestaReal = propuestaRealActiva();
       const archivo = $("#propuesta-doc")?.files?.[0] || null;
       const tipo = $('[data-field="modal:upload:tipo"]')?.value || "Otro";
-      if (!propuestaReal) {
-        toast("Registra la propuesta antes de adjuntar documentos.");
-        break;
-      }
       if (!archivo) {
         toast("Selecciona un archivo PDF, DOCX, XLSX o PPTX.");
+        break;
+      }
+      if (archivo.size > 20 * 1024 * 1024) {
+        toast("El archivo supera el máximo de 20 MB.");
+        break;
+      }
+      if (Number(current) >= 8 && Number(current) <= 18) {
+        archivosBorrador.push({ file: archivo, tipo });
+        closeModal();
+        render();
+        toast(`${archivo.name} se adjuntará al confirmar el envío.`);
+        break;
+      }
+      const propuestaReal = propuestaRealActiva();
+      if (!propuestaReal) {
+        toast("Abre una propuesta registrada para adjuntar el documento.");
         break;
       }
       try {
@@ -4469,6 +4494,15 @@ async function handleAction(action, el) {
         toast(`Documento adjunto a ${dossierActual?.codigo || "la propuesta"}.`);
       } catch (err) {
         toast(err.message || "No se pudo adjuntar el documento.");
+      }
+      break;
+    }
+    case "remove-draft-doc": {
+      const i = Number(el.dataset.index);
+      if (Number.isInteger(i) && i >= 0 && i < archivosBorrador.length) {
+        archivosBorrador.splice(i, 1);
+        render();
+        toast("Documento quitado del borrador.");
       }
       break;
     }
@@ -4515,12 +4549,42 @@ async function handleAction(action, el) {
         state.stage = "En revisión de Vinculación";
         state.viewProposal = state.created.code;
         evaluacionPreliminarIA = respuesta?.evaluacion_preliminar_ia || null;
+        const idCreada = Number(state.created.id);
+        const fallidos = [];
+        let subidos = 0;
+        if (idCreada) {
+          for (const item of archivosBorrador) {
+            try {
+              await subirDocumentoPropuesta(idCreada, item.file, item.tipo);
+              subidos += 1;
+            } catch (err) {
+              fallidos.push(`${item.file.name}: ${err.message || "error al subir"}`);
+            }
+          }
+        }
+        archivosBorrador = [];
         clearProposalDraft();
         save();
         closeModal();
         await obtenerDatosBackend();
         go("19");
-        toast(respuesta?.duplicada ? "La propuesta ya estaba registrada." : "Propuesta registrada y remitida a Vinculación.");
+        if (fallidos.length) {
+          modal(
+            "La propuesta se registró, pero faltan documentos",
+            notice(
+              `${fallidos.length} archivo(s) no se pudieron subir`,
+              `${fallidos.map((f) => `• ${esc(f)}`).join("<br>")}<br><br>Puedes adjuntarlos desde Seguimiento (pantalla 20).`,
+              "warning",
+            ),
+            btn("Ir a seguimiento", "20") + act("Cerrar", "close", "secondary"),
+          );
+        } else if (subidos) {
+          toast(`Propuesta ${respuesta?.duplicada ? "ya registrada" : "registrada"} y ${subidos} documento(s) adjuntado(s).`);
+        } else if (respuesta?.duplicada) {
+          toast("La propuesta ya estaba registrada.");
+        } else {
+          toast("Propuesta registrada y remitida a Vinculación.");
+        }
       } catch (err) {
         console.error("send-confirm error:", err);
         modal(
