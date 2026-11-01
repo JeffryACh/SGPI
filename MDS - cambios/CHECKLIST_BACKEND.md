@@ -262,19 +262,24 @@ Pantallas principales: `02`, `21`, `22`, `25`, `28`.
 
 ### 4.5 Dirección de Investigación
 
-Pantallas principales: `21`, `22`, `26`, `28`, `29`, `30`, `31`, `32`.
+Pantallas principales: `02`, `21`, `22`, `26`, `28`, `29`, `30`, `31`, `32`.
 
-- [ ] **21 · Bandeja:** filtrar propuestas sometidas ante VIE.
-- [ ] **22 · Expediente:** cargar dossier real.
-- [ ] **26 · Dictamen:** persistir verificaciones en `vie_dictamen_verifications`.
-- [ ] **26 · Dictamen:** guardar cada criterio y su cumplimiento.
-- [ ] **26 · Dictamen:** guardar resultado favorable, con observaciones o desfavorable.
-- [ ] **26 · Dictamen:** guardar fundamentación y fecha.
-- [ ] **26 · Dictamen:** adjuntar dictamen firmado.
-- [ ] **26 · Dictamen:** transición controlada de `6` a `7` o `10`.
-- [ ] **26 · Dictamen:** notificar al CIE y al investigador.
-- [ ] **28 · Historial:** mostrar verificaciones y dictamen.
-- [ ] **29–30 · Consulta histórica:** filtros y detalle reales.
+- [x] **02 · Inicio:** bandeja de propuestas sometidas ante VIE para Dirección de Investigación.
+- [x] **02 · Inicio:** dashboard con contadores reales `pendientes`, `determinadas` y `totales_revisadas` (`GET /propuestas/direccion/dashboard`).
+- [x] **02 · Inicio:** propuesta destacada = más reciente ingresada a VIE (por `proposal_state_history`).
+- [x] **21 · Bandeja:** filtrar propuestas sometidas ante VIE (`GET /propuestas/direccion/bandeja`).
+- [x] **21 · Bandeja:** ordenar por fecha de ingreso a VIE descendente.
+- [x] **22 · Expediente:** cargar dossier real con `dictamen_direccion` incluido.
+- [x] **26 · Dictamen:** persistir verificaciones en `vie_dictamen_verifications`.
+- [x] **26 · Dictamen:** guardar cada criterio y su cumplimiento.
+- [x] **26 · Dictamen:** guardar resultado favorable, con observaciones o desfavorable.
+- [x] **26 · Dictamen:** guardar fundamentación y fecha.
+- [x] **26 · Dictamen:** formulario con checklist de criterios VIE y verificaciones institucionales.
+- [x] **26 · Dictamen:** transición controlada de `6` a `7`.
+- [x] **26 · Dictamen:** notificar al líder de la propuesta.
+- [x] **26 · Dictamen:** resolver los estados por nombre desde `estados` (nada de identificadores fixedos).
+- [x] **28 · Historial:** mostrar verificaciones y dictamen de Dirección.
+- [x] **29–30 · Consulta histórica:** el buscador genérico `GET /propuestas` cubre los filtros y el detalle.
 - [ ] **31 · Administración de convocatorias:** no hay CRUD de convocatorias.
 - [ ] **31 · Administración de convocatorias:** no hay CRUD de etapas.
 - [ ] **31 · Administración de convocatorias:** no hay edición de reglas por modalidad.
@@ -327,7 +332,7 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 | `rubric_sections` | Lectura | CRUD y versionado de la rúbrica |
 | `rubric_criteria` | Lectura | CRUD y versionado de criterios y pesos |
 | `technical_committee_scores` | Uso completo | Mantener la integridad al versionar rúbricas |
-| `vie_dictamen_verifications` | Sin uso | Verificación de criterios de Dirección |
+| `vie_dictamen_verifications` | Uso completo | Verificación de criterios de Dirección (rol Dirección) |
 | `technical_committee_evaluations` | Uso completo | `decision`, `justificacion`, `tiene_bloqueo_obligatorio` y `puntaje numeric(5,1)` (V12) |
 | `cie_resolution_evaluations` | Uso parcial | Solo `id_resolucion`; faltan datos del acuerdo |
 | `ai_preliminary_evaluations` | Uso completo | Mantener y versionar si cambia el modelo |

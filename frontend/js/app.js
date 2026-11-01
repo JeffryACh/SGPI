@@ -225,11 +225,21 @@ const LOGIN_ERRORS = {
  *     * Function : "05" Cargador de etapas de convocatoria según la seleccionada.
  */
 const SCREEN_LOADERS = {
-  "02": () => {
-    if (state.role === "vinculacion") return cargarBandejaVinculacion();
-    if (state.role === "comite") return cargarBandejaComite();
-    if (state.role === "consejo") return cargarBandejaConsejo();
-    return Promise.resolve(null);
+  "02": async () => {
+    try {
+      if (state.role === "vinculacion") return await cargarBandejaVinculacion();
+      if (state.role === "comite") return await cargarBandejaComite();
+      if (state.role === "consejo") return await cargarBandejaConsejo();
+      if (state.role === "direccion") {
+        // La bandeja alimenta el expediente y el dictamen; el dashboard alimenta las tarjetas.
+        await Promise.all([cargarBandejaDireccion(), cargarDashboardDireccion()]);
+        return null;
+      }
+      return null;
+    } catch (e) {
+      console.warn("SCREEN_LOADERS 02 error:", e);
+      return null;
+    }
   },
   "04": obtener_convocatorias,
   "05": () =>
@@ -242,6 +252,7 @@ const SCREEN_LOADERS = {
   "21": () => {
     if (state.role === "comite") return cargarBandejaComite();
     if (state.role === "consejo") return cargarBandejaConsejo();
+    if (state.role === "direccion") return cargarBandejaDireccion();
     return cargarBandejaVinculacion();
   },
   "22": () => cargarDossier(),
@@ -271,7 +282,14 @@ const SCREEN_LOADERS = {
     }
     await obtenerEvaluacionPreliminarIA(propuestaActivaId());
   },
-  "26": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
+  "26": async () => {
+    if (state.role === "direccion") {
+      if (!bandejaDireccion?.length) await cargarBandejaDireccion();
+      await Promise.all([cargarDossier(), cargarDictamenDireccion()]);
+      return obtenerEvaluacionPreliminarIA(propuestaActivaId());
+    }
+    return obtenerEvaluacionPreliminarIA(propuestaActivaId());
+  },
   "27": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
   "28": () => cargarDossier(),
   "30": () => buscarPropuestas(),
@@ -289,7 +307,13 @@ async function loadScreenData() {
   const id = location.hash.replace("#", "") || "01";
   const loader = SCREEN_LOADERS[id];
   if (!loader || !session) return;
-  await loader();
+  try {
+    // Se espera el cargador para que la pantalla se pinte con los datos ya cargados.
+    // Cada cargador captura sus propios errores, así que un fallo no deja la SPA congelada.
+    await loader();
+  } catch (err) {
+    console.warn("loadScreenData loader error:", err);
+  }
   if ((location.hash.replace("#", "") || "01") === id) render(); // sigue en la misma pantalla
 }
 
@@ -820,6 +844,29 @@ let comiteCargadoId = null;
 let bandejaConsejo = null;
 let avalConsejo = null;
 let consejoCargadoId = null;
+// [Línea clave]: Estado en memoria de la Dirección de Investigación. Si estas variables no se
+// declaran, cada asignación lanza ReferenceError porque el archivo usa modo estricto y la
+// bandeja y el dashboard quedan vacíos en pantalla.
+let bandejaDireccion = [];
+let dictamenDireccion = null;
+let direccionCargadoId = null;
+let dashboardDireccion = null;
+
+/**
+ * Cronograma oficial de la Convocatoria Fondos VIE 2027.
+ * Cada tupla es [etapa, ventana temporal] y se usa en las pantallas 05, 31 y 32.
+ * Es el respaldo estático mientras la convocatoria todavía no se administra desde el backend.
+ */
+const calendarRows = [
+  ["Formulación", "28 jul – 21 ago 2026"],
+  ["Vinculación", "24 – 28 ago 2026"],
+  ["Evaluación técnica", "31 ago – 11 sep 2026"],
+  ["Avales de consejos", "14 – 25 sep 2026"],
+  ["Sometimiento formal", "28 sep 2026"],
+  ["Dictamen de Dirección", "29 sep – 12 oct 2026"],
+  ["Resolución CIE", "13 – 23 oct 2026"],
+  ["Carta de aceptación", "02 – 06 nov 2026"],
+];
 
 /**
  * Resolver el identificador de la propuesta que se está consultando en este momento.
@@ -886,6 +933,7 @@ function mapearPropuestaBackend(p = {}) {
     line: p.linea_investigacion || p.nombre_linea || p.line || "",
     fechaIngreso: p.fecha_ingreso_comite || null,
     fechaIngresoConsejo: p.fecha_ingreso_consejo || null,
+    fechaIngresoVie: p.fecha_ingreso_vie || null,
     fechaCreacion: p.fecha_creacion || null,
     miAval: !!p.mi_aval,
     avalesRegistrados: Number(p.avales_registrados || 0),
@@ -1338,6 +1386,16 @@ const esPendienteConsejo = (p) =>
   /pendiente de aval del consejo/i.test((p && p.status) || "") && !(p && p.miAval);
 
 /**
+ * Determinar si una propuesta de la bandeja de Dirección sigue pendiente de dictamen.
+ * Solo las propuestas «Sometida ante VIE» esperan la decisión de Dirección.
+ * parametros:
+ *     - Object : p Propuesta normalizada con la propiedad 'status'.
+ * return:
+ *     + boolean : pendiente Verdadero si espera el dictamen de Dirección.
+ */
+const esPendienteDireccion = (p) => /sometida ante vie/i.test((p && p.status) || "");
+
+/**
  * Descargar la bandeja del Consejo de Escuela desde PostgreSQL y conservar la propuesta activa.
  * parametros:
  *     (ninguno)
@@ -1428,6 +1486,150 @@ async function cargarAvalConsejo(idPropuesta = propuestaActivaId()) {
  */
 async function guardarAvalConsejo(idPropuesta, payload) {
   const res = await fetch(`${API_URL}/propuestas/consejo/${idPropuesta}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await errorDesdeRespuesta(res));
+  return res.json();
+}
+
+/**
+ * Descargar la bandeja de Dirección de Investigación desde PostgreSQL.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>|null> : bandejaDireccion Propuestas sometidas ante VIE.
+ */
+async function cargarBandejaDireccion() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) return null;
+  try {
+    const res = await fetch(
+      `${API_URL}/propuestas/direccion/bandeja?rol=${encodeURIComponent("Dirección de Investigación")}&id_usuario=${idUsuario}`,
+    );
+    if (res.ok) {
+      bandejaDireccion = (await res.json()).map(mapearPropuestaBackend);
+      if (!state.viewProposalId && bandejaDireccion.length) {
+        const objetivo = bandejaDireccion[0];
+        state.viewProposalId = objetivo.id;
+        state.viewProposal = objetivo.code;
+      }
+    } else {
+      console.warn("cargarBandejaDireccion:", await errorDesdeRespuesta(res));
+      bandejaDireccion = [];
+    }
+  } catch (err) {
+    console.warn("cargarBandejaDireccion error:", err);
+    bandejaDireccion = [];
+  }
+  return bandejaDireccion;
+}
+
+/**
+ * Cargar el dashboard de Dirección de Investigación.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Object|null> : dashboardDireccion Métricas y propuesta destacada.
+ */
+async function cargarDashboardDireccion() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) {
+    dashboardDireccion = null;
+    if ((location.hash.replace("#", "") || "01") === "02" && state.role === "direccion") {
+      try {
+        render();
+      } catch (_) {}
+    }
+    return null;
+  }
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeout = setTimeout(() => {
+    if (controller) controller.abort();
+  }, 8000);
+  try {
+    const res = await fetch(
+      `${API_URL}/propuestas/direccion/dashboard?rol=${encodeURIComponent("Dirección de Investigación")}&id_usuario=${idUsuario}`,
+      controller ? { signal: controller.signal } : undefined,
+    );
+    clearTimeout(timeout);
+    if (res.ok) {
+      try {
+        const data = await res.json();
+        dashboardDireccion = data || null;
+        if (!state.viewProposalId && dashboardDireccion?.propuesta_destacada?.id_propuesta) {
+          state.viewProposalId = dashboardDireccion.propuesta_destacada.id_propuesta;
+          state.viewProposal = dashboardDireccion.propuesta_destacada.codigo;
+        }
+      } catch (err) {
+        console.warn("cargarDashboardDireccion json error:", err);
+        dashboardDireccion = null;
+      }
+    } else {
+      try {
+        console.warn("cargarDashboardDireccion:", await errorDesdeRespuesta(res));
+      } catch (_) {
+        console.warn("cargarDashboardDireccion: respuesta no OK");
+      }
+      dashboardDireccion = null;
+    }
+  } catch (err) {
+    clearTimeout(timeout);
+    console.warn("cargarDashboardDireccion error:", err);
+    dashboardDireccion = null;
+  }
+  if ((location.hash.replace("#", "") || "01") === "02" && state.role === "direccion") {
+    try {
+      render();
+    } catch (_) {}
+  }
+  return dashboardDireccion;
+}
+
+/**
+ * Descargar el expediente para dictamen de Dirección de Investigación.
+ * parametros:
+ *     - number : idPropuesta Identificador de la propuesta.
+ * return:
+ *     + Promise<Object|null> : dictamenDireccion Expdiente para dictamen.
+ */
+async function cargarDictamenDireccion(idPropuesta = propuestaActivaId()) {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idPropuesta || !idUsuario) return null;
+  if (direccionCargadoId !== Number(idPropuesta)) {
+    Object.keys(state.saved)
+      .filter((clave) => clave.startsWith("direccion:"))
+      .forEach((clave) => delete state.saved[clave]);
+    direccionCargadoId = Number(idPropuesta);
+  }
+  try {
+    const res = await fetch(
+      `${API_URL}/propuestas/direccion/${idPropuesta}?id_usuario=${idUsuario}`,
+    );
+    if (res.ok) {
+      dictamenDireccion = await res.json();
+    } else {
+      console.warn("cargarDictamenDireccion:", await errorDesdeRespuesta(res));
+      dictamenDireccion = null;
+    }
+  } catch (err) {
+    console.warn("cargarDictamenDireccion error:", err);
+    dictamenDireccion = null;
+  }
+  return dictamenDireccion;
+}
+
+/**
+ * Registrar el dictamen de Dirección de Investigación.
+ * parametros:
+ *     - number : idPropuesta Identificador de la propuesta.
+ *     - Object : payload Datos del dictamen.
+ * return:
+ *     + Promise<Object> : Resultado de registro.
+ */
+async function guardarDictamenDireccion(idPropuesta, payload) {
+  const res = await fetch(`${API_URL}/propuestas/direccion/${idPropuesta}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -1808,13 +2010,14 @@ const person = () => {
 
 /**
  * Obtener el identificador de pantalla de inicio asignado al rol activo.
- * Retorna '02' para investigador y '21' (Bandeja de trabajo) para roles evaluadores.
+ * Retorna '02' para investigador y Dirección (panel con contadores reales) y '21'
+ * (Bandeja de trabajo) para el resto de roles evaluadores.
  * parametros:
  *     (ninguno)
  * return:
  *     + string : pantallaInicio Identificador de la pantalla de inicio correspondiente.
  */
-const homeFor = () => (state.role === "investigador" ? "02" : "21");
+const homeFor = () => (state.role === "investigador" || state.role === "direccion" ? "02" : "21");
 
 /**
  * Cambiar el rol institucional activo en la demostración y sincronizar la etapa de la propuesta.
@@ -1828,8 +2031,8 @@ function applyRole(key) {
   const rolAnterior = state.role;
   state.role = key;
   // [Línea clave]: Las bandejas institucionales no deben reutilizar el expediente seleccionado
-  // por otro rol; se limpia el puntero al cambiar a Vinculación o Comité.
-  if (["vinculacion", "comite"].includes(key) && rolAnterior !== key)
+  // por otro rol; se limpia el puntero al cambiar a un rol evaluador.
+  if (["vinculacion", "comite", "consejo", "direccion"].includes(key) && rolAnterior !== key)
     state.viewProposalId = null;
   state.viewProposal = state.created?.code || "SI-2027-014";
   state.stage = {
@@ -2308,6 +2511,87 @@ function dashboard() {
     const esVinculacion = state.role === "vinculacion";
     const esComite = state.role === "comite";
     const esConsejo = state.role === "consejo";
+    const esDireccion = state.role === "direccion";
+    if (esDireccion) {
+      try {
+        const dash = dashboardDireccion || {};
+        const pendienteCount = Number(dash.pendientes || 0);
+        const determinadaCount = Number(dash.determinadas || 0);
+        const revisadasCount = Number(dash.totales_revisadas || 0);
+        const destacada = dash.propuesta_destacada || null;
+        const metricasDir = [
+          ["Pendientes", String(pendienteCount)],
+          ["Determinadas", String(determinadaCount)],
+          ["Totales revisadas", String(revisadasCount)],
+        ];
+        const fechaLegible = (valor) => {
+          if (!valor) return "";
+          try {
+            return new Date(valor).toLocaleString("es-CR", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+          } catch {
+            return String(valor);
+          }
+        };
+        const filaDir = destacada
+          ? [
+              `<span class="project-code">${esc(destacada.codigo || "")}</span><strong>${esc(destacada.titulo || "")}</strong><br><span class="small muted">${esc(destacada.escuela_siglas || destacada.escuela || "")} · ${esc(destacada.modalidad || "")}</span>`,
+              esc(destacada.nombre_estado || ""),
+              destacada.fecha_ingreso_vie
+                ? badge(`Ingresó a VIE ${fechaLegible(destacada.fecha_ingreso_vie).replace(", ", " · ")}`)
+                : badge("Sometida ante VIE"),
+              btn(
+                "Dictaminar",
+                "26",
+                "text",
+                "arrow",
+                `data-proposal="${esc(destacada.codigo || "")}" data-proposal-id="${destacada.id_propuesta || ""}"`,
+              ),
+            ]
+          : [`<span class="muted">No hay propuestas pendientes de dictamen de Dirección.</span>`, "", "", ""];
+        const heroTituloDir =
+          pendienteCount === 0
+            ? "No hay propuestas pendientes de dictamen"
+            : pendienteCount === 1
+              ? "Una propuesta espera tu dictamen"
+              : `${pendienteCount} propuestas esperan tu dictamen`;
+        const heroTextoDir = destacada
+          ? `Más reciente ingresada a VIE: ${esc(destacada.codigo || "")} · ${esc(destacada.titulo || "")}${destacada.fecha_ingreso_vie ? ` · Ingresó el ${fechaLegible(destacada.fecha_ingreso_vie)}.` : "."}`
+          : "Consulta la bandeja para revisar las propuestas sometidas ante VIE.";
+        let nombreHola = "Dirección";
+        try {
+          const p = person();
+          if (p && p.name) nombreHola = String(p.name).split(" ")[0];
+        } catch {}
+        return shell(
+          `<div class="hero"><div><h2>${heroTituloDir}</h2><p>${heroTextoDir}</p></div>${btn("Abrir bandeja", "21", "", "arrow")}</div><div class="grid three mt">${metricasDir
+            .map(
+              ([a, b]) =>
+                `<div class="card metric"><span class="label">${a}</span><span class="value">${b}</span></div>`,
+            )
+            .join("")}</div><div class="mt card">${table(["Expediente", "Etapa", "Ingreso a VIE", ""], [filaDir])}</div>`,
+          `Hola, ${nombreHola}`,
+          "",
+          "",
+        );
+      } catch (e) {
+        console.warn("dashboard direccion render error:", e);
+        try {
+          cargarBandejaDireccion().catch(() => null);
+        } catch (_) {}
+        return shell(
+          `<div class="hero"><div><h2>Dirección de Investigación</h2><p>Consulta la bandeja para revisar las propuestas sometidas ante VIE.</p></div>${btn("Abrir bandeja", "21", "", "arrow")}</div><div class="grid three mt"><div class="card metric"><span class="label">Pendientes</span><span class="value">0</span></div><div class="card metric"><span class="label">Determinadas</span><span class="value">0</span></div><div class="card metric"><span class="label">Totales revisadas</span><span class="value">0</span></div></div>`,
+          "Hola, Dirección",
+          "",
+          "",
+        );
+      }
+    }
     const bandeja = esVinculacion
       ? bandejaPropuestas || []
       : esComite
@@ -2429,6 +2713,10 @@ function dashboard() {
       : esConsejo
         ? ["Expediente", "Etapa", "Aval", ""]
         : ["Expediente", "Etapa", "Prioridad", ""];
+    let nombreHolaFallback = roles[state.role]?.label || "";
+    try {
+      nombreHolaFallback = person().name.split(" ")[0];
+    } catch {}
     return shell(
       `<div class="hero"><div><h2>${heroTitulo}</h2><p>${heroTexto}</p></div>${btn("Abrir bandeja", "21", "", "arrow")}</div><div class="grid three mt">${metricas
         .map(
@@ -2436,7 +2724,7 @@ function dashboard() {
             `<div class="card metric"><span class="label">${a}</span><span class="value">${b}</span></div>`,
         )
         .join("")}</div><div class="mt card">${table(cabeceras, [fila])}</div>`,
-      `Hola, ${person().name.split(" ")[0]}`,
+      `Hola, ${nombreHolaFallback}`,
       "",
       "",
     );
@@ -3675,7 +3963,8 @@ function tracking() {
  */
 function inbox() {
   // [Línea clave]: Cada instancia colegiada consume su propia bandeja real de PostgreSQL.
-  // El Comité Técnico usa bandejaComite; Vinculación mantiene bandejaPropuestas.
+  // El Comité Técnico usa bandejaComite; Vinculación mantiene bandejaPropuestas;
+  // Dirección de Investigación usa bandejaDireccion.
   const list =
     state.role === "vinculacion"
       ? bandejaPropuestas || []
@@ -3683,7 +3972,9 @@ function inbox() {
         ? bandejaComite || []
         : state.role === "consejo"
           ? bandejaConsejo || []
-          : top3propuestasmasrecientes || [];
+          : state.role === "direccion"
+            ? bandejaDireccion || []
+            : top3propuestasmasrecientes || [];
   const closedStatuses =
     state.role === "vinculacion"
       ? ["En evaluación del Comité Técnico", "Con observaciones", "Rechazada", "Aprobada por CIE", "Cerrada", "Resuelta"]
@@ -3691,32 +3982,46 @@ function inbox() {
         ? ["Pendiente de aval del Consejo", "Avalada", "Sometida ante VIE", "Dictaminada por Dirección", "Con observaciones", "Rechazada", "Aprobada por CIE", "En ejecución", "Cerrada"]
         : state.role === "consejo"
           ? ["Avalada", "Sometida ante VIE", "Dictaminada por Dirección", "Con observaciones", "Rechazada", "Aprobada por CIE", "En ejecución", "Cerrada"]
-          : ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"];
-  const pending = state.role === "consejo"
-    ? list.filter(esPendienteConsejo)
-    : list.filter((p) => !closedStatuses.includes(p.status));
-  const closed = state.role === "consejo"
-    ? list.filter((p) => !esPendienteConsejo(p))
-    : list.filter((p) => closedStatuses.includes(p.status));
+          : state.role === "direccion"
+            ? ["Dictaminada por Dirección", "Con observaciones", "Rechazada", "Aprobada por CIE", "En ejecución", "Cerrada"]
+            : ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"];
+  const pending =
+    state.role === "consejo"
+      ? list.filter(esPendienteConsejo)
+      : state.role === "direccion"
+        ? list.filter(esPendienteDireccion)
+        : list.filter((p) => !closedStatuses.includes(p.status));
+  const closed =
+    state.role === "consejo"
+      ? list.filter((p) => !esPendienteConsejo(p))
+      : state.role === "direccion"
+        ? list.filter((p) => !esPendienteDireccion(p))
+        : list.filter((p) => closedStatuses.includes(p.status));
 
   let filtered = activeFilter === "Finalizadas" ? closed : pending;
   if (activeFilter === "En revisión") filtered = pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación"));
   // [Línea clave]: El Consejo de Escuela filtra por los avales que su escuela ya registró.
   if (activeFilter === "Avalados") filtered = list.filter((p) => p.miAval);
+  // [Línea clave]: Dirección separa los expedientes que ya dictaminó de los que aún espera.
+  if (activeFilter === "Determinadas") filtered = closed;
 
   const rows = filtered.map((p) => {
     const puedeEvaluar = state.role === "comite" && !closedStatuses.includes(p.status);
     // [Línea clave]: El Consejo de Escuela solo ofrece registrar aval cuando la propuesta
     // sigue pendiente y su escuela todavía no registró el acuerdo.
     const puedeAvalar = state.role === "consejo" && esPendienteConsejo(p);
+    // [Línea clave]: Dirección dictamina las propuestas pendientes y abre el expediente de las demás.
+    const puedeDictaminar = state.role === "direccion" && esPendienteDireccion(p);
     const etiquetaBoton = puedeEvaluar
       ? "Evaluar propuesta"
       : puedeAvalar
         ? "Registrar aval"
-        : "Abrir expediente";
-    const destino = puedeEvaluar ? "24" : puedeAvalar ? "25" : "22";
+        : puedeDictaminar
+          ? "Dictaminar"
+          : "Abrir expediente";
+    const destino = puedeEvaluar ? "24" : puedeAvalar ? "25" : puedeDictaminar ? "26" : "22";
     return [
-      `<span class="project-code">${esc(p.code)}</span><strong>${esc(p.title)}</strong><br><span class="micro muted">${esc(p.leader || "Investigador")} · ${esc(p.school || "TEC")}</span>`,
+      `<span class="project-code">${esc(p.code)}</span><strong>${esc(p.title)}</strong><br><span class="micro muted">${esc(p.leader || "Investigador")} · ${esc(p.school || "TEC")}${p.fechaIngresoVie ? ` · Ingresó a VIE ${esc(String(p.fechaIngresoVie).slice(0, 10))}` : ""}</span>`,
       esc(p.type),
       badge(p.status),
       btn(
@@ -3736,11 +4041,24 @@ function inbox() {
           ["Avaladas por tu escuela", String(list.filter((p) => p.miAval).length)],
           ["Total en tu bandeja", String(list.length)],
         ]
-      : [
-          ["Pendientes de revisión", String(pending.length)],
-          ["En evaluación / revisión", String(pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación")).length)],
-          ["Finalizadas en la convocatoria", String(closed.length)],
-        ];
+      : state.role === "direccion"
+        ? [
+            ["Pendientes de dictamen", String(pending.length)],
+            ["Determinadas", String(closed.length)],
+            ["Total en tu bandeja", String(list.length)],
+          ]
+        : [
+            ["Pendientes de revisión", String(pending.length)],
+            ["En evaluación / revisión", String(pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación")).length)],
+            ["Finalizadas en la convocatoria", String(closed.length)],
+          ];
+
+  const pestanasBandeja =
+    state.role === "consejo"
+      ? ["Pendientes", "Avalados", "Finalizadas"]
+      : state.role === "direccion"
+        ? ["Pendientes", "Determinadas"]
+        : ["Pendientes", "En revisión", "Finalizadas"];
 
   return shell(
     `<div class="grid three mb">${metricas
@@ -3751,9 +4069,7 @@ function inbox() {
       .join(
         "",
       )}</div>${tabs(
-        state.role === "consejo"
-          ? ["Pendientes", "Avalados", "Finalizadas"]
-          : ["Pendientes", "En revisión", "Finalizadas"],
+        pestanasBandeja,
         activeFilter === "Todas" ? "Pendientes" : activeFilter,
         "data-filter",
       )}<div class="card">${table(["Expediente", "Modalidad", "Etapa", ""], rows.length ? rows : [[`<span class="muted">No hay expedientes para este filtro</span>`, "", "", ""]])}</div>`,
@@ -3862,6 +4178,26 @@ function dossier() {
         "Comité Técnico",
         "Sin dictamen registrado",
         act("Ver rúbrica oficial", "rubric-summary", "text"),
+      ]);
+    }
+    // [Línea clave]: El dictamen de Dirección de Investigación se lee del expediente real
+    // (dictamen_direccion) con su resolución y el cumplimiento de los criterios VIE.
+    const dir = d?.dictamen_direccion;
+    if (dir) {
+      const criteriosCumplidos = (dir.verificaciones || []).filter((v) => v.cumple).length;
+      const totalCriterios = (dir.verificaciones || []).length;
+      filas.push([
+        "Dirección de Investigación",
+        esc(
+          `${dir.dictamen || "Registrada"} · ${criteriosCumplidos}/${totalCriterios} criterios VIE · ${dir.evaluador_nombre || "Dirección"}${dir.fundamentacion ? ` · ${dir.fundamentacion}` : ""}`,
+        ),
+        `<button class="btn text" data-go="28">Ver dictamen</button>`,
+      ]);
+    } else {
+      filas.push([
+        "Dirección de Investigación",
+        "Sin dictamen registrado",
+        act("Ver dictamen", "preview", "text"),
       ]);
     }
     // [Línea clave]: Los avales del Consejo de Escuela se leen del expediente real
@@ -4189,8 +4525,29 @@ function evaluation(id) {
     const formularioAval = `${field("Número de sesión", "", "text", "Sesión en la que se aprobó el acuerdo.", true, "consejo:sesion")}<div class="field-row">${field("Artículo", "", "text", "Artículo del acuerdo que sustenta el aval.", true, "consejo:articulo")}${field("Fecha del acuerdo", hoy, "date", "", true, "consejo:fecha")}</div>${field("Número de oficio", "", "text", "Oficio emitido por el Consejo de Escuela.", true, "consejo:oficio")}${field("Ratificación de la calificación técnica", true, "checkbox", "El consejo ratifica la evaluación técnica del Comité Técnico.", false, "consejo:ratifica")}${field("Aval de la propuesta y del presupuesto", true, "checkbox", "El consejo avala la propuesta y el monto solicitado.", false, "consejo:presupuesto")}${field("Aval de las horas del personal", true, "checkbox", "El consejo avala la carga horaria del personal de su escuela.", false, "consejo:horas")}${field("Observaciones del acuerdo", "", "textarea", "Detalle del acuerdo o condiciones del aval.", false, "consejo:observaciones")}<div class="field"><label for="consejo-doc">Acuerdo firmado (PDF, DOCX)</label><input id="consejo-doc" type="file" accept=".pdf,.docx"><span class="help">Máximo 20 MB. Se almacena en el expediente de la propuesta.</span></div>`;
     inner = `${notice("El aval no somete automáticamente", "Después del acuerdo, el investigador realiza el sometimiento formal ante VIE.")}${estadoAval}${avisoPendientes}${resumen}${puedeAvalar ? `<div class="mt">${formularioAval}</div>` : ""}<div class="mt">${tablaInstancias}</div>${documentosAval}`;
   }
-  if (id === "26")
-    inner = `${notice("Propuesta sometida el 28 sep 2026", "La Dirección verifica el expediente antes de emitir el dictamen para CIE.")}<div class="mt">${["Responsabilidades institucionales al día", "Riesgos por actividad y mitigación coherente", "Participación estudiantil presupuestada", "Declaración ética y permisos verificados", "Documentos, evaluación y acuerdos completos"].map((t) => `<label class="checkline"><input type="checkbox" checked required>${t}</label>`).join("")}</div>${field("Verificación restringida", "Al día", "readonly")}${field("Dictamen", ["Favorable", "Con observaciones", "Desfavorable"], "select", "", true)}${field("Fundamentación", "El expediente incorpora la evaluación, los avales y la documentación requerida. Se remite al CIE para resolución.", "textarea", "09 oct 2026.", true)}${docPendiente("Dictamen de Dirección", "Pendiente de emitir")}`;
+  if (id === "26") {
+    const detalleDir = dictamenDireccion || {};
+    const yaDictaminadoDir = !!detalleDir.dictamen_direccion;
+    const criterios = detalleDir.criterios_vie || [];
+    const bloqueado = detalleDir.puede_dictaminar === false;
+    const aviso = yaDictaminadoDir
+      ? notice("Dictamen ya registrado por Dirección de Investigación", `Emitido por ${detalleDir.dictamen_direccion.evaluador_nombre || "Dirección"} el ${String(detalleDir.dictamen_direccion.fecha_evaluacion || "").slice(0, 10)} · ${detalleDir.dictamen_direccion.dictamen}.`)
+      : bloqueado
+        ? notice("Dictamen no disponible", detalleDir.motivo_bloqueo || "La propuesta no está en estado Sometida ante VIE.")
+        : notice("Propuesta sometida ante VIE", "La Dirección verifica el expediente antes de emitir el dictamen para el CIE.");
+    const checklist = (yaDictaminadoDir ? (detalleDir.dictamen_direccion.verificaciones || []) : criterios).map((c) => {
+      const idC = c.id_criterio;
+      const desc = c.descripcion_criterio || c.descripcion || "";
+      const checked = yaDictaminadoDir ? !!c.cumple : (state.saved[`direccion:criterio:${idC}`] !== false);
+      return `<label class="checkline"><input type="checkbox" data-direccion-criterio="${idC}" ${checked ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>${esc(desc)}</label>`;
+    }).join("");
+    const resp = yaDictaminadoDir ? (detalleDir.dictamen_direccion.verificacion_responsabilidades !== false) : (state.saved["direccion:resp"] !== false);
+    const riesgos = yaDictaminadoDir ? (detalleDir.dictamen_direccion.verificacion_riesgos !== false) : (state.saved["direccion:riesgos"] !== false);
+    const beca = yaDictaminadoDir ? (detalleDir.dictamen_direccion.verificacion_beca !== false) : (state.saved["direccion:beca"] !== false);
+    const decl = yaDictaminadoDir ? (detalleDir.dictamen_direccion.verificacion_declaraciones !== false) : (state.saved["direccion:decl"] !== false);
+    const docs = yaDictaminadoDir ? (detalleDir.dictamen_direccion.verificacion_documentos !== false) : (state.saved["direccion:docs"] !== false);
+    inner = `${aviso}<div class="mt"><strong>Verificación por criterios VIE</strong>${checklist}</div><div class="mt"><strong>Verificación institucional</strong><label class="checkline"><input type="checkbox" data-direccion-check="resp" ${resp ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Personal investigador al día con informes y compromisos</label><label class="checkline"><input type="checkbox" data-direccion-check="riesgos" ${riesgos ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Riesgos identificados y medidas de mitigación coherentes</label><label class="checkline"><input type="checkbox" data-direccion-check="beca" ${beca ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Beca obligatoria para estudiante asistente especial (cuando aplica)</label><label class="checkline"><input type="checkbox" data-direccion-check="decl" ${decl ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Declaraciones éticas completas y justificadas</label><label class="checkline"><input type="checkbox" data-direccion-check="docs" ${docs ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Avales, evaluación y documentos completos</label></div>${field("Dictamen", yaDictaminadoDir ? [detalleDir.dictamen_direccion.dictamen] : ["Favorable", "Con observaciones", "No favorable"], yaDictaminadoDir ? "select" : "select", "", true, "direccion:dictamen")}${field("Fundamentación", yaDictaminadoDir ? detalleDir.dictamen_direccion.fundamentacion : "El expediente incorpora la evaluación del Comité, los avales del Consejo y la documentación requerida. Se verifica el cumplimiento de los criterios VIE.", "textarea", "", true, "direccion:fundamentacion")}${yaDictaminadoDir ? "" : (detalleDir.documentos?.length ? `<div class="mt">${detalleDir.documentos.map(docPropuesta).join("")}</div>` : notice("Documentos del expediente", "Los documentos de la propuesta están disponibles en el expediente."))}`;
+  }
   if (id === "27")
     inner = `${notice("Expediente con dictamen de Dirección", "Valora cumplimiento del proceso, responsabilidades, interés estratégico y disponibilidad de recursos.")}<div class="mt">${field("Resolución", ["Aprobada", "Rechazada", "Con observaciones"], "select", "", true, "resolution")}</div><div class="field-row">${field("Sesión y artículo", "23-2026 · Artículo 5", "text", "", true)}${field("Fecha de resolución", "2026-10-23", "date", "", true)}</div>${field("Fundamentación y condiciones", "La iniciativa es pertinente y cuenta con respaldo en el proceso previo. Se aprueba conforme al plan y presupuesto; debe presentarse carta de aceptación.", "textarea", "La decisión debe quedar motivada, incluidas las resoluciones negativas.", true)}${docPendiente("Acuerdo del CIE", "Pendiente de emitir")}`;
   const propActiva =
@@ -4217,8 +4574,10 @@ function evaluation(id) {
     (id === "24" && !!evaluacionComite?.evaluacion?.id_evaluacion) ||
     // [Línea clave]: El Consejo de Escuela solo registra aval una vez por escuela; después
     // el expediente queda en modo consulta.
-    (id === "25" && (!!avalConsejo?.mi_aval || (!!avalConsejo && !avalConsejo.puede_aval)));
-  const accionesEvaluacion = dictamenExistente
+    (id === "25" && (!!avalConsejo?.mi_aval || (!!avalConsejo && !avalConsejo.puede_aval))) ||
+    (id === "26" && !!dictamenDireccion?.dictamen_direccion);
+  const puedeDictaminarDireccion = id === "26" ? (dictamenDireccion?.puede_dictaminar === true && !dictamenDireccion?.dictamen_direccion) : true;
+  const accionesEvaluacion = dictamenExistente || (id === "26" && !puedeDictaminarDireccion)
     ? btn("Volver a la bandeja", "21", "secondary", "back")
     : `${act("Devolver con observaciones", "return", "secondary")}${act(actionLabel, "decision", "", "check", `data-step="${id}"`)}`;
   return shell(
@@ -4390,6 +4749,44 @@ function dictamenConsejo(d = null) {
 }
 
 /**
+ * Construir la tarjeta con el dictamen de Dirección de Investigación y sus verificaciones.
+ * Lee el dictamen persistido en PostgreSQL (evaluations con rol Dirección + criterios VIE).
+ * parametros:
+ *     - Object|null : d Expediente consolidado.
+ * return:
+ *     + string : dictamenHtml Tarjeta con resolución, fundamentación y verificaciones.
+ */
+function dictamenDireccionResumen(d = null) {
+  const dir = d?.dictamen_direccion;
+  if (!dir)
+    return notice(
+      "Dictamen de Dirección pendiente",
+      "La propuesta aún no tiene un dictamen de Dirección de Investigación registrado.",
+    );
+  const criterios = (dir.verificaciones || [])
+    .map(
+      (v) =>
+        `<li>${v.cumple ? "✓" : "✗"} ${esc(v.descripcion_criterio || `Criterio ${v.id_criterio}`)}</li>`,
+    )
+    .join("");
+  const institucionales = [
+    ["Personal investigador al día", dir.verificacion_responsabilidades],
+    ["Riesgos y mitigación", dir.verificacion_riesgos],
+    ["Beca estudiantil", dir.verificacion_beca],
+    ["Declaraciones éticas", dir.verificacion_declaraciones],
+    ["Avales y documentos", dir.verificacion_documentos],
+  ]
+    .map(([etiqueta, valor]) => `<li>${valor === false ? "✗" : "✓"} ${esc(etiqueta)}</li>`)
+    .join("");
+  return `${definition([
+    ["Resolución", esc(dir.dictamen || "Registrada")],
+    ["Emitido por", esc(dir.evaluador_nombre || "Dirección de Investigación")],
+    ["Fecha", esc(String(dir.fecha_evaluacion || "").slice(0, 10))],
+    ["Fundamentación", esc(dir.fundamentacion || "Sin fundamentación registrada")],
+  ])}${criterios ? `<h3 style="margin:18px 0 8px">Criterios VIE</h3><ul style="margin:0;padding-left:18px">${criterios}</ul>` : ""}${institucionales ? `<h3 style="margin:18px 0 8px">Verificación institucional</h3><ul style="margin:0;padding-left:18px">${institucionales}</ul>` : ""}`;
+}
+
+/**
  * Renderizar la pantalla completa de historial y auditoría del expediente (Pantalla 28).
  * Encapsula historyContent() dentro del shell institucional con botón para retornar al expediente.
  * parametros:
@@ -4402,7 +4799,7 @@ function history() {
   const d = dossierActual && Number(dossierActual.id_propuesta) === Number(idActivo) ? dossierActual : null;
   const code = d?.codigo || state.viewProposal || "SI-2027-014";
   return shell(
-    `${card(`${esc(code)} · Historial de actuaciones`, historyContent(d))}${card("Dictamen de Vinculación", dictamenVinculacion(d))}${card("Avales del Consejo de Escuela", dictamenConsejo(d))}`,
+    `${card(`${esc(code)} · Historial de actuaciones`, historyContent(d))}${card("Dictamen de Vinculación", dictamenVinculacion(d))}${card("Avales del Consejo de Escuela", dictamenConsejo(d))}${card("Dictamen de Dirección de Investigación", dictamenDireccionResumen(d))}`,
     "Historial del expediente",
     "Cada cambio conserva su responsable, fecha, versión y evidencia.",
     btn("Volver al expediente", "22", "secondary", "back"),
@@ -5535,6 +5932,11 @@ async function handleAction(action, el) {
       );
       break;
     case "return-confirm": {
+      if (el.dataset.step === "26" || current === "26") {
+        toast("La devolución se gestiona desde el flujo institucional; usa el formulario de dictamen o coordínalo con el investigador.");
+        closeModal();
+        break;
+      }
       if (el.dataset.step === "23" || current === "23") {
         const idPropuesta = propuestaActivaId();
         try {
@@ -5773,6 +6175,58 @@ async function handleAction(action, el) {
           );
         } catch (err) {
           toast(err.message || "No se pudo registrar el aval del Consejo de Escuela.");
+        }
+        break;
+      }
+      if (id === "26") {
+        const idPropuesta = propuestaActivaId();
+        try {
+          const getVal = (k) => {
+            const elc = document.querySelector(`[data-field="${k}"]`);
+            if (elc) return elc.type === "checkbox" ? elc.checked : String(elc.value || "").trim();
+            return state.saved[k];
+          };
+          const verificacion_criterios = [];
+          document.querySelectorAll("[data-direccion-criterio]").forEach((cb) => {
+            const idC = Number(cb.getAttribute("data-direccion-criterio"));
+            verificacion_criterios.push({ id_criterio: idC, cumple: !!cb.checked });
+          });
+          const payload = {
+            id_usuario_eval: session?.user?.id_usuario,
+            dictamen: getVal("direccion:dictamen") || "Favorable",
+            fundamentacion: getVal("direccion:fundamentacion") || "",
+            verificacion_responsabilidades: document.querySelector('[data-direccion-check="resp"]')?.checked ?? (state.saved["direccion:resp"] !== false),
+            verificacion_riesgos: document.querySelector('[data-direccion-check="riesgos"]')?.checked ?? (state.saved["direccion:riesgos"] !== false),
+            verificacion_beca: document.querySelector('[data-direccion-check="beca"]')?.checked ?? (state.saved["direccion:beca"] !== false),
+            verificacion_declaraciones: document.querySelector('[data-direccion-check="decl"]')?.checked ?? (state.saved["direccion:decl"] !== false),
+            verificacion_documentos: document.querySelector('[data-direccion-check="docs"]')?.checked ?? (state.saved["direccion:docs"] !== false),
+            verificacion_criterios,
+            observaciones: "",
+          };
+          if (!payload.fundamentacion) throw new Error("Debes registrar la fundamentación del dictamen.");
+          const resultado = await guardarDictamenDireccion(idPropuesta, payload);
+          state.stage = resultado.nombre_estado;
+          state.viewProposalId = idPropuesta;
+          save();
+          closeModal();
+          await Promise.all([
+            cargarBandejaDireccion(),
+            cargarDossier(idPropuesta, true),
+            cargarDictamenDireccion(idPropuesta),
+          ]);
+          modal(
+            "Dictamen registrado",
+            notice(
+              "Registro guardado y sincronizado con PostgreSQL",
+              `Dictamen: ${resultado.dictamen}. Nuevo estado: ${resultado.nombre_estado}.`,
+            ),
+            btn("Volver a la bandeja", "21", "secondary") +
+              btn("Ver expediente", "22", "", "arrow"),
+            false,
+            "decision-saved",
+          );
+        } catch (err) {
+          toast(err.message || "No se pudo registrar el dictamen de Dirección.");
         }
         break;
       }

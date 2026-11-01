@@ -407,6 +407,90 @@ if ($idPropuestaComite) {
 }
 
 # -------------------------------------------------------------
+# FASE 7: DIRECCIÓN DE INVESTIGACIÓN (Elena Chacón)
+# -------------------------------------------------------------
+
+# D1. Login como Dirección de Investigación
+$loginDireccion = Test-Endpoint -Name "Autenticación Dirección de Investigación" -Method "POST" -Endpoint "/auth/login" -Body @{ correo = "elena.chacon@example.com"; password = "demostracion" }
+$idUsuarioDireccion = if ($loginDireccion) { $loginDireccion.id_usuario } else { 16 }
+if ($loginDireccion) {
+    Write-Host "  -> Usuario: $($loginDireccion.nombre) | ID: $idUsuarioDireccion | Roles: $($loginDireccion.roles -join ', ')" -ForegroundColor Gray
+}
+
+# D2. Bandeja de Dirección (sometidas ante VIE + ya dictaminadas)
+$bandejaDireccion = Test-Endpoint -Name "Bandeja de Dirección de Investigación" -Endpoint "/propuestas/direccion/bandeja?rol=Direcci%C3%B3n%20de%20Investigaci%C3%B3n&id_usuario=$idUsuarioDireccion"
+if ($bandejaDireccion) {
+    Write-Host "  -> Expedientes en la bandeja: $(@($bandejaDireccion).Count)" -ForegroundColor Gray
+}
+
+# D2b. Dashboard de Dirección con los contadores reales
+$dashboardDireccion = Test-Endpoint -Name "Dashboard de Dirección de Investigación" -Endpoint "/propuestas/direccion/dashboard?rol=Direcci%C3%B3n%20de%20Investigaci%C3%B3n&id_usuario=$idUsuarioDireccion"
+if ($dashboardDireccion) {
+    Write-Host "  -> Pendientes: $($dashboardDireccion.pendientes) | Determinadas: $($dashboardDireccion.determinadas) | Totales revisadas: $($dashboardDireccion.totales_revisadas)" -ForegroundColor Gray
+    if ($dashboardDireccion.propuesta_destacada) {
+        Write-Host "  -> Destacada (m?s reciente ingresada a VIE): $($dashboardDireccion.propuesta_destacada.codigo)" -ForegroundColor Gray
+    }
+}
+
+# D3. Propuesta sometida ante VIE para dictamen.
+# [Línea clave]: Se crea siempre una propuesta nueva en estado 6 en lugar de reutilizar una
+# pendiente de la bandeja. Si se reutilizara, cada corrida del smoke test consumiría el
+# dictamen pendiente y el tablero de Dirección quedaría con 0 pendientes para la validación visual.
+$idPropuestaDireccion = $null
+$propuestaDir = $nuevaPropuesta.Clone()
+$propuestaDir.titulo = "Test Dirección de Investigación - Dictamen $marcaHora"
+$propuestaDir.estado_inicial = 6
+$creacionDir = Test-Endpoint -Name "Creación de propuesta para Dirección (estado 6)" -Method "POST" -Endpoint "/propuestas" -Body $propuestaDir
+if ($creacionDir -and $creacionDir.propuesta) {
+    $idPropuestaDireccion = $creacionDir.propuesta.id_propuesta
+    Write-Host "  -> Propuesta sometida ante VIE: ID $idPropuestaDireccion" -ForegroundColor Cyan
+}
+
+if ($idPropuestaDireccion) {
+    # D4. Expediente para dictamen
+    $detalleDireccion = Test-Endpoint -Name "Expediente para dictamen de Dirección" -Endpoint "/propuestas/direccion/$($idPropuestaDireccion)?id_usuario=$idUsuarioDireccion"
+    if ($detalleDireccion) {
+        Write-Host "  -> Criterios VIE: $(@($detalleDireccion.criterios_vie).Count) | Puede dictaminar: $($detalleDireccion.puede_dictaminar)" -ForegroundColor Gray
+    }
+
+    # D5. Registrar dictamen favorable
+    $bodyDireccion = @{
+        id_usuario_eval = $idUsuarioDireccion
+        dictamen = "Favorable"
+        fundamentacion = "El expediente cumple los requisitos formales, los avales y la evaluación técnica. Se remite al CIE para resolución."
+        verificacion_responsabilidades = $true
+        verificacion_riesgos = $true
+        verificacion_beca = $true
+        verificacion_declaraciones = $true
+        verificacion_documentos = $true
+        verificacion_criterios = @(
+            @{ id_criterio = 1; cumple = $true },
+            @{ id_criterio = 2; cumple = $true },
+            @{ id_criterio = 3; cumple = $true },
+            @{ id_criterio = 4; cumple = $true }
+        )
+        observaciones = "Dictamen de prueba registrado por test_endpoints.ps1"
+    }
+    $resDireccion = Test-Endpoint -Name "Dictamen favorable de Dirección" -Method "POST" -Endpoint "/propuestas/direccion/$($idPropuestaDireccion)" -Body $bodyDireccion
+    if ($resDireccion) {
+        Write-Host "  -> Estado: $($resDireccion.nombre_estado) ($($resDireccion.estado_actual)) | Dictamen: $($resDireccion.dictamen)" -ForegroundColor Cyan
+    }
+
+    # D6. Duplicado (409 esperado)
+    $resDirDuplicado = Test-Endpoint -Name "Dictamen duplicado de Dirección (409 esperado)" -Method "POST" -Endpoint "/propuestas/direccion/$($idPropuestaDireccion)" -Body $bodyDireccion -ExpectedStatus 409
+    if (-not $resDirDuplicado) {
+        Write-Host "  -> Rechazo correcto: ya existe un dictamen de Dirección." -ForegroundColor Gray
+    }
+
+    # D7. Expediente general con dictamen de Dirección
+    $dossierDir = Test-Endpoint -Name "Expediente con dictamen de Dirección" -Endpoint "/propuestas/$($idPropuestaDireccion)"
+    if ($dossierDir -and $dossierDir.dictamen_direccion) {
+        Write-Host "  -> Dictamen Dirección: $($dossierDir.dictamen_direccion.dictamen) | Verificaciones: $(@($dossierDir.dictamen_direccion.verificaciones).Count)" -ForegroundColor Gray
+        Write-Host "  -> Fundamentacion persistida: $($dossierDir.dictamen_direccion.fundamentacion.Length) caracteres" -ForegroundColor Gray
+    }
+}
+
+# -------------------------------------------------------------
 # FASE 6: DISPONIBILIDAD DEL SERVIDOR FRONTEND (SPA)
 # -------------------------------------------------------------
 

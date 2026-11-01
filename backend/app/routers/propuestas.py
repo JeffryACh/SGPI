@@ -47,6 +47,7 @@ from psycopg import Connection
 from pydantic import BaseModel, Field
 
 from ..db import get_conn
+from .dictamen_vie import parsear_dictamen
 from .ia import generar_y_guardar_evaluacion_ia, obtener_evaluacion_ia_guardada
 
 # [Línea clave]: Declara el router bajo el prefijo /propuestas para agrupar las operaciones centrales de expedientes.
@@ -1171,6 +1172,36 @@ def obtener_dossier_propuesta(
                 (id_propuesta,),
             )
 
+            # [Línea clave]: Recupera el dictamen de Dirección de Investigación con sus
+            # verificaciones por criterio para mostrarlo en las pantallas 22 y 28.
+            direccion_cur = stack.enter_context(conn.cursor())
+            direccion_cur.execute(
+                """
+                SELECT ev.id_evaluacion, ev.id_usuario_eval, ev.fecha_evaluacion, ev.observaciones,
+                       TRIM(u.nombre || ' ' || COALESCE(u.lastname, '')) AS evaluador_nombre
+                FROM evaluations ev
+                JOIN usuarios u ON u.id_usuario = ev.id_usuario_eval
+                JOIN roles r ON r.id_rol = ev.id_rol_evaluador AND r.nombre_rol = 'Dirección de Investigación'
+                WHERE ev.id_propuesta = %s
+                ORDER BY ev.fecha_evaluacion DESC, ev.id_evaluacion DESC
+                LIMIT 1
+                """,
+                (id_propuesta,),
+            )
+            direccion_verif_cur = stack.enter_context(conn.cursor())
+            direccion_verif_cur.execute(
+                """
+                SELECT vdv.id_evaluacion, vdv.id_criterio, vdv.cumple, cv.descripcion_criterio
+                FROM vie_dictamen_verifications vdv
+                JOIN evaluations ev ON ev.id_evaluacion = vdv.id_evaluacion
+                JOIN roles r ON r.id_rol = ev.id_rol_evaluador AND r.nombre_rol = 'Dirección de Investigación'
+                LEFT JOIN criterios_verificacion_vie cv ON cv.id_criterio = vdv.id_criterio
+                WHERE ev.id_propuesta = %s
+                ORDER BY vdv.id_criterio
+                """,
+                (id_propuesta,),
+            )
+
         prop = prop_cur.fetchone()
         if not prop:
             raise HTTPException(status_code=404, detail="Propuesta no encontrada")
@@ -1193,6 +1224,16 @@ def obtener_dossier_propuesta(
         vinculacion_evaluaciones = vinculacion_cur.fetchall()
         comite_evaluacion = comite_cur.fetchall()
         avales_consejo = consejo_cur.fetchall()
+        dictamen_direccion_fila = direccion_cur.fetchone()
+        dictamen_direccion_verificaciones = direccion_verif_cur.fetchall()
+
+    # [Línea clave]: El dictamen de Dirección se guarda serializado dentro de
+    # 'evaluations.observaciones'; se muestra su texto legible en lugar del JSON interno.
+    for evaluacion in evaluaciones:
+        if evaluacion.get("rol_evaluador") == "Dirección de Investigación":
+            datos = parsear_dictamen(evaluacion.get("observaciones"))
+            partes = [datos["fundamentacion"], datos["observaciones"]]
+            evaluacion["observaciones"] = " · ".join(parte for parte in partes if parte) or None
 
     # [Línea clave]: Incluye la evaluación preliminar ya guardada, sin generarla en la ruta de lectura.
     evaluacion_ia = None
@@ -1200,6 +1241,31 @@ def obtener_dossier_propuesta(
         evaluacion_ia = obtener_evaluacion_ia_guardada(id_propuesta, conn, autogenerar=False)
     except Exception:
         pass
+
+    dictamen_direccion = None
+    if dictamen_direccion_fila:
+        datos_dictamen = parsear_dictamen(dictamen_direccion_fila["observaciones"])
+        verificaciones_inst = datos_dictamen["verificaciones_institucionales"]
+        dictamen_direccion = {
+            **dict(dictamen_direccion_fila),
+            "dictamen": datos_dictamen["dictamen"],
+            "fundamentacion": datos_dictamen["fundamentacion"],
+            "observaciones": datos_dictamen["observaciones"] or None,
+            "verificacion_responsabilidades": verificaciones_inst.get("responsabilidades"),
+            "verificacion_riesgos": verificaciones_inst.get("riesgos"),
+            "verificacion_beca": verificaciones_inst.get("beca"),
+            "verificacion_declaraciones": verificaciones_inst.get("declaraciones"),
+            "verificacion_documentos": verificaciones_inst.get("documentos"),
+            "verificaciones": [
+                {
+                    "id_criterio": v["id_criterio"],
+                    "cumple": v["cumple"],
+                    "descripcion_criterio": v["descripcion_criterio"],
+                }
+                for v in dictamen_direccion_verificaciones
+                if v["id_evaluacion"] == dictamen_direccion_fila["id_evaluacion"]
+            ],
+        }
 
     return {
         **prop,
@@ -1218,6 +1284,7 @@ def obtener_dossier_propuesta(
         "vinculacion_evaluaciones": vinculacion_evaluaciones,
         "comite_evaluacion": comite_evaluacion,
         "avales_consejo": avales_consejo,
+        "dictamen_direccion": dictamen_direccion,
         "evaluacion_ia": evaluacion_ia,
     }
 
