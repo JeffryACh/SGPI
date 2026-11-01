@@ -41,6 +41,21 @@ _CATALOGOS_TTL_SEGUNDOS = 300
 _catalogos_cache: tuple[float, dict[str, Any]] | None = None
 
 
+def invalidar_cache_catalogos() -> None:
+    """
+    Descartar la caché en memoria de los catálogos institucionales.
+
+    Se invoca desde el router administrativo después de crear, editar o eliminar
+    escuelas, modalidades, líneas, tipos de hora, rubros o roles, para que el
+    frontend reciba en la siguiente llamada los valores ya modificados.
+
+    return:
+        + void : undefined No retorna valor.
+    """
+    global _catalogos_cache
+    _catalogos_cache = None
+
+
 class CatalogosResponse(BaseModel):
     """
     Modelo de respuesta que consolida todos los catálogos institucionales del SGPI.

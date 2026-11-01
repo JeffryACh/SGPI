@@ -1,6 +1,6 @@
 # Checklist de backend — SGPI
 
-**Fecha de inventario:** 2026-10-29  
+**Fecha de inventario:** 2026-10-29 (actualizado 2026-11-01 con Dirección y administración institucional)  
 **Alcance:** backend FastAPI, base de datos PostgreSQL/Supabase y conexión con las 33 pantallas del frontend.  
 **Objetivo:** marcar el avance real del backend por rol, pantalla, flujo y brecha transversal.
 
@@ -26,9 +26,9 @@
 - [x] Flujo específico del Comité Técnico: bandeja, rúbrica ponderada y dictamen con transición de estado.
 - [x] Flujo específico del Consejo de Escuela: bandeja por escuela, aval institucional con persistencia y transición a «Avalada».
 - [x] Evaluación preliminar: auditoría normativa local al crear/cambiar estado y Gemini solo en re-evaluación manual.
-- [ ] Autorización real por rol en el backend.
-- [ ] **Parcial:** flujos específicos de Vinculación, Comité Técnico y Consejo implementados; faltan Dirección y CIE.
-- [ ] Administración de convocatorias, catálogos y rúbricas.
+- [ ] **Parcial:** la autorización por rol existe en los routers de evaluación y en el router administrativo (`/admin`); el resto de endpoints sigue abierto.
+- [ ] **Parcial:** flujos específicos de Vinculación, Comité Técnico, Consejo y Dirección implementados; falta CIE.
+- [x] Administración de convocatorias, cronogramas, instrumentos oficiales, catálogos y rúbricas versionadas (pantallas 31 y 32).
 - [ ] Guardado de borrador en servidor.
 - [x] Carga real de documentos de propuesta.
 - [ ] Pruebas automatizadas por rol y flujo.
@@ -77,10 +77,10 @@
 - [x] Notificación inicial al registrar propuesta.
 - [x] Backend para marcar una notificación como leída: `PATCH /notificaciones/{id}/leer`.
 - [x] Backend para marcar todas como leídas: `PATCH /notificaciones/leer-todas`.
-- [x] **Parcial / bug:** el frontend llama `POST /notificaciones/marcar-leida`.
-- [x] **Parcial / bug:** el frontend llama `POST /notificaciones/marcar-todas-leidas`.
-- [ ] Alinear rutas o agregar aliases compatibles.
-- [ ] Verificar que el contador de no leídas se actualice tras marcar.
+- [x] **Resuelto:** el frontend ya llama `PATCH /notificaciones/{id}/leer` (antes usaba `POST /notificaciones/marcar-leida`).
+- [x] **Resuelto:** el frontend ya llama `PATCH /notificaciones/leer-todas` (antes usaba `POST /notificaciones/marcar-todas-leidas`).
+- [x] Alinear rutas o agregar aliases compatibles.
+- [x] Verificar que el contador de no leídas se actualice tras marcar.
 - [ ] Definir destinatarios por rol/instancia, no solo al líder.
 
 ### 2.4 Documentos y archivos
@@ -92,7 +92,7 @@
 - [x] Endpoint de carga real de documentos de propuesta.
 - [ ] Endpoint de descarga/URL firmada.
 - [ ] Endpoint de eliminación o reemplazo con versionado.
-- [ ] Validar tipo MIME, extensión y tamaño.
+- [x] Validar tipo MIME, extensión y tamaño en la carga administrativa de instrumentos (`POST /admin/convocatorias/{id}/documentos`).
 - [ ] Asociar carga a usuario y rol que la realiza.
 - [ ] Definir qué documentos son obligatorios por modalidad y etapa.
 
@@ -108,8 +108,10 @@
 - [ ] Pruebas de cada dictamen por rol.
 - [x] Pruebas manuales del Comité Técnico en `test_endpoints.ps1` (FASE 5): rúbrica, bandeja, 403 sin rol, bloqueo por obligatorio, dictamen favorable, duplicado y expediente.
 - [x] Pruebas manuales del Consejo de Escuela en `test_endpoints.ps1` (FASE 6): bandeja por escuela, 403 sin rol, expediente de aval, aval favorable con transición a `Avalada`, aval duplicado, prohibición de avalar personal de otra escuela y **aval parcial con dos escuelas involucradas** (la propuesta sigue en `4 · Pendiente de aval del Consejo` hasta que avalen todas).
+- [x] Pruebas manuales de Dirección de Investigación en `test_endpoints.ps1` (FASE 7): bandeja, dashboard, detalle, 403 sin rol, dictamen con transición `6` a `7` y duplicado rechazado con 409.
+- [x] Pruebas manuales de administración institucional en `test_endpoints.ps1` (FASE 8): 403 para rol no administrativo, listado de convocatorias con los tres roles facultados, CRUD de convocatoria y etapas, CRUD de catálogos, bloqueo 409 de registros en uso, orden de roles y CRUD de rúbrica.
 - [ ] Pruebas de notificaciones y lectura.
-- [ ] Pruebas de autorización: un rol no puede ejecutar acciones de otro.
+- [x] Pruebas de autorización: un rol no puede ejecutar acciones de otro (403 en `/admin`, Comité Técnico, Consejo de Escuela y Dirección).
 - [ ] Pruebas de idempotencia y concurrencia.
 - [x] Documentar variables de entorno necesarias (`.env.example`, `docker-compose.yml`, `render.yaml`, `AGENTS.md`).
 - [ ] Revisar CORS permisivo (`allow_origins=["*"]`) antes de producción.
@@ -141,12 +143,32 @@
 | OK | PATCH | `/propuestas/{id_propuesta}/estado` | Cambio genérico de estado |
 | OK | POST | `/propuestas/{id_propuesta}/evaluaciones` | Evaluación genérica |
 | OK | GET | `/propuestas/comite/bandeja` | Bandeja filtrada del Comité Técnico |
-| OK | GET | `/propuestas/comite/rubrica` | Rúbrica oficial ponderada (V12) |
+| OK | GET | `/propuestas/comite/rubrica` | Rúbrica oficial ponderada de la versión activa |
 | OK | GET | `/propuestas/comite/{id_propuesta}` | Dictamen y puntajes por criterio |
 | OK | POST | `/propuestas/comite/{id_propuesta}` | Registrar dictamen y transición de estado |
 | OK | GET | `/propuestas/consejo/bandeja` | Bandeja filtrada por escuela del Consejo de Escuela |
 | OK | GET | `/propuestas/consejo/{id_propuesta}` | Escuelas involucradas, avales y acuerdos firmados |
 | OK | POST | `/propuestas/consejo/{id_propuesta}` | Registrar aval, devolución o rechazo con transición de estado |
+| OK | GET | `/propuestas/direccion/bandeja` | Bandeja de propuestas sometidas ante VIE (Dirección) |
+| OK | GET | `/propuestas/direccion/dashboard` | Contadores reales de Dirección (`pendientes`, `determinadas`, `totales_revisadas`) |
+| OK | GET | `/propuestas/direccion/{id_propuesta}` | Detalle del expediente para Dirección con verificaciones VIE |
+| OK | POST | `/propuestas/direccion/{id_propuesta}` | Registrar dictamen de Dirección y transición `6` a `7` |
+| OK | GET | `/admin/catalogos` | Catálogos maestros editables (whitelist de tablas) |
+| OK | GET | `/admin/catalogos/{clave}` | Registros de un catálogo maestro editable |
+| OK | POST | `/admin/catalogos/{clave}` | Alta de registro en catálogo maestro |
+| OK | PATCH | `/admin/catalogos/{clave}/{id_registro}` | Edición de registro en catálogo maestro |
+| OK | DELETE | `/admin/catalogos/{clave}/{id_registro}` | Baja de registro (409 si está en uso) |
+| OK | PATCH | `/admin/catalogos/roles/{id_rol}/mover` | Reordenar el rol en la ruta operativa |
+| OK | GET | `/admin/rubrica` | Rúbrica vigente con secciones, criterios y versiones |
+| OK | GET | `/admin/rubrica/versiones` | Historial de versiones publicadas de la rúbrica |
+| OK | POST/PATCH/DELETE | `/admin/rubrica/secciones[/{id}]` | CRUD de secciones de rúbrica |
+| OK | POST/PATCH/DELETE | `/admin/rubrica/criterios[/{id}]` | CRUD de criterios de rúbrica |
+| OK | POST/PATCH/DELETE | `/admin/rubrica/versiones[/{id}]` | Publicar, editar y activar versiones de rúbrica |
+| OK | GET/POST/PATCH/DELETE | `/admin/convocatorias[/{id}]` | CRUD de convocatorias |
+| OK | GET/POST | `/admin/convocatorias/{id}/etapas` | Cronograma de la convocatoria |
+| OK | PATCH/DELETE | `/admin/etapas/{id_etapa}` | Edición y baja de una etapa |
+| OK | GET/POST | `/admin/convocatorias/{id}/documentos` | Instrumentos oficiales (listado y subida a Storage) |
+| OK | PATCH/DELETE | `/admin/documentos/{id_documento}` | Edición, retiro y borrado de un instrumento |
 | OK | GET | `/ia/estado` | Estado del servicio IA |
 | OK | GET | `/ia/criterios` | Criterios normativos |
 | OK | GET | `/ia/evaluacion-preliminar/{id_propuesta}` | Evaluación IA guardada (null si no existe; no genera) |
@@ -224,7 +246,7 @@ Pantallas principales: `02`, `21`, `22`, `24`, `28`.
 - [ ] **21 · Bandeja:** asignación explícita de evaluadores.
 - [x] **22 · Expediente:** cargar dossier real.
 - [x] **24 · Evaluación:** endpoint para consultar la rúbrica oficial (`GET /propuestas/comite/rubrica`).
-- [ ] **Parcial:** la rúbrica aún no está versionada ni filtrada por modalidad; V12 siembra la de Desarrollo tecnológico.
+- [x] **24 · Evaluación:** la rúbrica está versionada (`rubric_versions`) y el Comité Técnico evalúa siempre con la versión activa; la versión base sembrada en la base desplegada es la de Desarrollo tecnológico.
 - [x] **24 · Evaluación:** endpoint para guardar puntaje por criterio en `technical_committee_scores`.
 - [x] **24 · Evaluación:** guardar puntaje total en `technical_committee_evaluations`.
 - [x] **24 · Evaluación:** guardar observaciones en `evaluations`.
@@ -280,15 +302,15 @@ Pantallas principales: `02`, `21`, `22`, `26`, `28`, `29`, `30`, `31`, `32`.
 - [x] **26 · Dictamen:** resolver los estados por nombre desde `estados` (nada de identificadores fixedos).
 - [x] **28 · Historial:** mostrar verificaciones y dictamen de Dirección.
 - [x] **29–30 · Consulta histórica:** el buscador genérico `GET /propuestas` cubre los filtros y el detalle.
-- [ ] **31 · Administración de convocatorias:** no hay CRUD de convocatorias.
-- [ ] **31 · Administración de convocatorias:** no hay CRUD de etapas.
-- [ ] **31 · Administración de convocatorias:** no hay edición de reglas por modalidad.
-- [ ] **31 · Administración de convocatorias:** falta activar/cerrar convocatoria.
-- [ ] **31 · Administración de convocatorias:** falta editar/eliminar documentos oficiales.
-- [ ] **32 · Rúbricas y catálogos:** no hay CRUD de líneas, modalidades, escuelas ni rubros.
-- [ ] **32 · Rúbricas y catálogos:** no hay CRUD de secciones/criterios de rúbrica.
-- [ ] **32 · Rúbricas y catálogos:** no hay endpoint para pesos y órdenes de roles.
-- [ ] **32 · Rúbricas y catálogos:** no hay endpoint para versionar rúbricas.
+- [x] **31 · Administración de convocatorias:** CRUD completo (`POST/PATCH/DELETE /admin/convocatorias`).
+- [x] **31 · Administración de convocatorias:** CRUD de etapas (`/admin/convocatorias/{id}/etapas` y `/admin/etapas/{id}`).
+- [x] **31 · Administración de convocatorias:** edición de reglas por modalidad (catálogo `modalidades`).
+- [x] **31 · Administración de convocatorias:** activar/cerrar convocatoria con el campo `activo`.
+- [x] **31 · Administración de convocatorias:** editar/eliminar documentos oficiales (`/admin/documentos/{id}` con borrado del archivo en Storage).
+- [x] **32 · Rúbricas y catálogos:** CRUD de líneas, modalidades, escuelas, tipos de hora, rubros y criterios VIE (`/admin/catalogos/{clave}`).
+- [x] **32 · Rúbricas y catálogos:** CRUD de secciones/criterios de rúbrica (`/admin/rubrica/secciones` y `/admin/rubrica/criterios`).
+- [x] **32 · Rúbricas y catálogos:** endpoint para pesos y órdenes de roles (`roles.orden` y `PATCH /admin/catalogos/roles/{id}/mover`).
+- [x] **32 · Rúbricas y catálogos:** endpoint para versionar rúbricas (`rubric_versions`, con clonación y activación de versión).
 
 ### 4.6 CIE
 
@@ -308,11 +330,11 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 
 ### 4.7 Administración y cuenta
 
-- [ ] **31 · Convocatorias:** CRUD completo.
-- [ ] **31 · Convocatorias:** asociar documentos y cronograma.
-- [ ] **32 · Catálogos:** CRUD y activación/inactivación.
-- [ ] **32 · Rúbricas:** CRUD de secciones, criterios, pesos y versiones.
-- [ ] **32 · Roles:** consulta y orden de roles.
+- [x] **31 · Convocatorias:** CRUD completo (`/admin/convocatorias`), accesible para Dirección, Funcionarios VIE y Administración del Sistema.
+- [x] **31 · Convocatorias:** asociar documentos y cronograma (`/admin/convocatorias/{id}/etapas` y `/admin/convocatorias/{id}/documentos`).
+- [x] **32 · Catálogos:** CRUD y activación/inactivación (`/admin/catalogos/{clave}` con whitelist de tablas y control de referencias).
+- [x] **32 · Rúbricas:** CRUD de secciones, criterios, pesos y versiones (`/admin/rubrica/*` y tabla `rubric_versions`).
+- [x] **32 · Roles:** consulta y orden de roles (`GET /admin/catalogos` y `PATCH /admin/catalogos/roles/{id}/mover`).
 - [ ] **33 · Perfil:** consulta de datos propios.
 - [ ] **33 · Perfil:** actualización de datos permitidos.
 - [ ] **33 · Perfil:** cambio de contraseña.
@@ -324,13 +346,15 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 
 | Tabla | Estado de uso | Falta |
 |---|---|---|
-| `convocatorias` | Lectura | CRUD administrativo |
-| `convocatoria_etapas` | Lectura | CRUD administrativo |
-| `convocatoria_documentos` | Lectura y subida | Edición, reemplazo, borrado |
+| `convocatorias` | Uso completo | Mantener al versionar las convocatorias |
+| `convocatoria_etapas` | Uso completo | Ninguno |
+| `convocatoria_documentos` | Uso completo | Mantener el versionado de instrumentos |
 | `vinculacion_evaluations` | Uso completo | Mantener al versionar el dictamen |
 | `council_endorsements` | Uso completo | Falta relacionar el acuerdo firmado (`id_documento`) con el aval |
-| `rubric_sections` | Lectura | CRUD y versionado de la rúbrica |
-| `rubric_criteria` | Lectura | CRUD y versionado de criterios y pesos |
+| `rubric_sections` | Uso completo | Mantener la coherencia con la versión activa |
+| `rubric_criteria` | Uso completo | Mantener la coherencia con la versión activa |
+| `rubric_versions` | Uso completo | Mantener una sola versión activa |
+| `roles` | Uso completo | Mantener el `orden` de la ruta operativa |
 | `technical_committee_scores` | Uso completo | Mantener la integridad al versionar rúbricas |
 | `vie_dictamen_verifications` | Uso completo | Verificación de criterios de Dirección (rol Dirección) |
 | `technical_committee_evaluations` | Uso completo | `decision`, `justificacion`, `tiene_bloqueo_obligatorio` y `puntaje numeric(5,1)` (V12) |
@@ -384,21 +408,20 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 - [x] `POST /propuestas/consejo/{id_propuesta}`.
 - [ ] `POST /propuestas/{id}/consejo`.
 - [ ] `GET /propuestas/{id}/consejo`.
-- [ ] `POST /propuestas/{id}/direccion`.
-- [ ] `GET /propuestas/{id}/direccion`.
+- [x] `POST /propuestas/direccion/{id_propuesta}` (registrar dictamen de Dirección).
+- [x] `GET /propuestas/direccion/{id_propuesta}` (detalle con verificaciones VIE).
 - [ ] `POST /propuestas/{id}/cie`.
 - [ ] `GET /propuestas/{id}/cie`.
 
 ### 6.5 Administración
 
-- [ ] `POST /convocatorias`.
-- [ ] `PATCH /convocatorias/{id}`.
-- [ ] `POST /convocatorias/{id}/etapas`.
-- [ ] `PATCH /convocatorias/{id}/etapas/{id_etapa}`.
-- [ ] `GET /rubricas?modalidad=...`.
-- [ ] `POST /rubricas`.
-- [ ] `PATCH /rubricas/{id}`.
-- [ ] CRUD de catálogos maestros.
+- [x] `GET/POST/PATCH/DELETE /admin/convocatorias`.
+- [x] `GET/POST /admin/convocatorias/{id}/etapas` y `PATCH/DELETE /admin/etapas/{id_etapa}`.
+- [x] `GET/POST/PATCH/DELETE /admin/convocatorias/{id}/documentos` y `PATCH/DELETE /admin/documentos/{id_documento}`.
+- [x] `GET/POST/PATCH/DELETE /admin/rubrica/versiones` (versionado de rúbricas).
+- [x] `GET/POST/PATCH/DELETE /admin/rubrica/secciones` y `/admin/rubrica/criterios`.
+- [x] CRUD de catálogos maestros (`/admin/catalogos/{clave}` con whitelist de tablas).
+- [x] `PATCH /admin/catalogos/roles/{id_rol}/mover` (orden de la ruta operativa).
 
 ## 7. Pruebas mínimas para marcar “backend completo”
 
@@ -416,23 +439,25 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 - [ ] Consultar expediente con todas sus tablas hijas.
 - [ ] Cada transición de estado deja historial y notificación.
 - [ ] Un estado no permitido devuelve error.
-- [ ] Cada dictamen queda asociado a usuario, rol, fecha y documento.
-- [ ] Las notificaciones se listan y se marcan como leídas.
+- [x] Cada dictamen queda asociado a usuario, rol, fecha y documento (Comité Técnico, Consejo de Escuela y Dirección).
+- [x] Las notificaciones se listan y se marcan como leídas.
 - [ ] Los documentos se cargan, listan, descargan y eliminan.
 - [ ] La IA responde con Gemini o con el motor de respaldo.
 - [ ] El frontend sigue funcionando si la IA falla.
 
 ## 8. Orden sugerido de cierre
 
+> Estado a 2026-11-01: los pasos 2 a 7 y el 9 están implementados y verificados; falta el paso 1 (autenticación con token), el 8 (resolución del CIE) y el 10 (versionado de documentos).
+
 1. Autenticación con token y autorización por rol.
-2. Corrección de notificaciones.
-3. Conexión real de `GET /propuestas` y `GET /propuestas/{id}` en pantallas 06, 20, 21, 22, 28, 29 y 30.
-4. Persistencia específica de Vinculación.
-5. Rúbrica y evaluación del Comité.
-6. Avales del Consejo.
-7. Verificación y dictamen de Dirección.
+2. Corrección de notificaciones. **Hecho.**
+3. Conexión real de `GET /propuestas` y `GET /propuestas/{id}` en pantallas 06, 20, 21, 22, 28, 29 y 30. **Hecho.**
+4. Persistencia específica de Vinculación. **Hecho.**
+5. Rúbrica y evaluación del Comité. **Hecho.**
+6. Avales del Consejo. **Hecho.**
+7. Verificación y dictamen de Dirección. **Hecho.**
 8. Resolución del CIE.
-9. Administración de convocatorias, catálogos y rúbricas.
+9. Administración de convocatorias, catálogos y rúbricas. **Hecho.**
 10. Carga real de documentos y versionado.
 11. Pruebas automatizadas y limpieza de datos demo.
 
@@ -442,3 +467,4 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 - Los nombres demo restantes en expediente, historial y participación estudiantil están fuera del ajuste B ya realizado.
 - La creación de propuestas ya está integrada y probada; las brechas principales están en consulta, evaluación por rol, administración y seguridad.
 - Antes de marcar un elemento como terminado, verificar también que el frontend consuma el endpoint correcto.
+- Migraciones aplicadas a la base desplegada el 2026-11-01: `V13__administracion_rubricas_roles.sql` (`roles.orden`, `version` en rúbrica, tabla `rubric_versions`) y `V14__usuario_administrador_sistema.sql` (cuenta de demostración con rol «Administrador del Sistema», `administrador@example.com` / `demostracion`).

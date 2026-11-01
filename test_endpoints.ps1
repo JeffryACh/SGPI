@@ -1,4 +1,4 @@
-# Script de verificación integral de endpoints y servicios de SGPI Backend (FastAPI) y Frontend
+﻿# Script de verificación integral de endpoints y servicios de SGPI Backend (FastAPI) y Frontend
 # Ejecutar en PowerShell: .\test_endpoints.ps1
 
 $BaseUrl = "http://localhost:3001"
@@ -491,7 +491,132 @@ if ($idPropuestaDireccion) {
 }
 
 # -------------------------------------------------------------
-# FASE 6: DISPONIBILIDAD DEL SERVIDOR FRONTEND (SPA)
+# FASE 8: ADMINISTRACIÓN INSTITUCIONAL (PANTALLAS 31 Y 32)
+# -------------------------------------------------------------
+
+Write-Host "`n--- FASE 8: ADMINISTRACION DE CONVOCATORIAS, RUBRICAS Y CATALOGOS ---" -ForegroundColor Cyan
+
+# E1. Autorización: un investigador no puede administrar
+$adminNegado = Test-Endpoint -Name "Catálogos con rol no administrativo (403 esperado)" -Endpoint "/admin/catalogos?id_usuario=1" -ExpectedStatus 403
+if (-not $adminNegado) {
+    Write-Host "  -> Rechazo correcto: el investigador no administra convocatorias." -ForegroundColor Gray
+}
+
+# E2. Los tres roles facultados listan las convocatorias
+foreach ($rolAdmin in @(
+    @{ etiqueta = "Dirección de Investigación"; id = $idUsuarioDireccion },
+    @{ etiqueta = "Funcionario VIE"; id = 7 },
+    @{ etiqueta = "Administrador del Sistema"; id = 20 }
+)) {
+    $convocatoriasAdmin = Test-Endpoint -Name "Convocatorias como $($rolAdmin.etiqueta)" -Endpoint "/admin/convocatorias?id_usuario=$($rolAdmin.id)"
+    if ($convocatoriasAdmin) {
+        Write-Host "  -> Convocatorias visibles: $(@($convocatoriasAdmin).Count)" -ForegroundColor Gray
+    }
+}
+
+# E3. Crear, editar y cerrar una convocatoria de prueba
+$convocatoriaAdmin = @{
+    nombre = "Convocatoria de Pruebas Administrativas $marcaHora"
+    descripcion = "Convocatoria creada por el smoke test administrativo."
+    fecha_inicio = "2027-01-15"
+    fecha_cierre = "2027-03-31"
+    fecha_inicio_ejecucion = "2027-04-01"
+    activo = $true
+}
+$creadaAdmin = Test-Endpoint -Name "Creación de convocatoria administrativa" -Method "POST" -Endpoint "/admin/convocatorias?id_usuario=$idUsuarioDireccion" -Body $convocatoriaAdmin
+$idConvocatoriaAdmin = $null
+if ($creadaAdmin -and $creadaAdmin.id_convocatoria) {
+    $idConvocatoriaAdmin = $creadaAdmin.id_convocatoria
+    Write-Host "  -> Creada con ID: $idConvocatoriaAdmin | Carpeta: $($creadaAdmin.carpeta_storage)" -ForegroundColor Cyan
+}
+
+if ($idConvocatoriaAdmin) {
+    # E4. Cronograma de la convocatoria
+    $etapaAdmin = @{
+        nombre_etapa = "Recepcion de propuestas"
+        responsable = "Investigadores Principales"
+        fecha_inicio = "2027-01-15"
+        fecha_fin = "2027-02-15"
+        orden = 1
+    }
+    $etapaCreada = Test-Endpoint -Name "Creación de etapa del cronograma" -Method "POST" -Endpoint "/admin/convocatorias/$idConvocatoriaAdmin/etapas?id_usuario=$idUsuarioDireccion" -Body $etapaAdmin
+    if ($etapaCreada -and $etapaCreada.id_etapa) {
+        $idEtapaAdmin = $etapaCreada.id_etapa
+        $editarEtapa = @{
+            nombre_etapa = "Recepcion de propuestas"
+            responsable = "Oficina de Vinculacion"
+            fecha_inicio = "2027-01-15"
+            fecha_fin = "2027-02-20"
+            orden = 1
+        }
+        Test-Endpoint -Name "Edición de etapa del cronograma" -Method "PATCH" -Endpoint "/admin/etapas/${idEtapaAdmin}?id_usuario=$idUsuarioDireccion" -Body $editarEtapa | Out-Null
+        Test-Endpoint -Name "Eliminación de etapa del cronograma" -Method "DELETE" -Endpoint "/admin/etapas/${idEtapaAdmin}?id_usuario=$idUsuarioDireccion" | Out-Null
+    }
+
+    # E5. Editar y cerrar la convocatoria
+    $editarConvocatoria = @{
+        descripcion = "Convocatoria editada por el smoke test administrativo."
+        activo = $false
+    }
+    $editadaAdmin = Test-Endpoint -Name "Edición y cierre de convocatoria" -Method "PATCH" -Endpoint "/admin/convocatorias/${idConvocatoriaAdmin}?id_usuario=$idUsuarioDireccion" -Body $editarConvocatoria
+    if ($editadaAdmin) {
+        Write-Host "  -> Convocatoria cerrada: activo=$($editadaAdmin.activo)" -ForegroundColor Gray
+    }
+
+    # E6. Limpieza: eliminar la convocatoria de prueba
+    Test-Endpoint -Name "Eliminación de convocatoria administrativa" -Method "DELETE" -Endpoint "/admin/convocatorias/${idConvocatoriaAdmin}?id_usuario=$idUsuarioDireccion" | Out-Null
+}
+
+# E7. Catálogos maestros: alta, edición y baja de una línea de investigación
+$lineaAdmin = Test-Endpoint -Name "Creación de línea de investigación" -Method "POST" -Endpoint "/admin/catalogos/lineas?id_usuario=$idUsuarioDireccion" -Body @{ nombre_linea = "Linea de Prueba Administrativa $marcaHora" }
+if ($lineaAdmin -and $lineaAdmin.id_linea_investigacion) {
+    $idLineaAdmin = $lineaAdmin.id_linea_investigacion
+    Test-Endpoint -Name "Edición de línea de investigación" -Method "PATCH" -Endpoint "/admin/catalogos/lineas/${idLineaAdmin}?id_usuario=$idUsuarioDireccion" -Body @{ nombre_linea = "Linea de Prueba Editada $marcaHora" } | Out-Null
+    Test-Endpoint -Name "Eliminación de línea de investigación" -Method "DELETE" -Endpoint "/admin/catalogos/lineas/${idLineaAdmin}?id_usuario=$idUsuarioDireccion" | Out-Null
+}
+
+# E8. Un registro en uso no se puede eliminar (409 esperado)
+Test-Endpoint -Name "Eliminación de escuela en uso (409 esperado)" -Method "DELETE" -Endpoint "/admin/catalogos/escuelas/1?id_usuario=$idUsuarioDireccion" -ExpectedStatus 409 | Out-Null
+
+# E9. Orden de los roles institucionales
+Test-Endpoint -Name "Reordenamiento de roles institucionales" -Method "PATCH" -Endpoint "/admin/catalogos/roles/2/mover?id_usuario=$idUsuarioDireccion" -Body @{ direccion = "arriba" } | Out-Null
+Test-Endpoint -Name "Restauración del orden de roles" -Method "PATCH" -Endpoint "/admin/catalogos/roles/2/mover?id_usuario=$idUsuarioDireccion" -Body @{ direccion = "abajo" } | Out-Null
+
+# E10. Rúbrica versionada: consulta, secciones, criterios y versiones
+$rubricaAdmin = Test-Endpoint -Name "Rúbrica institucional versionada" -Endpoint "/admin/rubrica?id_usuario=$idUsuarioDireccion"
+if ($rubricaAdmin) {
+    Write-Host "  -> Versión activa: $($rubricaAdmin.version_activa) | Secciones: $(@($rubricaAdmin.secciones).Count) | Peso total: $($rubricaAdmin.peso_total)" -ForegroundColor Gray
+}
+
+$seccionAdmin = @{
+    nombre_seccion = "Seccion de prueba $marcaHora"
+    peso_porcentual = 10
+    orden = 9
+    version = $rubricaAdmin.version_activa
+}
+$seccionCreada = Test-Endpoint -Name "Creación de sección de rúbrica" -Method "POST" -Endpoint "/admin/rubrica/secciones?id_usuario=$idUsuarioDireccion" -Body $seccionAdmin
+if ($seccionCreada -and $seccionCreada.id_seccion) {
+    $idSeccionAdmin = $seccionCreada.id_seccion
+    $criterioAdmin = @{
+        id_seccion = $idSeccionAdmin
+        nombre_criterio = "Criterio de prueba $marcaHora"
+        peso_relativo = 10
+        es_obligatorio = $false
+        orden = 1
+        version = $rubricaAdmin.version_activa
+    }
+    $criterioCreado = Test-Endpoint -Name "Creación de criterio de rúbrica" -Method "POST" -Endpoint "/admin/rubrica/criterios?id_usuario=$idUsuarioDireccion" -Body $criterioAdmin
+    if ($criterioCreado -and $criterioCreado.id_criterio_rubrica) {
+        Test-Endpoint -Name "Eliminación de criterio de rúbrica" -Method "DELETE" -Endpoint "/admin/rubrica/criterios/$($criterioCreado.id_criterio_rubrica)?id_usuario=$idUsuarioDireccion" | Out-Null
+    }
+    Test-Endpoint -Name "Eliminación de sección de rúbrica" -Method "DELETE" -Endpoint "/admin/rubrica/secciones/${idSeccionAdmin}?id_usuario=$idUsuarioDireccion" | Out-Null
+}
+
+# E11. La rúbrica oficial del Comité Técnico sigue disponible
+Test-Endpoint -Name "Rúbrica oficial del Comité Técnico" -Endpoint "/propuestas/comite/rubrica" | Out-Null
+
+# -------------------------------------------------------------
+# FASE 9: DISPONIBILIDAD DEL SERVIDOR FRONTEND (SPA)
 # -------------------------------------------------------------
 
 # 20. Servidor Frontend Nginx / HTML

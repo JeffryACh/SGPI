@@ -69,6 +69,9 @@ const ROLE_KEYS = {
   "Consejo de Escuela": "consejo",
   "Dirección de Investigación": "direccion",
   CIE: "cie",
+  // [Línea clave]: Los roles administrativos administran las pantallas 31 y 32 junto a Dirección.
+  "Funcionario VIE": "vie",
+  "Administrador del Sistema": "administracion",
 };
 // La sesión solo recuerda quién ingresó (nunca la contraseña). Sin un token emitido por el backend es estado de interfaz, no seguridad real.
 let session = null;
@@ -293,6 +296,15 @@ const SCREEN_LOADERS = {
   "27": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
   "28": () => cargarDossier(),
   "30": () => buscarPropuestas(),
+  // [Línea clave]: Las pantallas 31 y 32 consumen el CRUD administrativo real del backend.
+  "31": async () => {
+    await Promise.all([cargarConvocatoriasAdmin(), cargarCatalogosAdmin()]);
+    return null;
+  },
+  "32": async () => {
+    await Promise.all([cargarRubricaAdmin(), cargarCatalogosAdmin()]);
+    return null;
+  },
 };
 
 /**
@@ -429,6 +441,11 @@ async function Notificaciones() {
 function marcarLeida(idNotif) {
   const n = (notificaciones ?? []).find((x) => x.id_notificacion === idNotif);
   if (n) n.leida = true;
+  // [Línea clave]: El punto de la campana se apaga en cuanto no quedan notificaciones sin leer.
+  if ((notificaciones ?? []).length && (notificaciones ?? []).every((x) => x.leida)) {
+    state.read = true;
+    save();
+  }
   fetch(`${API_URL}/notificaciones/${idNotif}/leer`, { method: "PATCH" })
     .catch((e) => console.warn("Error avisando lectura:", e));
 }
@@ -444,6 +461,9 @@ function marcarLeida(idNotif) {
 function marcarTodasLeidas() {
   (notificaciones ?? []).forEach((n) => (n.leida = true));
   const idUsuario = session?.user?.id_usuario;
+  // [Línea clave]: Al marcar todas se apaga el indicador de la campana y se persiste el estado.
+  state.read = true;
+  save();
   if (!idUsuario) return;
   fetch(`${API_URL}/notificaciones/leer-todas?id_usuario=${idUsuario}`, { method: "PATCH" })
     .catch((e) => console.warn("Error marcando todas leídas:", e));
@@ -851,6 +871,13 @@ let bandejaDireccion = [];
 let dictamenDireccion = null;
 let direccionCargadoId = null;
 let dashboardDireccion = null;
+// [Línea clave]: Estado en memoria de la administración institucional (pantallas 31 y 32).
+let adminConvocatorias = [];
+let adminEtapas = [];
+let adminDocumentos = [];
+let adminRubrica = null;
+let adminCatalogosDatos = null;
+let adminConvocatoriaId = null;
 
 /**
  * Cronograma oficial de la Convocatoria Fondos VIE 2027.
@@ -1638,6 +1665,426 @@ async function guardarDictamenDireccion(idPropuesta, payload) {
   return res.json();
 }
 
+// =====================================================================
+// ADMINISTRACIÓN INSTITUCIONAL (PANTALLAS 31 Y 32)
+// =====================================================================
+
+/**
+ * Obtener el identificador del usuario con facultad administrativa en sesión.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + number : idUsuario Identificador del usuario autenticado.
+ */
+const idUsuarioAdmin = () => session?.user?.id_usuario;
+
+/**
+ * Ejecutar una petición contra el router administrativo y propagar el error del servidor.
+ * parametros:
+ *     - string : ruta Ruta relativa dentro de /admin.
+ *     - string : metodo Verbo HTTP ('GET', 'POST', 'PATCH', 'DELETE').
+ *     - Object|null : cuerpo Cuerpo JSON opcional.
+ * return:
+ *     + Promise<any> : respuesta Contenido JSON devuelto por el backend.
+ */
+async function peticionAdmin(ruta, metodo = "GET", cuerpo = null) {
+  const separador = ruta.includes("?") ? "&" : "?";
+  const url = `${API_URL}/admin${ruta}${separador}id_usuario=${idUsuarioAdmin()}`;
+  const opciones = { method: metodo };
+  if (cuerpo !== null) {
+    opciones.headers = { "Content-Type": "application/json" };
+    opciones.body = JSON.stringify(cuerpo);
+  }
+  const res = await fetch(url, opciones);
+  if (!res.ok) throw new Error(await errorDesdeRespuesta(res));
+  return res.json();
+}
+
+/**
+ * Descargar las convocatorias administrables con su cronograma e instrumentos.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>> : adminConvocatorias Convocatorias registradas en PostgreSQL.
+ */
+async function cargarConvocatoriasAdmin() {
+  try {
+    const lista = await peticionAdmin("/convocatorias");
+    adminConvocatorias = Array.isArray(lista) ? lista : [];
+    if (!adminConvocatorias.some((c) => c.id_convocatoria === adminConvocatoriaId)) {
+      adminConvocatoriaId = adminConvocatorias[0]?.id_convocatoria ?? null;
+    }
+    await Promise.all([cargarEtapasAdmin(), cargarDocumentosAdmin()]);
+  } catch (err) {
+    console.warn("cargarConvocatoriasAdmin error:", err);
+    adminConvocatorias = [];
+  }
+  return adminConvocatorias;
+}
+
+/**
+ * Descargar el cronograma de la convocatoria seleccionada.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>> : adminEtapas Etapas ordenadas por secuencia.
+ */
+async function cargarEtapasAdmin() {
+  if (!adminConvocatoriaId) {
+    adminEtapas = [];
+    return adminEtapas;
+  }
+  try {
+    const lista = await peticionAdmin(`/convocatorias/${adminConvocatoriaId}/etapas`);
+    adminEtapas = Array.isArray(lista) ? lista : [];
+  } catch (err) {
+    console.warn("cargarEtapasAdmin error:", err);
+    adminEtapas = [];
+  }
+  return adminEtapas;
+}
+
+/**
+ * Descargar los instrumentos oficiales de la convocatoria seleccionada.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>> : adminDocumentos Instrumentos registrados.
+ */
+async function cargarDocumentosAdmin() {
+  if (!adminConvocatoriaId) {
+    adminDocumentos = [];
+    return adminDocumentos;
+  }
+  try {
+    const lista = await peticionAdmin(`/convocatorias/${adminConvocatoriaId}/documentos`);
+    adminDocumentos = Array.isArray(lista) ? lista : [];
+  } catch (err) {
+    console.warn("cargarDocumentosAdmin error:", err);
+    adminDocumentos = [];
+  }
+  return adminDocumentos;
+}
+
+/**
+ * Descargar la rúbrica institucional con sus secciones, criterios y versiones.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Object|null> : adminRubrica Rúbrica vigente en PostgreSQL.
+ */
+async function cargarRubricaAdmin() {
+  try {
+    adminRubrica = await peticionAdmin("/rubrica");
+  } catch (err) {
+    console.warn("cargarRubricaAdmin error:", err);
+    adminRubrica = null;
+  }
+  return adminRubrica;
+}
+
+/**
+ * Descargar todos los catálogos maestros editables.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Object|null> : adminCatalogosDatos Catálogos editables.
+ */
+async function cargarCatalogosAdmin() {
+  try {
+    adminCatalogosDatos = await peticionAdmin("/catalogos");
+  } catch (err) {
+    console.warn("cargarCatalogosAdmin error:", err);
+    adminCatalogosDatos = null;
+  }
+  return adminCatalogosDatos;
+}
+
+/**
+ * Refrescar los catálogos institucionales del frontend tras una edición administrativa.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<void> : undefined Resuelve al recargar los catálogos.
+ */
+async function refrescarCatalogosFront() {
+  invalidarCatalogos();
+  await Promise.all([obtenerCatalogos(), obtener_convocatorias()]);
+}
+
+/**
+ * Construir un campo de formulario administrativo sin persistencia en el navegador.
+ * A diferencia de field(), estos controles no se guardan en state.saved porque
+ * administran datos maestros del servidor y no borradores de propuestas.
+ * parametros:
+ *     - string : label Etiqueta visible del control.
+ *     - any : value Valor inicial o lista de opciones para select.
+ *     - string : kind Tipo de control ('text', 'textarea', 'date', 'number', 'checkbox', 'select').
+ *     - string : name Nombre del campo dentro del formulario administrativo.
+ *     - boolean : required Si el control es de llenado obligatorio.
+ * return:
+ *     + string : campoHtml Marcado del control administrativo.
+ */
+function adminField(label, value = "", kind = "text", name = "", required = false) {
+  const id = `adm-${name}`;
+  const attr = `id="${id}" data-admin-field="${esc(name)}"${required ? " required" : ""}`;
+  let control;
+  if (kind === "textarea")
+    control = `<textarea ${attr} rows="3">${esc(value)}</textarea>`;
+  else if (kind === "checkbox")
+    control = `<input type="checkbox" ${attr} ${value ? "checked" : ""}>`;
+  else if (kind === "select")
+    control = `<select ${attr}>${value
+      .map(
+        (opcion) =>
+          `<option value="${esc(opcion.value)}" ${opcion.selected ? "selected" : ""}>${esc(opcion.label)}</option>`,
+      )
+      .join("")}</select>`;
+  else control = `<input ${attr} type="${["number", "date"].includes(kind) ? kind : "text"}" value="${esc(value)}">`;
+  return `<div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>`;
+}
+
+/**
+ * Leer los valores escritos en un formulario administrativo abierto en un modal.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Object : valores Objeto con los campos leídos del formulario.
+ */
+function adminValues() {
+  const valores = {};
+  document.querySelectorAll("[data-admin-field]").forEach((control) => {
+    valores[control.dataset.adminField] =
+      control.type === "checkbox" ? control.checked : String(control.value || "").trim();
+  });
+  return valores;
+}
+
+/**
+ * Abrir el formulario de alta o edición de una convocatoria.
+ * parametros:
+ *     - Object|null : convocatoria Convocatoria a editar; null para crear una nueva.
+ * return:
+ *     + void : undefined Abre el modal con el formulario.
+ */
+function modalConvocatoria(convocatoria = null) {
+  const c = convocatoria || {};
+  modal(
+    convocatoria ? "Editar convocatoria" : "Nueva convocatoria",
+    `<div class="stack">${adminField("Nombre", c.nombre || "", "text", "nombre", true)}${adminField("Descripción", c.descripcion || "", "textarea", "descripcion")}<div class="field-row">${adminField("Inicio de postulación", c.fecha_inicio || "", "date", "fecha_inicio", true)}${adminField("Cierre de postulación", c.fecha_cierre || "", "date", "fecha_cierre", true)}</div>${adminField("Inicio de la ejecución", c.fecha_inicio_ejecucion || "", "date", "fecha_inicio_ejecucion", true)}${adminField("Convocatoria vigente", c.activo !== false, "checkbox", "activo")}</div>`,
+    `${act("Cancelar", "close", "text")}${act(convocatoria ? "Guardar cambios" : "Crear convocatoria", "admin-call-save", "secondary", "check", convocatoria ? `data-id="${convocatoria.id_convocatoria}"` : "")}`,
+    false,
+    "admin-convocatoria",
+  );
+}
+
+/**
+ * Abrir el formulario de alta o edición de una etapa del cronograma.
+ * parametros:
+ *     - Object|null : etapa Etapa a editar; null para crear una nueva.
+ * return:
+ *     + void : undefined Abre el modal con el formulario.
+ */
+function modalEtapa(etapa = null) {
+  const e = etapa || {};
+  modal(
+    etapa ? "Editar etapa" : "Agregar etapa",
+    `<div class="stack">${adminField("Nombre de la etapa", e.nombre_etapa || "", "text", "nombre_etapa", true)}${adminField("Responsable", e.responsable || "", "text", "responsable", true)}<div class="field-row">${adminField("Fecha de inicio", e.fecha_inicio || "", "date", "fecha_inicio", true)}${adminField("Fecha de fin", e.fecha_fin || "", "date", "fecha_fin", true)}</div>${adminField("Orden en el cronograma", e.orden || adminEtapas.length + 1, "number", "orden", true)}</div>`,
+    `${act("Cancelar", "close", "text")}${act(etapa ? "Guardar cambios" : "Agregar etapa", "admin-stage-save", "secondary", "check", etapa ? `data-id="${etapa.id_etapa}"` : "")}`,
+    false,
+    "admin-etapa",
+  );
+}
+
+/**
+ * Abrir el formulario de carga de un instrumento oficial.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + void : undefined Abre el modal con el formulario.
+ */
+function modalDocumento() {
+  modal(
+    "Subir instrumento oficial",
+    `<div class="stack">${adminField("Título del instrumento", "", "text", "nombre_documento", true)}${adminField("Tipo de instrumento", [{ value: "disposiciones", label: "Disposiciones" }, { value: "rubrica", label: "Rúbrica" }, { value: "formulario", label: "Formulario" }, { value: "plantilla", label: "Plantilla" }, { value: "otro", label: "Otro" }], "select", "tipo_instrumento")}<div class="field-row">${adminField("Orden", (adminDocumentos[adminDocumentos.length - 1]?.orden ?? 0) + 1, "number", "orden")}${adminField("Versión", "1.0", "text", "version")}</div><div class="field"><label for="adm-archivo">Archivo (PDF, DOCX, XLSX o PPTX)</label><input id="adm-archivo" type="file" accept=".pdf,.docx,.xlsx,.pptx"><span class="help">Máximo 20 MB. Se almacena en Supabase Storage.</span></div></div>`,
+    `${act("Cancelar", "close", "text")}${act("Subir instrumento", "admin-doc-save", "secondary", "upload")}`,
+    false,
+    "admin-documento",
+  );
+}
+
+/**
+ * Abrir el formulario de edición de los metadatos de un instrumento oficial.
+ * parametros:
+ *     - Object : documento Instrumento a editar.
+ * return:
+ *     + void : undefined Abre el modal con el formulario.
+ */
+function modalDocumentoEdicion(documento) {
+  modal(
+    "Editar instrumento",
+    `<div class="stack">${adminField("Título del instrumento", documento.nombre_documento || "", "text", "nombre_documento", true)}${adminField("Tipo de instrumento", documento.tipo_instrumento || "", "text", "tipo_instrumento")}<div class="field-row">${adminField("Orden", documento.orden || 1, "number", "orden")}${adminField("Versión", documento.version || "1.0", "text", "version")}</div>${adminField("Publicado", documento.activo !== false, "checkbox", "activo")}</div>`,
+    `${act("Cancelar", "close", "text")}${act("Guardar cambios", "admin-doc-save-edit", "secondary", "check", `data-id="${documento.id_documento_conv}"`)}`,
+    false,
+    "admin-documento-edicion",
+  );
+}
+
+/**
+ * Describir los campos editables de cada catálogo maestro del backend.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Object : definiciones Campos por catálogo con su tipo y etiqueta.
+ */
+const CAMPOS_CATALOGO_ADMIN = {
+  escuelas: {
+    idField: "id_escuela",
+    campos: [{ name: "nombre", label: "Nombre de la escuela", kind: "text", required: true }, { name: "siglas", label: "Siglas", kind: "text" }],
+  },
+  lineas: {
+    idField: "id_linea_investigacion",
+    campos: [{ name: "nombre_linea", label: "Nombre de la línea", kind: "text", required: true }],
+  },
+  modalidades: {
+    idField: "id_modalidad",
+    campos: [
+      { name: "nombre_modalidad", label: "Nombre de la modalidad", kind: "text", required: true },
+      { name: "descripcion", label: "Descripción", kind: "textarea" },
+      { name: "duracion_maxima", label: "Duración máxima", kind: "text" },
+      { name: "monto_financiamiento", label: "Tope de financiamiento (₡)", kind: "number" },
+      { name: "activo", label: "Modalidad activa", kind: "checkbox" },
+    ],
+  },
+  tipos_hora: {
+    idField: "id_tipo_hora",
+    campos: [{ name: "nombre_tipo_hora", label: "Nombre del tipo de hora", kind: "text", required: true }],
+  },
+  rubros: {
+    idField: "id_rubro",
+    campos: [
+      { name: "nombre_rubro", label: "Nombre del rubro", kind: "text", required: true },
+      { name: "codigo", label: "Código", kind: "text" },
+      { name: "es_bien_duradero", label: "Bien duradero", kind: "checkbox" },
+      { name: "es_beca", label: "Es beca", kind: "checkbox" },
+    ],
+  },
+  roles: {
+    idField: "id_rol",
+    campos: [
+      { name: "nombre_rol", label: "Nombre del rol", kind: "text", required: true },
+      { name: "orden", label: "Orden en la ruta operativa", kind: "number" },
+    ],
+  },
+  criterios_vie: {
+    idField: "id_criterio",
+    campos: [{ name: "descripcion_criterio", label: "Descripción del criterio", kind: "text", required: true }],
+  },
+};
+
+/**
+ * Abrir el formulario de alta o edición de un registro de catálogo maestro.
+ * parametros:
+ *     - string : clave Catálogo a administrar.
+ *     - Object|null : registro Registro a editar; null para crear uno nuevo.
+ * return:
+ *     + void : undefined Abre el modal con el formulario.
+ */
+function modalCatalogo(clave, registro = null) {
+  const definicion = CAMPOS_CATALOGO_ADMIN[clave];
+  if (!definicion) {
+    toast("Ese catálogo no admite edición.");
+    return;
+  }
+  const r = registro || {};
+  const cuerpo = definicion.campos
+    .map((campo) =>
+      adminField(
+        campo.label,
+        r[campo.name] ?? (campo.kind === "checkbox" ? false : ""),
+        campo.kind,
+        campo.name,
+        campo.required,
+      ),
+    )
+    .join("");
+  modal(
+    registro ? "Editar registro" : "Agregar registro",
+    `<div class="stack">${cuerpo}</div>`,
+    `${act("Cancelar", "close", "text")}${act(registro ? "Guardar cambios" : "Agregar", "admin-catalogo-save", "secondary", "check", `data-clave="${clave}" data-id="${registro ? registro[definicion.idField] : ""}"`)}`,
+    false,
+    "admin-catalogo",
+  );
+}
+
+/**
+ * Abrir el formulario de alta o edición de una sección de la rúbrica.
+ * parametros:
+ *     - Object|null : seccion Sección a editar; null para crear una nueva.
+ * return:
+ *     + void : undefined Abre el modal con el formulario.
+ */
+function modalSeccionRubrica(seccion = null) {
+  const s = seccion || {};
+  modal(
+    seccion ? "Editar sección" : "Nueva sección de rúbrica",
+    `<div class="stack">${adminField("Nombre de la sección", s.nombre_seccion || "", "text", "nombre_seccion", true)}${adminField("Peso porcentual", s.peso_porcentual ?? 0, "number", "peso_porcentual", true)}${adminField("Orden", s.orden ?? (adminRubrica?.secciones?.length ?? 0) + 1, "number", "orden", true)}</div>`,
+    `${act("Cancelar", "close", "text")}${act(seccion ? "Guardar cambios" : "Crear sección", "admin-rubrica-section-save", "secondary", "check", seccion ? `data-id="${seccion.id_seccion}"` : "")}`,
+    false,
+    "admin-rubrica-seccion",
+  );
+}
+
+/**
+ * Abrir el formulario de alta o edición de un criterio de rúbrica.
+ * parametros:
+ *     - Object|null : criterio Criterio a editar.
+ *     - number|null : idSeccion Sección destino cuando se crea un criterio nuevo.
+ * return:
+ *     + void : undefined Abre el modal con el formulario.
+ */
+function modalCriterioRubrica(criterio = null, idSeccion = null) {
+  const c = criterio || {};
+  const secciones = (adminRubrica?.secciones ?? []).map((s) => ({
+    value: String(s.id_seccion),
+    label: s.nombre_seccion,
+  }));
+  const seccionActual = criterio ? criterio.id_seccion : (idSeccion ?? secciones[0]?.value);
+  const opcionesSeccion = secciones.map((opcion) => ({
+    ...opcion,
+    selected: opcion.value === String(seccionActual),
+  }));
+  modal(
+    criterio ? "Editar criterio" : "Agregar criterio",
+    `<div class="stack">${adminField("Sección", opcionesSeccion, "select", "id_seccion", true)}${adminField("Nombre del criterio", c.nombre_criterio || "", "text", "nombre_criterio", true)}${adminField("Peso relativo", c.peso_relativo ?? 0, "number", "peso_relativo", true)}${adminField("Criterio obligatorio", c.es_obligatorio === true, "checkbox", "es_obligatorio")}${adminField("Orden", c.orden ?? 1, "number", "orden", true)}</div>`,
+    `${act("Cancelar", "close", "text")}${act(criterio ? "Guardar cambios" : "Agregar criterio", "admin-rubrica-criterion-save", "secondary", "check", criterio ? `data-id="${criterio.id_criterio_rubrica}"` : "")}`,
+    false,
+    "admin-rubrica-criterio",
+  );
+}
+
+/**
+ * Abrir el formulario de alta o edición de una versión de la rúbrica.
+ * parametros:
+ *     - Object|null : version Versión a editar; null para publicar una nueva.
+ * return:
+ *     + void : undefined Abre el modal con el formulario.
+ */
+function modalVersionRubrica(version = null) {
+  const v = version || {};
+  const versiones = (adminRubrica?.versiones ?? []).map((x) => ({
+    value: x.version,
+    label: x.version,
+  }));
+  modal(
+    version ? "Editar versión" : "Publicar versión de rúbrica",
+    `<div class="stack">${version ? adminField("Versión", v.version || "", "text", "version", true) : adminField("Versión", "", "text", "version", true)}${adminField("Descripción", v.descripcion || "", "textarea", "descripcion")}${adminField("Fecha de publicación", v.fecha_publicacion || "", "date", "fecha_publicacion")}${version ? adminField("Versión activa", v.activo === true, "checkbox", "activo") : adminField("Clonar desde una versión existente", [{ value: "", label: "No clonar" }, ...versiones], "select", "clonar_desde")}</div>`,
+    `${act("Cancelar", "close", "text")}${act(version ? "Guardar cambios" : "Publicar versión", "admin-rubrica-version-save", "secondary", "check", version ? `data-id="${version.id_version}"` : "")}`,
+    false,
+    "admin-rubrica-version",
+  );
+}
+
 /**
  * Construir el payload del aval del Consejo de Escuela desde el formulario de la pantalla 25.
  * parametros:
@@ -1874,6 +2321,19 @@ const roles = {
     screen: "26",
   },
   cie: { label: "CIE", name: "Ricardo Mora", initials: "RM", screen: "27" },
+  // [Línea clave]: Perfiles facultados para administrar convocatorias, rúbricas y catálogos.
+  vie: {
+    label: "Funcionario VIE",
+    name: "Mauricio Navarro",
+    initials: "MN",
+    screen: "31",
+  },
+  administracion: {
+    label: "Administración del Sistema",
+    name: "Administración del Sistema",
+    initials: "AS",
+    screen: "31",
+  },
 };
 
 /**
@@ -1906,6 +2366,8 @@ const defaultState = {
     "consejo",
     "direccion",
     "cie",
+    "vie",
+    "administracion",
   ],
   saved: {},
   teamAdded: false,
@@ -2010,14 +2472,20 @@ const person = () => {
 
 /**
  * Obtener el identificador de pantalla de inicio asignado al rol activo.
- * Retorna '02' para investigador y Dirección (panel con contadores reales) y '21'
+ * Retorna '02' para investigador y Dirección (panel con contadores reales), '31'
+ * para los roles administrativos (convocatorias y catálogos) y '21'
  * (Bandeja de trabajo) para el resto de roles evaluadores.
  * parametros:
  *     (ninguno)
  * return:
  *     + string : pantallaInicio Identificador de la pantalla de inicio correspondiente.
  */
-const homeFor = () => (state.role === "investigador" || state.role === "direccion" ? "02" : "21");
+const homeFor = () =>
+  state.role === "investigador" || state.role === "direccion"
+    ? "02"
+    : state.role === "vie" || state.role === "administracion"
+      ? "31"
+      : "21";
 
 /**
  * Cambiar el rol institucional activo en la demostración y sincronizar la etapa de la propuesta.
@@ -2042,6 +2510,8 @@ function applyRole(key) {
     consejo: "En evaluación técnica",
     direccion: "Sometida",
     cie: "Dictaminada",
+    vie: "Convocatoria vigente",
+    administracion: "Convocatoria vigente",
   }[key];
 }
 
@@ -2437,10 +2907,14 @@ function shell(body, title, description = "", headingActions = "") {
   // [Línea clave]: ¿Por qué soy importante? Resuelve dinámicamente la identidad y rol visible del usuario. ¿Para qué? Ajustar las opciones del menú lateral a sus facultades (investigador vs evaluador vs superadmin). ¿Dónde me usan? Al armar el layout principal en shell().
   const r = person(),
     research = state.role === "investigador",
-    admin = state.role === "direccion",
-    historical = admin || state.role === "cie";
+    // [Línea clave]: Dirección, Funcionarios VIE y Administración administran las pantallas 31 y 32.
+    admin = ["direccion", "vie", "administracion"].includes(state.role),
+    // [Línea clave]: Los roles administrativos también consultan el historial institucional.
+    historical = admin || state.role === "cie",
+    // [Línea clave]: Para los roles administrativos el «Inicio» es la administración de convocatorias.
+    inicio = state.role === "vie" || state.role === "administracion" ? "31" : "02";
   const module = (screen(current) || {}).module || "Expediente";
-  return `<div class="app"><aside class="sidebar"><div class="brand"><div class="brand-mark">S</div><div><div class="brand-name">SGPI</div><span class="tec-wordmark">Tecnológico de Costa Rica</span></div></div><nav aria-label="Navegación principal"><div class="nav-group">${navItem("Inicio", "02", "home", current === "02")}${research ? navItem("Mis propuestas", "06", "folder", +current >= 6 && +current <= 20) : navItem("Bandeja de trabajo", "21", "inbox", +current >= 21 && +current <= 27)}${research ? navItem("Convocatorias", "04", "calendar", current === "04" || current === "05") : ""}${historical ? navItem("Consulta histórica", "29", "search", current === "29" || current === "30") : ""}</div>${admin ? `<div class="nav-title" style="margin-top:28px">SUPERADMINISTRACIÓN</div><div class="nav-group">${navItem("Convocatorias", "31", "calendar", current === "31")}${navItem("Rúbricas y catálogos", "32", "settings", current === "32")}</div>` : ""}</nav><div class="nav-group" style="margin-top:auto">${navItem("Mi perfil", "33", "user", current === "33")}<button class="nav-item has-tooltip" data-action="contact" data-tooltip="Persona de contacto y canales de apoyo." title="Persona de contacto y canales de apoyo.">${icon("info")}Contacto y soporte</button><button class="nav-item has-tooltip" data-action="logout" data-tooltip="${esc(optionHelp["Cerrar sesión"])}" title="${esc(optionHelp["Cerrar sesión"])}">${icon("logout")}Cerrar sesión</button></div></aside><div class="main"><header class="topbar"><div class="topbar-context"><strong>VIE</strong></div><div class="topbar-actions"><button class="icon-btn" data-go="03" aria-label="Notificaciones">${icon("bell")}${!state.read ? '<span class="notif-dot"></span>' : ""}</button><button class="profile-btn" data-action="user-menu" aria-expanded="${userMenuOpen}" aria-haspopup="menu"><span class="avatar">${esc(r.initials)}</span><span class="profile-text"><strong>${esc(r.name)}</strong><br><span class="micro muted">${r.label}</span></span>${icon("down")}</button>${userMenuOpen ? `<div class="user-menu" role="menu"><div class="user-menu-head"><strong>${esc(r.name)}</strong><div class="micro muted">${r.label}</div></div><button role="menuitem" data-go="33">${icon("user")}Mi perfil</button><button role="menuitem" data-action="settings">${icon("settings")}Ajustes y accesibilidad</button><button role="menuitem" data-action="contact">${icon("info")}Contactar soporte</button><button role="menuitem" class="danger" data-action="logout">${icon("logout")}Cerrar sesión</button></div>` : ""}</div></header><main class="content"><div class="page-heading"><div><h1>${esc(title)}</h1>${description ? `<p class="subtitle">${esc(description)}</p>` : ""}</div>${headingActions ? `<div class="action-row">${headingActions}</div>` : ""}</div>${body}</main></div><button class="support-fab" data-action="contact" aria-label="Contactar soporte">${icon("info")}<span>Soporte</span></button></div>`;
+  return `<div class="app"><aside class="sidebar"><div class="brand"><div class="brand-mark">S</div><div><div class="brand-name">SGPI</div><span class="tec-wordmark">Tecnológico de Costa Rica</span></div></div><nav aria-label="Navegación principal"><div class="nav-group">${navItem("Inicio", inicio, "home", current === inicio)}${research ? navItem("Mis propuestas", "06", "folder", +current >= 6 && +current <= 20) : navItem("Bandeja de trabajo", "21", "inbox", +current >= 21 && +current <= 27)}${research ? navItem("Convocatorias", "04", "calendar", current === "04" || current === "05") : ""}${historical ? navItem("Consulta histórica", "29", "search", current === "29" || current === "30") : ""}</div>${admin ? `<div class="nav-title" style="margin-top:28px">SUPERADMINISTRACIÓN</div><div class="nav-group">${navItem("Convocatorias", "31", "calendar", current === "31")}${navItem("Rúbricas y catálogos", "32", "settings", current === "32")}</div>` : ""}</nav><div class="nav-group" style="margin-top:auto">${navItem("Mi perfil", "33", "user", current === "33")}<button class="nav-item has-tooltip" data-action="contact" data-tooltip="Persona de contacto y canales de apoyo." title="Persona de contacto y canales de apoyo.">${icon("info")}Contacto y soporte</button><button class="nav-item has-tooltip" data-action="logout" data-tooltip="${esc(optionHelp["Cerrar sesión"])}" title="${esc(optionHelp["Cerrar sesión"])}">${icon("logout")}Cerrar sesión</button></div></aside><div class="main"><header class="topbar"><div class="topbar-context"><strong>VIE</strong></div><div class="topbar-actions"><button class="icon-btn" data-go="03" aria-label="Notificaciones">${icon("bell")}${!state.read ? '<span class="notif-dot"></span>' : ""}</button><button class="profile-btn" data-action="user-menu" aria-expanded="${userMenuOpen}" aria-haspopup="menu"><span class="avatar">${esc(r.initials)}</span><span class="profile-text"><strong>${esc(r.name)}</strong><br><span class="micro muted">${r.label}</span></span>${icon("down")}</button>${userMenuOpen ? `<div class="user-menu" role="menu"><div class="user-menu-head"><strong>${esc(r.name)}</strong><div class="micro muted">${r.label}</div></div><button role="menuitem" data-go="33">${icon("user")}Mi perfil</button><button role="menuitem" data-action="settings">${icon("settings")}Ajustes y accesibilidad</button><button role="menuitem" data-action="contact">${icon("info")}Contactar soporte</button><button role="menuitem" class="danger" data-action="logout">${icon("logout")}Cerrar sesión</button></div>` : ""}</div></header><main class="content"><div class="page-heading"><div><h1>${esc(title)}</h1>${description ? `<p class="subtitle">${esc(description)}</p>` : ""}</div>${headingActions ? `<div class="action-row">${headingActions}</div>` : ""}</div>${body}</main></div><button class="support-fab" data-action="contact" aria-label="Contactar soporte">${icon("info")}<span>Soporte</span></button></div>`;
 }
 
 /**
@@ -4862,17 +5336,82 @@ function historyResults() {
  *     + string : adminCallsHtml Marcado HTML de administración de convocatorias.
  */
 function adminCalls() {
+  const seleccionada =
+    adminConvocatorias.find((c) => c.id_convocatoria === adminConvocatoriaId) ??
+    adminConvocatorias[0] ??
+    null;
+
+  const filasConvocatorias = adminConvocatorias.length
+    ? adminConvocatorias.map((c) => [
+        `<strong>${esc(c.nombre)}</strong><br><span class="micro muted">${esc(c.descripcion || "Sin descripción")}</span>`,
+        `${esc(String(c.fecha_inicio || ""))} → ${esc(String(c.fecha_cierre || ""))}`,
+        `${c.etapas} etapas · ${c.documentos} documentos · ${c.propuestas} propuestas`,
+        badge(c.activo ? "Vigente" : "Cerrada", c.activo ? "" : "warning"),
+        `<div class="row-actions">${act("Administrar", "admin-call-select", "secondary compact", "arrow", `data-id="${c.id_convocatoria}"`)}${act("Editar", "admin-call-edit", "secondary compact", "edit", `data-id="${c.id_convocatoria}"`)}${act("Eliminar", "admin-call-delete", "text compact", "trash", `data-id="${c.id_convocatoria}"`)}</div>`,
+      ])
+    : [
+        [
+          `<span class="muted">No hay convocatorias registradas.</span>`,
+          "",
+          "",
+          "",
+          "",
+        ],
+      ];
+
+  const filasEtapas = adminEtapas.length
+    ? adminEtapas.map((e) => [
+        `<strong>${esc(e.nombre_etapa)}</strong><br><span class="micro muted">${esc(e.responsable)}</span>`,
+        `${esc(String(e.fecha_inicio || ""))} → ${esc(String(e.fecha_fin || ""))}`,
+        String(e.orden),
+        `<div class="row-actions">${act("Editar", "admin-stage-edit", "text compact", "edit", `data-id="${e.id_etapa}"`)}${act("Eliminar", "admin-stage-delete", "text compact", "trash", `data-id="${e.id_etapa}"`)}</div>`,
+      ])
+    : [[`<span class="muted">Esta convocatoria todavía no tiene etapas.</span>`, "", "", ""]];
+
+  const filasDocumentos = adminDocumentos.length
+    ? adminDocumentos.map((d) => [
+        `<a href="${esc(d.file_url)}" target="_blank" rel="noopener"><strong>${esc(d.nombre_documento)}</strong></a><br><span class="micro muted">${esc(d.nombre_archivo)} · v${esc(d.version)}</span>`,
+        esc(d.tipo_instrumento),
+        String(d.orden),
+        badge(d.activo ? "Publicado" : "Retirado", d.activo ? "" : "warning"),
+        `<div class="row-actions">${act("Editar", "admin-doc-edit", "text compact", "edit", `data-id="${d.id_documento_conv}"`)}${act("Eliminar", "admin-doc-delete", "text compact", "trash", `data-id="${d.id_documento_conv}"`)}</div>`,
+      ])
+    : [[`<span class="muted">No hay instrumentos oficiales publicados.</span>`, "", "", "", ""]];
+
+  const reglasModalidad = (adminCatalogosDatos?.modalidades ?? []).map((m) => [
+    esc(m.nombre_modalidad),
+    esc(m.duracion_maxima || "Sin definir"),
+    money(Number(m.monto_financiamiento || 0)),
+    badge(m.activo === false ? "Inactiva" : "Activa", m.activo === false ? "warning" : ""),
+    `<div class="row-actions">${act("Editar", "admin-catalogo-edit", "text compact", "edit", `data-clave="modalidades" data-id="${m.id_modalidad}"`)}</div>`,
+  ]);
+
   return shell(
-    `<div class="card mb">${table(["Convocatoria", "Ejecución", "Estado", ""], [['<strong>Fondos VIE 2027</strong><br><span class="micro muted">Disposiciones y cronograma vigentes</span>', "Desde 01 ene 2027", badge("Configurada"), act("Editar", "admin-call", "secondary compact", "edit")]])}</div><div class="grid two">${card("Cronograma de la convocatoria", table(["Etapa", "Fecha"], calendarRows), act("Editar", "admin-calendar", "text compact"))}${card(
-      "Reglas por modalidad",
-      table(
-        ["Modalidad", "Duración", "Tope"],
-        (modalidades ?? []).map((m) => [esc(m.titulo), esc(m.duracion), money(m.monto)]),
-      ),
-    )}</div>`,
+    `<div class="card mb">${table(
+      ["Convocatoria", "Periodo de postulación", "Configuración", "Estado", ""],
+      filasConvocatorias,
+    )}</div>${
+      seleccionada
+        ? `<div class="grid two">${card(
+            `Cronograma · ${esc(seleccionada.nombre)}`,
+            table(["Etapa", "Periodo", "Orden", ""], filasEtapas),
+            act("Agregar etapa", "admin-stage-add", "secondary compact", "plus"),
+          )}${card(
+            "Instrumentos oficiales",
+            table(["Instrumento", "Tipo", "Orden", "Estado", ""], filasDocumentos),
+            act("Subir instrumento", "admin-doc-upload", "secondary compact", "upload"),
+          )}</div><div class="card mt">${card(
+            "Reglas por modalidad",
+            reglasModalidad.length
+              ? table(["Modalidad", "Duración máxima", "Tope", "Estado", ""], reglasModalidad)
+              : `<p class="muted">No hay modalidades registradas.</p>`,
+            act("Editar modalidades", "admin-catalogo-add", "secondary compact", "plus", 'data-clave="modalidades"'),
+          )}</div>`
+        : `<div class="card empty">${icon("calendar")}<h2>Sin convocatorias</h2><p>Registra la primera convocatoria para comenzar a configurar su cronograma e instrumentos.</p></div>`
+    }`,
     "Administración de convocatorias",
     "Configura instrumentos, plazos y modalidades desde Dirección/VIE.",
-    act("Nueva convocatoria", "admin-call", "secondary", "plus"),
+    act("Nueva convocatoria", "admin-call-add", "secondary", "plus"),
   );
 }
 
@@ -4886,55 +5425,145 @@ function adminCalls() {
  *     + string : adminCatalogsHtml Marcado HTML de soporte y catálogos.
  */
 function adminCatalogs() {
-  const selected = activeFilter === "Todas" ? "Rúbricas" : activeFilter;
-  const roleRows = (state.roleOrder || Object.keys(roles))
+  const pestanas = [
+    "Rúbricas",
+    "Escuelas",
+    "Líneas de investigación",
+    "Modalidades",
+    "Tipos de hora",
+    "Rubros",
+    "Roles y permisos",
+    "Criterios VIE",
+  ];
+  const selected = pestanas.includes(activeFilter) ? activeFilter : "Rúbricas";
+  const rubrica = adminRubrica || {};
+
+  // [Línea clave]: Cada pestaña muestra el catálogo real descargado del backend.
+  const renderCatalogo = (clave, titulo, cabeceras, fila, campos) => {
+    const registros = adminCatalogosDatos?.[clave] ?? [];
+    const cuerpo = registros.length
+      ? registros.map((registro) =>
+          fila(registro, campos).concat([
+            `<div class="row-actions">${act("Editar", "admin-catalogo-edit", "text compact", "edit", `data-clave="${clave}" data-id="${registro[campos.id]}"`)}${act("Eliminar", "admin-catalogo-delete", "text compact", "trash", `data-clave="${clave}" data-id="${registro[campos.id]}"`)}</div>`,
+          ]),
+        )
+      : [[`<span class="muted">Sin registros en este catálogo.</span>`, ...cabeceras.slice(1).map(() => "")]];
+    return `<div class="card">${table(cabeceras, cuerpo)}</div>`;
+  };
+
+  const rúbricaHtml = rubrica.secciones?.length
+    ? `<div class="section-head"><span class="result-count">${rubrica.secciones.length} secciones · peso total ${rubrica.peso_total}% · versión activa ${esc(rubrica.version_activa || "2027")}</span><div class="row-actions">${act("Nueva sección", "admin-rubrica-section-add", "secondary compact", "plus")}${act("Nueva versión", "admin-rubrica-version-add", "secondary compact", "plus")}</div></div>${table(
+        ["Sección", "Peso", "Criterios", "", ""],
+        rubrica.secciones.map((s) => [
+          `<strong>${esc(s.nombre_seccion)}</strong><br><span class="micro muted">${esc(s.version)}</span>`,
+          `${s.peso_porcentual}%`,
+          s.criterios.length
+            ? s.criterios
+                .map(
+                  (c) =>
+                    `<div><span class="micro">${esc(c.nombre_criterio)} · ${c.peso_relativo}%${c.es_obligatorio ? " · obligatorio" : ""}</span> ${act("Editar", "admin-rubrica-criterion-edit", "text compact", "edit", `data-id="${c.id_criterio_rubrica}"`)}${act("Eliminar", "admin-rubrica-criterion-delete", "text compact", "trash", `data-id="${c.id_criterio_rubrica}"`)}</div>`,
+                )
+                .join("")
+            : `<span class="muted">Sin criterios</span>`,
+          `<div class="row-actions">${act("Agregar criterio", "admin-rubrica-criterion-add", "text compact", "plus", `data-id="${s.id_seccion}"`)}${act("Editar", "admin-rubrica-section-edit", "text compact", "edit", `data-id="${s.id_seccion}"`)}${act("Eliminar", "admin-rubrica-section-delete", "text compact", "trash", `data-id="${s.id_seccion}"`)}</div>`,
+          "",
+        ]),
+      )}`
+    : `<div class="card empty">${icon("settings")}<h2>Sin rúbrica configurada</h2><p>Crea la primera sección de la rúbrica institucional para que el Comité Técnico pueda evaluar.</p></div>`;
+
+  const versiones = (rubrica.versiones ?? [])
     .map(
-      (key, i) =>
-        `<div class="role-order-row"><strong>${i + 1}</strong><div><strong>${roles[key].label}</strong><div class="micro muted">${roles[key].name}</div></div><div class="role-order-actions"><button data-action="role-up" data-role="${key}" aria-label="Subir ${esc(roles[key].label)}" ${i === 0 ? "disabled" : ""}>↑</button><button data-action="role-down" data-role="${key}" aria-label="Bajar ${esc(roles[key].label)}" ${i === (state.roleOrder || []).length - 1 ? "disabled" : ""}>↓</button></div></div>`,
+      (v) =>
+        `<div><span class="micro">${esc(v.version)} · ${esc(v.fecha_publicacion)} · ${v.activo ? "activa" : "inactiva"}</span> ${act("Editar", "admin-rubrica-version-edit", "text compact", "edit", `data-id="${v.id_version}"`)}${act("Eliminar", "admin-rubrica-version-delete", "text compact", "trash", `data-id="${v.id_version}"`)}</div>`,
     )
     .join("");
-  return shell(
-    `${tabs(["Rúbricas", "Escuelas", "Líneas de investigación", "Modalidades", "Roles y permisos"], selected, "data-filter")}${
-      selected === "Rúbricas"
-        ? `<div class="grid three">${[
-            ["Fortalecimiento", "20 · 15 · 15 · 8 · 10 · 7 · 25"],
-            ["Básica y aplicada", "20 · 12 · 15 · 13 · 10 · 8 · 7 · 15"],
-            ["Desarrollo tecnológico", "15 · 12 · 15 · 13 · 10 · 8 · 10 · 17"],
-          ]
-            .map(([a, b]) =>
-              card(
-                a,
-                `${badge("Versión 2027")}<p class="small muted" style="margin:18px 0">Escala 0 / 6 / 8 / 10<br>Umbral 70% + obligatorios</p><p class="micro muted mb">Pesos por sección: ${b}</p>${act("Consultar rúbrica", "rubric-summary", "secondary")}`,
-              ),
+
+  const rolesOrden = (adminCatalogosDatos?.roles ?? [])
+    .map(
+      (r) => `<div class="role-order-row"><strong>${r.orden ?? r.id_rol}</strong><div><strong>${esc(r.nombre_rol)}</strong><div class="micro muted">Rol #${r.id_rol}</div></div><div class="role-order-actions"><button data-action="admin-role-up" data-id="${r.id_rol}" aria-label="Subir ${esc(r.nombre_rol)}">↑</button><button data-action="admin-role-down" data-id="${r.id_rol}" aria-label="Bajar ${esc(r.nombre_rol)}">↓</button>${act("Editar", "admin-catalogo-edit", "text compact", "edit", `data-clave="roles" data-id="${r.id_rol}"`)}${act("Eliminar", "admin-catalogo-delete", "text compact", "trash", `data-clave="roles" data-id="${r.id_rol}"`)}</div></div>`,
+    )
+    .join("");
+
+  const cuerpoCatalogo =
+    selected === "Rúbricas"
+      ? `${rúbricaHtml}${versiones ? `<div class="card mt"><h2>Versiones publicadas</h2>${versiones}</div>` : ""}`
+      : selected === "Escuelas"
+        ? renderCatalogo(
+            "escuelas",
+            "Escuelas",
+            ["Nombre", "Siglas", ""],
+            (r) => [esc(r.nombre), esc(r.siglas || "—")],
+            { id: "id_escuela" },
+          )
+        : selected === "Líneas de investigación"
+          ? renderCatalogo(
+              "lineas",
+              "Líneas de investigación",
+              ["Nombre", ""],
+              (r) => [esc(r.nombre_linea)],
+              { id: "id_linea_investigacion" },
             )
-            .join("")}</div>`
-        : selected === "Roles y permisos"
-          ? `<div class="two-col"><section class="card"><div class="card-pad"><h2>Orden de roles</h2><p class="small muted">Este orden se usa en el selector de perfiles del prototipo.</p></div><div class="role-order">${roleRows}</div></section>${card("Criterio de orden", `<p class="small muted">La superadministración puede priorizar la ruta operativa: proponente, revisiones, aval, dictamen y resolución.</p>${notice("Cambio reversible", "Usa las flechas para ajustar el orden. Los permisos de cada rol no cambian.")}`)}</div>`
-          : `<div class="card">${table(
-              ["Nombre", "Estado", ""],
-              (selected === "Escuelas"
-                ? ["Escuela de Ingeniería Ambiental", "Escuela de Ingeniería Electrónica"]
-                : selected === "Modalidades"
-                  ? ["Actividad de fortalecimiento", "Investigación básica", "Investigación aplicada", "Desarrollo tecnológico"]
-                  : ["Gestión integrada del recurso hídrico", "Tecnologías de monitoreo ambiental"]
-              ).map((x) => [
-                x,
-                badge("Activo"),
-                act(
-                  "Editar",
-                  "catalog-edit",
-                  "text compact",
-                  "edit",
-                  `data-value="${esc(x)}"`,
-                ),
-              ]),
-            )}</div>`
-    }<div class="mt">${notice("Conserva la versión de cada instrumento", "Una propuesta evaluada mantiene la rúbrica aplicada. Los cambios posteriores se registran para nuevas versiones de convocatoria.")}</div>`,
+          : selected === "Modalidades"
+            ? renderCatalogo(
+                "modalidades",
+                "Modalidades",
+                ["Nombre", "Duración", "Tope", "Estado", ""],
+                (r) => [
+                  esc(r.nombre_modalidad),
+                  esc(r.duracion_maxima || "—"),
+                  money(Number(r.monto_financiamiento || 0)),
+                  badge(r.activo === false ? "Inactiva" : "Activa", r.activo === false ? "warning" : ""),
+                ],
+                { id: "id_modalidad" },
+              )
+            : selected === "Tipos de hora"
+              ? renderCatalogo(
+                  "tipos_hora",
+                  "Tipos de hora",
+                  ["Nombre", ""],
+                  (r) => [esc(r.nombre_tipo_hora)],
+                  { id: "id_tipo_hora" },
+                )
+              : selected === "Rubros"
+                ? renderCatalogo(
+                    "rubros",
+                    "Rubros presupuestarios",
+                    ["Nombre", "Código", "Beca", "Duradero", ""],
+                    (r) => [
+                      esc(r.nombre_rubro),
+                      esc(r.codigo || "—"),
+                      r.es_beca ? "Sí" : "No",
+                      r.es_bien_duradero ? "Sí" : "No",
+                    ],
+                    { id: "id_rubro" },
+                  )
+                : selected === "Roles y permisos"
+                  ? `<div class="two-col"><section class="card"><div class="card-pad"><h2>Orden de roles</h2><p class="small muted">Este orden define la ruta operativa institucional y se guarda en PostgreSQL.</p></div><div class="role-order">${rolesOrden || `<p class="muted">Sin roles registrados.</p>`}</div></section>${card("Criterio de orden", `<p class="small muted">La administración puede priorizar la ruta operativa: proponente, revisiones, aval, dictamen y resolución.</p>${notice("Cambio reversible", "Usa las flechas para ajustar el orden. Los permisos de cada rol no cambian.")}`)}</div>`
+                  : renderCatalogo(
+                      "criterios_vie",
+                      "Criterios de verificación VIE",
+                      ["Criterio", ""],
+                      (r) => [esc(r.descripcion_criterio)],
+                      { id: "id_criterio" },
+                    );
+
+  const clavePestana = {
+    "Escuelas": "escuelas",
+    "Líneas de investigación": "lineas",
+    Modalidades: "modalidades",
+    "Tipos de hora": "tipos_hora",
+    Rubros: "rubros",
+    "Criterios VIE": "criterios_vie",
+    "Roles y permisos": "roles",
+  }[selected];
+
+  return shell(
+    `${tabs(pestanas, selected, "data-filter")}${cuerpoCatalogo}<div class="mt">${notice("Conserva la versión de cada instrumento", "Una propuesta evaluada mantiene la rúbrica aplicada. Los cambios posteriores se registran para nuevas versiones de convocatoria.")}</div>`,
     "Rúbricas, catálogos y roles",
     "Parámetros de soporte administrados por la superadministración de Dirección/VIE.",
-    selected === "Roles y permisos"
-      ? ""
-      : act("Agregar entrada", "catalog-edit", "secondary", "plus"),
+    clavePestana
+      ? act("Agregar entrada", "admin-catalogo-add", "secondary", "plus", `data-clave="${clavePestana}"`)
+      : "",
   );
 }
 /**
@@ -4982,9 +5611,12 @@ function guardRoute(id) {
     27: "cie",
   };
   if (roleByScreen[id] && state.role !== roleByScreen[id]) return false;
-  if (["29", "30"].includes(id) && !["direccion", "cie"].includes(state.role))
+  if (["29", "30"].includes(id) && !["direccion", "cie", "vie", "administracion"].includes(state.role))
     return false;
-  if (["31", "32"].includes(id) && state.role !== "direccion") return false;
+  // [Línea clave]: La administración de convocatorias y catálogos es compartida por Dirección,
+  // los Funcionarios VIE y la Administración del Sistema.
+  if (["31", "32"].includes(id) && !["direccion", "vie", "administracion"].includes(state.role))
+    return false;
   if (+id >= 4 && +id <= 20 && state.role !== "investigador") return false;
   if (id === "21" && state.role === "investigador") return false;
   return true;
@@ -6318,37 +6950,6 @@ async function handleAction(action, el) {
       save();
       go("29");
       break;
-    case "admin-call":
-      modal(
-        "Configurar convocatoria",
-        `${field("Nombre", "Fondos VIE 2027", "text", "", true, "modal:call-name")}${field("Inicio de ejecución", "2027-01-01", "date", "", true, "modal:call-start")}${field("Disposiciones", "Versión 2027", "readonly")}`,
-        act("Cancelar", "close", "secondary") +
-          confirmBtn("Guardar configuración", "admin-save"),
-        false,
-        "admin-call",
-      );
-      break;
-    case "admin-calendar":
-      modal(
-        "Cronograma vigente",
-        table(["Etapa", "Fecha"], calendarRows),
-        act("Cerrar", "close"),
-        true,
-      );
-      break;
-    case "catalog-edit":
-      modal(
-        "Entrada de catálogo",
-        `${field("Nombre", el.dataset.value || "Nueva línea de investigación", "text", "", true, "modal:catalog")}${field("Estado", ["Activo", "Inactivo"], "select", "", false, "modal:catalog-status")}`,
-        act("Cancelar", "close", "secondary") +
-          confirmBtn("Guardar entrada", "admin-save"),
-      );
-      break;
-    case "admin-save":
-      save();
-      closeModal();
-      toast("Configuración guardada.");
-      break;
     case "rubric-summary": {
       // [Línea clave]: Si el expediente ya tiene puntajes por criterio, la rúbrica se muestra
       // con los niveles realmente dictaminados y su ponderación; si no, con los pesos oficiales.
@@ -6389,6 +6990,415 @@ async function handleAction(action, el) {
       );
       break;
     }
+    // =================================================================
+    // ADMINISTRACIÓN INSTITUCIONAL (PANTALLAS 31 Y 32)
+    // =================================================================
+    case "admin-call-add":
+      modalConvocatoria(null);
+      break;
+    case "admin-call-edit": {
+      const convocatoria = adminConvocatorias.find(
+        (c) => c.id_convocatoria === Number(el.dataset.id),
+      );
+      if (convocatoria) modalConvocatoria(convocatoria);
+      break;
+    }
+    case "admin-call-select":
+      adminConvocatoriaId = Number(el.dataset.id);
+      await Promise.all([cargarEtapasAdmin(), cargarDocumentosAdmin()]);
+      render();
+      break;
+    case "admin-call-delete": {
+      const convocatoria = adminConvocatorias.find(
+        (c) => c.id_convocatoria === Number(el.dataset.id),
+      );
+      modal(
+        "Eliminar convocatoria",
+        `<p>Se eliminará «${esc(convocatoria?.nombre || "la convocatoria")}», su cronograma y la publicación de sus instrumentos. Si ya tiene propuestas registradas el servidor la rechazará.</p>`,
+        `${act("Cancelar", "close", "text")}${act("Eliminar", "admin-call-delete-confirm", "secondary", "trash", `data-id="${el.dataset.id}"`)}`,
+        false,
+        "admin-confirmar",
+      );
+      break;
+    }
+    case "admin-call-delete-confirm":
+      try {
+        await peticionAdmin(`/convocatorias/${el.dataset.id}`, "DELETE");
+        closeModal();
+        await cargarConvocatoriasAdmin();
+        await refrescarCatalogosFront();
+        render();
+        toast("Convocatoria eliminada.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    case "admin-call-save": {
+      const valores = adminValues();
+      const cuerpo = {
+        nombre: valores.nombre,
+        descripcion: valores.descripcion || null,
+        fecha_inicio: valores.fecha_inicio,
+        fecha_cierre: valores.fecha_cierre,
+        fecha_inicio_ejecucion: valores.fecha_inicio_ejecucion,
+        activo: valores.activo,
+      };
+      try {
+        if (el.dataset.id) {
+          await peticionAdmin(`/convocatorias/${el.dataset.id}`, "PATCH", cuerpo);
+        } else {
+          const nueva = await peticionAdmin("/convocatorias", "POST", cuerpo);
+          adminConvocatoriaId = nueva.id_convocatoria;
+        }
+        closeModal();
+        await cargarConvocatoriasAdmin();
+        await refrescarCatalogosFront();
+        render();
+        toast(el.dataset.id ? "Convocatoria actualizada." : "Convocatoria creada.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    }
+    case "admin-stage-add":
+      modalEtapa(null);
+      break;
+    case "admin-stage-edit": {
+      const etapa = adminEtapas.find((e) => e.id_etapa === Number(el.dataset.id));
+      if (etapa) modalEtapa(etapa);
+      break;
+    }
+    case "admin-stage-delete":
+      try {
+        await peticionAdmin(`/etapas/${el.dataset.id}`, "DELETE");
+        await cargarEtapasAdmin();
+        render();
+        toast("Etapa eliminada.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    case "admin-stage-save": {
+      const valores = adminValues();
+      const cuerpo = {
+        nombre_etapa: valores.nombre_etapa,
+        responsable: valores.responsable,
+        fecha_inicio: valores.fecha_inicio,
+        fecha_fin: valores.fecha_fin,
+        orden: Number(valores.orden || 1),
+      };
+      try {
+        if (el.dataset.id) {
+          await peticionAdmin(`/etapas/${el.dataset.id}`, "PATCH", cuerpo);
+        } else {
+          await peticionAdmin(
+            `/convocatorias/${adminConvocatoriaId}/etapas`,
+            "POST",
+            cuerpo,
+          );
+        }
+        closeModal();
+        await cargarEtapasAdmin();
+        render();
+        toast(el.dataset.id ? "Etapa actualizada." : "Etapa agregada.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    }
+    case "admin-doc-upload":
+      modalDocumento();
+      break;
+    case "admin-doc-edit": {
+      const documento = adminDocumentos.find(
+        (d) => d.id_documento_conv === Number(el.dataset.id),
+      );
+      if (documento) modalDocumentoEdicion(documento);
+      break;
+    }
+    case "admin-doc-delete":
+      try {
+        await peticionAdmin(`/documentos/${el.dataset.id}`, "DELETE");
+        await cargarDocumentosAdmin();
+        render();
+        toast("Instrumento eliminado.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    case "admin-doc-save": {
+      const valores = adminValues();
+      const archivo = document.querySelector("#adm-archivo")?.files?.[0];
+      if (!archivo) {
+        toast("Selecciona el archivo del instrumento.");
+        break;
+      }
+      const formulario = new FormData();
+      formulario.append("id_convocatoria", String(adminConvocatoriaId));
+      formulario.append("nombre_documento", valores.nombre_documento || archivo.name);
+      formulario.append("tipo_instrumento", valores.tipo_instrumento || "otro");
+      formulario.append("orden", String(valores.orden || 1));
+      formulario.append("version", valores.version || "1.0");
+      formulario.append("id_usuario", String(idUsuarioAdmin()));
+      formulario.append("archivo", archivo);
+      try {
+        const res = await fetch(`${API_URL}/admin/convocatorias/${adminConvocatoriaId}/documentos`, {
+          method: "POST",
+          body: formulario,
+        });
+        if (!res.ok) throw new Error(await errorDesdeRespuesta(res));
+        closeModal();
+        await cargarDocumentosAdmin();
+        render();
+        toast("Instrumento publicado.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    }
+    case "admin-doc-save-edit": {
+      const valores = adminValues();
+      try {
+        await peticionAdmin(`/documentos/${el.dataset.id}`, "PATCH", {
+          nombre_documento: valores.nombre_documento,
+          tipo_instrumento: valores.tipo_instrumento,
+          orden: Number(valores.orden || 1),
+          version: valores.version || "1.0",
+          activo: valores.activo,
+        });
+        closeModal();
+        await cargarDocumentosAdmin();
+        render();
+        toast("Instrumento actualizado.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    }
+    case "admin-catalogo-add":
+      modalCatalogo(el.dataset.clave);
+      break;
+    case "admin-catalogo-edit": {
+      const clave = el.dataset.clave;
+      const registros = adminCatalogosDatos?.[clave] ?? [];
+      const definicion = CAMPOS_CATALOGO_ADMIN[clave];
+      const registro = registros.find((r) => r[definicion?.idField] === Number(el.dataset.id));
+      if (registro) modalCatalogo(clave, registro);
+      break;
+    }
+    case "admin-catalogo-delete": {
+      const clave = el.dataset.clave;
+      const definicion = CAMPOS_CATALOGO_ADMIN[clave];
+      const registros = adminCatalogosDatos?.[clave] ?? [];
+      const registro = registros.find((r) => r[definicion?.idField] === Number(el.dataset.id));
+      modal(
+        "Eliminar registro",
+        `<p>Se eliminará «${esc(registro ? Object.values(registro).find((v) => typeof v === "string") : "el registro")}». Si el servidor detecta que está en uso, la eliminación se rechazará.</p>`,
+        `${act("Cancelar", "close", "text")}${act("Eliminar", "admin-catalogo-delete-confirm", "secondary", "trash", `data-clave="${clave}" data-id="${el.dataset.id}"`)}`,
+        false,
+        "admin-confirmar",
+      );
+      break;
+    }
+    case "admin-catalogo-delete-confirm":
+      try {
+        await peticionAdmin(
+          `/catalogos/${el.dataset.clave}/${el.dataset.id}`,
+          "DELETE",
+        );
+        closeModal();
+        await cargarCatalogosAdmin();
+        await refrescarCatalogosFront();
+        render();
+        toast("Registro eliminado.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    case "admin-catalogo-save": {
+      const clave = el.dataset.clave;
+      const valores = adminValues();
+      const cuerpo = {};
+      CAMPOS_CATALOGO_ADMIN[clave]?.campos.forEach((campo) => {
+        const valor = valores[campo.name];
+        if (campo.kind === "checkbox") cuerpo[campo.name] = !!valor;
+        else if (campo.kind === "number")
+          cuerpo[campo.name] = valor === "" ? null : Number(valor);
+        else cuerpo[campo.name] = valor || null;
+      });
+      try {
+        if (el.dataset.id) {
+          await peticionAdmin(`/catalogos/${clave}/${el.dataset.id}`, "PATCH", cuerpo);
+        } else {
+          await peticionAdmin(`/catalogos/${clave}`, "POST", cuerpo);
+        }
+        closeModal();
+        await cargarCatalogosAdmin();
+        await refrescarCatalogosFront();
+        render();
+        toast(el.dataset.id ? "Registro actualizado." : "Registro agregado.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    }
+    case "admin-role-up":
+    case "admin-role-down": {
+      const direccion = action === "admin-role-up" ? "arriba" : "abajo";
+      try {
+        await peticionAdmin(`/catalogos/roles/${el.dataset.id}/mover`, "PATCH", {
+          direccion,
+        });
+        await cargarCatalogosAdmin();
+        await refrescarCatalogosFront();
+        render();
+        toast("Orden de roles actualizado.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    }
+    case "admin-rubrica-section-add":
+      modalSeccionRubrica(null);
+      break;
+    case "admin-rubrica-section-edit": {
+      const seccion = (adminRubrica?.secciones ?? []).find(
+        (s) => s.id_seccion === Number(el.dataset.id),
+      );
+      if (seccion) modalSeccionRubrica(seccion);
+      break;
+    }
+    case "admin-rubrica-section-delete":
+      try {
+        await peticionAdmin(`/rubrica/secciones/${el.dataset.id}`, "DELETE");
+        await cargarRubricaAdmin();
+        render();
+        toast("Sección eliminada.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    case "admin-rubrica-section-save": {
+      const valores = adminValues();
+      const cuerpo = {
+        nombre_seccion: valores.nombre_seccion,
+        peso_porcentual: Number(valores.peso_porcentual || 0),
+        orden: Number(valores.orden || 1),
+      };
+      try {
+        if (el.dataset.id) {
+          await peticionAdmin(`/rubrica/secciones/${el.dataset.id}`, "PATCH", cuerpo);
+        } else {
+          await peticionAdmin("/rubrica/secciones", "POST", {
+            ...cuerpo,
+            version: adminRubrica?.version_activa || "2027",
+          });
+        }
+        closeModal();
+        await cargarRubricaAdmin();
+        render();
+        toast(el.dataset.id ? "Sección actualizada." : "Sección creada.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    }
+    case "admin-rubrica-criterion-add":
+      modalCriterioRubrica(null, Number(el.dataset.id));
+      break;
+    case "admin-rubrica-criterion-edit": {
+      const criterio = (adminRubrica?.secciones ?? [])
+        .flatMap((s) => s.criterios)
+        .find((c) => c.id_criterio_rubrica === Number(el.dataset.id));
+      if (criterio) modalCriterioRubrica(criterio);
+      break;
+    }
+    case "admin-rubrica-criterion-delete":
+      try {
+        await peticionAdmin(`/rubrica/criterios/${el.dataset.id}`, "DELETE");
+        await cargarRubricaAdmin();
+        render();
+        toast("Criterio eliminado.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    case "admin-rubrica-criterion-save": {
+      const valores = adminValues();
+      const cuerpo = {
+        nombre_criterio: valores.nombre_criterio,
+        peso_relativo: Number(valores.peso_relativo || 0),
+        es_obligatorio: !!valores.es_obligatorio,
+        orden: Number(valores.orden || 1),
+      };
+      try {
+        if (el.dataset.id) {
+          await peticionAdmin(`/rubrica/criterios/${el.dataset.id}`, "PATCH", {
+            ...cuerpo,
+            id_seccion: Number(valores.id_seccion),
+          });
+        } else {
+          await peticionAdmin("/rubrica/criterios", "POST", {
+            ...cuerpo,
+            id_seccion: Number(valores.id_seccion),
+            version: adminRubrica?.version_activa || "2027",
+          });
+        }
+        closeModal();
+        await cargarRubricaAdmin();
+        render();
+        toast(el.dataset.id ? "Criterio actualizado." : "Criterio agregado.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    }
+    case "admin-rubrica-version-add":
+      modalVersionRubrica(null);
+      break;
+    case "admin-rubrica-version-edit": {
+      const version = (adminRubrica?.versiones ?? []).find(
+        (v) => v.id_version === Number(el.dataset.id),
+      );
+      if (version) modalVersionRubrica(version);
+      break;
+    }
+    case "admin-rubrica-version-delete":
+      try {
+        await peticionAdmin(`/rubrica/versiones/${el.dataset.id}`, "DELETE");
+        await cargarRubricaAdmin();
+        render();
+        toast("Versión eliminada.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    case "admin-rubrica-version-save": {
+      const valores = adminValues();
+      try {
+        if (el.dataset.id) {
+          await peticionAdmin(`/rubrica/versiones/${el.dataset.id}`, "PATCH", {
+            descripcion: valores.descripcion || null,
+            fecha_publicacion: valores.fecha_publicacion || null,
+            activo: !!valores.activo,
+          });
+        } else {
+          await peticionAdmin("/rubrica/versiones", "POST", {
+            version: valores.version,
+            descripcion: valores.descripcion || null,
+            fecha_publicacion: valores.fecha_publicacion || null,
+            clonar_desde: valores.clonar_desde || null,
+          });
+        }
+        closeModal();
+        await cargarRubricaAdmin();
+        render();
+        toast(el.dataset.id ? "Versión actualizada." : "Versión publicada.");
+      } catch (err) {
+        toast(err.message);
+      }
+      break;
+    }
     case "stages":
       modal(
         "Escenarios de seguimiento",
@@ -6404,8 +7414,7 @@ async function handleAction(action, el) {
         true,
         "stages",
       );
-      break;
-    case "set-stage":
+      break;    case "set-stage":
       state.stage = el.dataset.stage;
       state.role = "investigador";
       save();

@@ -504,12 +504,34 @@ def _documentos_propuesta(cur, id_propuesta: int) -> list[DocumentoPropuestaOut]
     ]
 
 
+def _version_rubrica_activa(cur) -> Optional[str]:
+    """
+    Resolver la versión de rúbrica vigente.
+
+    Se consulta 'rubric_versions' para que el Comité Técnico siempre evalúe con la
+    versión publicada y activa. Si no hay ninguna activa se devuelve None y se usan
+    todas las secciones disponibles.
+
+    parametros:
+        - Cursor : cur Cursor de PostgreSQL.
+
+    return:
+        + Optional[str] : version Versión activa o None si no hay ninguna.
+    """
+    cur.execute(
+        "SELECT version FROM rubric_versions WHERE activo ORDER BY id_version DESC LIMIT 1"
+    )
+    fila = cur.fetchone()
+    return fila["version"] if fila else None
+
+
 def _filas_rubrica(cur) -> list[dict]:
     """
     Consultar todos los criterios de la rúbrica oficial ordenados por sección y criterio.
 
     Ejecuta un JOIN entre 'rubric_sections' y 'rubric_criteria' ordenando por los campos
-    de secuencia ordinal oficiales para mantener la consistencia institucional.
+    de secuencia ordinal oficiales para mantener la consistencia institucional. Solo
+    incluye los criterios de la versión vigente de la rúbrica.
 
     parametros:
         - Cursor : cur Cursor de PostgreSQL.
@@ -518,8 +540,12 @@ def _filas_rubrica(cur) -> list[dict]:
         + list[dict] : filas Lista de registros con las secciones y criterios de la rúbrica.
     """
 
+    version = _version_rubrica_activa(cur)
+    filtro = "WHERE s.version = %s AND c.version = s.version" if version else ""
+    parametros = (version,) if version else ()
+
     cur.execute(
-        """
+        f"""
         SELECT
             s.id_seccion,
             s.nombre_seccion,
@@ -532,8 +558,10 @@ def _filas_rubrica(cur) -> list[dict]:
             c.orden AS orden_criterio
         FROM rubric_sections s
         JOIN rubric_criteria c ON c.id_seccion = s.id_seccion
+        {filtro}
         ORDER BY s.orden ASC, c.orden ASC
-        """
+        """,
+        parametros,
     )
     return cur.fetchall()
 

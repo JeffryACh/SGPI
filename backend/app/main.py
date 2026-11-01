@@ -53,6 +53,7 @@ from .routers import (
     comite,
     consejo,
     direccion,
+    admin,
 )
 
 
@@ -118,6 +119,9 @@ app.include_router(tipos_hora.router)
 app.include_router(catalogos.router)
 # [Línea clave]: Monta el router de Inteligencia Artificial (Gemini Free Tier) para evaluaciones preliminares de referencia.
 app.include_router(ia.router)
+# [Línea clave]: Monta el router de administración institucional (convocatorias, cronogramas,
+# instrumentos oficiales, rúbricas versionadas y catálogos maestros) de las pantallas 31 y 32.
+app.include_router(admin.router)
 
 
 @app.get("/health")
