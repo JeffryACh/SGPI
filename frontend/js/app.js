@@ -7133,13 +7133,19 @@ async function handleAction(action, el) {
         toast("Selecciona el archivo del instrumento.");
         break;
       }
+      // [Línea clave]: El backend exige el actor en el cuerpo multipart. Si la sesión guardada en
+      // el navegador está vencida y no trae identificador, se avisa en vez de enviar un 422 sin pistas.
+      const idUsuario = idUsuarioAdmin();
+      if (!idUsuario) {
+        toast("Tu sesión expiró. Cierra sesión e ingresa de nuevo para publicar instrumentos.");
+        break;
+      }
       const formulario = new FormData();
-      formulario.append("id_convocatoria", String(adminConvocatoriaId));
       formulario.append("nombre_documento", valores.nombre_documento || archivo.name);
       formulario.append("tipo_instrumento", valores.tipo_instrumento || "otro");
       formulario.append("orden", String(valores.orden || 1));
       formulario.append("version", valores.version || "1.0");
-      formulario.append("id_usuario", String(idUsuarioAdmin()));
+      formulario.append("id_usuario", String(idUsuario));
       formulario.append("archivo", archivo);
       try {
         const res = await fetch(`${API_URL}/admin/convocatorias/${adminConvocatoriaId}/documentos`, {

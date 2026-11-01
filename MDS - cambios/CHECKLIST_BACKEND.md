@@ -91,9 +91,9 @@
 - [x] Los documentos de propuesta se guardan como archivo real en Supabase Storage y metadatos en `proposal_documents`.
 - [x] Endpoint de carga real de documentos de propuesta.
 - [ ] Endpoint de descarga/URL firmada.
-- [ ] Endpoint de eliminación o reemplazo con versionado.
+- [x] Endpoint de eliminación de instrumentos oficiales (`DELETE /admin/documentos/{id}` borra la fila y el archivo en Storage).
 - [x] Validar tipo MIME, extensión y tamaño en la carga administrativa de instrumentos (`POST /admin/convocatorias/{id}/documentos`).
-- [ ] Asociar carga a usuario y rol que la realiza.
+- [x] Asociar carga a usuario y rol que la realiza (el rol se valida en `_exigir_rol_admin`).
 - [ ] Definir qué documentos son obligatorios por modalidad y etapa.
 
 ### 2.5 Testing y operación
@@ -441,7 +441,7 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 - [ ] Un estado no permitido devuelve error.
 - [x] Cada dictamen queda asociado a usuario, rol, fecha y documento (Comité Técnico, Consejo de Escuela y Dirección).
 - [x] Las notificaciones se listan y se marcan como leídas.
-- [ ] Los documentos se cargan, listan, descargan y eliminan.
+- [x] Los documentos se cargan, listan, descargan y eliminan (instrumentos oficiales de convocatoria, verificados de punta a punta contra Supabase Storage).
 - [ ] La IA responde con Gemini o con el motor de respaldo.
 - [ ] El frontend sigue funcionando si la IA falla.
 
@@ -468,3 +468,4 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 - La creación de propuestas ya está integrada y probada; las brechas principales están en consulta, evaluación por rol, administración y seguridad.
 - Antes de marcar un elemento como terminado, verificar también que el frontend consuma el endpoint correcto.
 - Migraciones aplicadas a la base desplegada el 2026-11-01: `V13__administracion_rubricas_roles.sql` (`roles.orden`, `version` en rúbrica, tabla `rubric_versions`) y `V14__usuario_administrador_sistema.sql` (cuenta de demostración con rol «Administrador del Sistema», `administrador@example.com` / `demostracion`).
+- En los endpoints multipart el actor viaja en el cuerpo (`id_usuario` como `Form`), no en la URL: `POST /admin/convocatorias/{id}/documentos` y `POST /propuestas/{id}/documentos`. En el resto del router `/admin` `id_usuario` sigue siendo un parámetro de consulta.

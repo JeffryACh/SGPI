@@ -1810,7 +1810,10 @@ def subir_documento_admin(
     orden: Optional[int] = Form(None),
     version: str = Form("1.0"),
     archivo: UploadFile = File(...),
-    id_usuario: int = Query(..., description="ID del usuario administrador"),
+    # [Línea clave]: En los endpoints multipart el actor viaja dentro del cuerpo, igual que en
+    # POST /propuestas/{id}/documentos. Si se declarara como Query, FastAPI lo buscaría en la URL
+    # y devolvería 422 antes de tocar Supabase Storage, porque el frontend lo envía en el FormData.
+    id_usuario: int = Form(..., description="ID del usuario administrador"),
     conn: Connection = Depends(get_conn),
 ):
     """
