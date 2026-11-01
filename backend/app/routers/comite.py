@@ -46,8 +46,17 @@ router = APIRouter(prefix="/propuestas", tags=["comite"])
 
 ROL_COMITE = "Comité Técnico"
 ROL_CONSEJO = "Consejo de Escuela"
-ESTADO_EN_EVALUACION_COMITE = 3
-ESTADOS_POR_DECISION = {"favorable": 4, "observaciones": 9, "rechazo": 10}
+# [Línea clave]: Los estados se resuelven por nombre porque el orden de los identificadores
+# en la tabla «estados» de la base desplegada no coincide con el seed V3.
+NOMBRE_ESTADO_COMITE = "En evaluación del Comité Técnico"
+NOMBRE_ESTADO_PENDIENTE_AVAL = "Pendiente de aval del Consejo"
+NOMBRE_ESTADO_OBSERVACIONES = "Con observaciones"
+NOMBRE_ESTADO_RECHAZADA = "Rechazada"
+ESTADOS_POR_DECISION = {
+    "favorable": NOMBRE_ESTADO_PENDIENTE_AVAL,
+    "observaciones": NOMBRE_ESTADO_OBSERVACIONES,
+    "rechazo": NOMBRE_ESTADO_RECHAZADA,
+}
 NIVELES_VALIDOS = (0, 6, 8, 10)
 PUNTAJE_MINIMO = 70
 NIVEL_OBLIGATORIO_MINIMO = 8
@@ -212,6 +221,22 @@ def _exigir_migracion_v12(cur) -> set[str]:
             "en el SQL Editor de Supabase.",
         )
     return columnas
+
+
+def _id_estado(cur, nombre_estado: str) -> int:
+    """Resolver el identificador de un estado por su nombre oficial."""
+
+    cur.execute(
+        "SELECT id_estado FROM estados WHERE nombre_estado = %s",
+        (nombre_estado,),
+    )
+    fila = cur.fetchone()
+    if not fila:
+        raise HTTPException(
+            500,
+            f"El estado «{nombre_estado}» no está configurado en la base de datos.",
+        )
+    return fila["id_estado"]
 
 
 def _obtener_rol_comite(cur, id_usuario: int) -> int:
@@ -423,9 +448,13 @@ def obtener_bandeja_comite(
                 SELECT MAX(h.fecha_cambio) AS fecha_ingreso_comite
                 FROM proposal_state_history h
                 WHERE h.id_propuesta = p.id_propuesta
-                  AND h.id_estado_nuevo = %s
+                  AND h.id_estado_nuevo = (
+                      SELECT id_estado FROM estados WHERE nombre_estado = %s
+                  )
             ) ingreso ON TRUE
-            WHERE p.estado_actual = %s
+            WHERE p.estado_actual = (
+                      SELECT id_estado FROM estados WHERE nombre_estado = %s
+                  )
                OR EXISTS (
                     SELECT 1
                     FROM evaluations ev3
@@ -438,8 +467,8 @@ def obtener_bandeja_comite(
             (
                 ROL_COMITE,
                 ROL_COMITE,
-                ESTADO_EN_EVALUACION_COMITE,
-                ESTADO_EN_EVALUACION_COMITE,
+                NOMBRE_ESTADO_COMITE,
+                NOMBRE_ESTADO_COMITE,
                 ROL_COMITE,
             ),
         )
@@ -585,11 +614,11 @@ def registrar_evaluacion_comite(
 ):
     """Registrar el dictamen del Comité Técnico y ejecutar la transición controlada de estado."""
 
-    estado_nuevo = ESTADOS_POR_DECISION[payload.decision]
-
     with conn.cursor() as cur:
         id_rol_comite = _obtener_rol_comite(cur, payload.id_usuario_eval)
         _exigir_migracion_v12(cur)
+        estado_comite = _id_estado(cur, NOMBRE_ESTADO_COMITE)
+        estado_nuevo = _id_estado(cur, ESTADOS_POR_DECISION[payload.decision])
 
         # [Línea clave]: Bloquea la fila para que dos evaluadores concurrentes no
         # registren dos dictámenes sobre la misma propuesta.
@@ -606,7 +635,7 @@ def registrar_evaluacion_comite(
         propuesta = cur.fetchone()
         if not propuesta:
             raise HTTPException(404, "Propuesta no encontrada.")
-        if propuesta["estado_actual"] != ESTADO_EN_EVALUACION_COMITE:
+        if propuesta["estado_actual"] != estado_comite:
             raise HTTPException(
                 409,
                 "La propuesta no está en evaluación del Comité Técnico; no se puede registrar el dictamen.",
@@ -744,7 +773,7 @@ def registrar_evaluacion_comite(
                 """,
                 (
                     id_propuesta,
-                    ESTADO_EN_EVALUACION_COMITE,
+                    estado_comite,
                     estado_nuevo,
                     payload.id_usuario_eval,
                     detalle_historial,

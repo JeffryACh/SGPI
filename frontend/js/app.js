@@ -228,6 +228,7 @@ const SCREEN_LOADERS = {
   "02": () => {
     if (state.role === "vinculacion") return cargarBandejaVinculacion();
     if (state.role === "comite") return cargarBandejaComite();
+    if (state.role === "consejo") return cargarBandejaConsejo();
     return Promise.resolve(null);
   },
   "04": obtener_convocatorias,
@@ -238,8 +239,11 @@ const SCREEN_LOADERS = {
     ]),
   "06": () => cargarMisPropuestas(),
   "20": () => cargarDossier(),
-  "21": () =>
-    state.role === "comite" ? cargarBandejaComite() : cargarBandejaVinculacion(),
+  "21": () => {
+    if (state.role === "comite") return cargarBandejaComite();
+    if (state.role === "consejo") return cargarBandejaConsejo();
+    return cargarBandejaVinculacion();
+  },
   "22": () => cargarDossier(),
   "23": async () => {
     await cargarDossier();
@@ -258,7 +262,15 @@ const SCREEN_LOADERS = {
     }
     await obtenerEvaluacionPreliminarIA(propuestaActivaId());
   },
-  "25": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
+  "25": async () => {
+    // [Línea clave]: El Consejo de Escuela abre el expediente con las escuelas involucradas,
+    // los avales ya registrados y el acuerdo firmado disponible para adjuntar.
+    if (state.role === "consejo") {
+      if (!bandejaConsejo?.length) await cargarBandejaConsejo();
+      await Promise.all([cargarDossier(), cargarAvalConsejo()]);
+    }
+    await obtenerEvaluacionPreliminarIA(propuestaActivaId());
+  },
   "26": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
   "27": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
   "28": () => cargarDossier(),
@@ -805,6 +817,9 @@ let bandejaComite = null;
 let evaluacionComite = null;
 let rubricaComite = null;
 let comiteCargadoId = null;
+let bandejaConsejo = null;
+let avalConsejo = null;
+let consejoCargadoId = null;
 
 /**
  * Resolver el identificador de la propuesta que se está consultando en este momento.
@@ -870,7 +885,11 @@ function mapearPropuestaBackend(p = {}) {
     school: p.escuela || p.nombre_escuela || p.school || "TEC",
     line: p.linea_investigacion || p.nombre_linea || p.line || "",
     fechaIngreso: p.fecha_ingreso_comite || null,
+    fechaIngresoConsejo: p.fecha_ingreso_consejo || null,
     fechaCreacion: p.fecha_creacion || null,
+    miAval: !!p.mi_aval,
+    avalesRegistrados: Number(p.avales_registrados || 0),
+    escuelasInvolucradas: Number(p.escuelas_involucradas || 0),
   };
 }
 
@@ -1303,6 +1322,152 @@ function payloadEvaluacionComite(decision = "favorable", observaciones = "", idD
       observaciones || "Evaluación técnica registrada por el Comité Técnico.",
     produccion_conforme: produccion ? produccion.checked : !state.notRecommended,
     decision,
+    id_documento: idDocumento,
+  };
+}
+
+/**
+ * Determinar si una propuesta de la bandeja del Consejo de Escuela todavía espera aval.
+ * Una propuesta con aval ya registrado por la escuela del usuario no cuenta como pendiente.
+ * parametros:
+ *     - Object : p Propuesta normalizada con las propiedades 'status' y 'miAval'.
+ * return:
+ *     + boolean : pendiente Verdadero si espera el aval del Consejo de Escuela.
+ */
+const esPendienteConsejo = (p) =>
+  /pendiente de aval del consejo/i.test((p && p.status) || "") && !(p && p.miAval);
+
+/**
+ * Descargar la bandeja del Consejo de Escuela desde PostgreSQL y conservar la propuesta activa.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>|null> : bandejaConsejo Propuestas pendientes de aval de la escuela.
+ */
+async function cargarBandejaConsejo() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) return null;
+  try {
+    const res = await fetch(
+      `${API_URL}/propuestas/consejo/bandeja?rol=${encodeURIComponent("Consejo de Escuela")}&id_usuario=${idUsuario}`,
+    );
+    if (res.ok) {
+      bandejaConsejo = (await res.json()).map(mapearPropuestaBackend);
+      if (!state.viewProposalId && bandejaConsejo.length) {
+        // [Línea clave]: Prioriza la propuesta que espera aval; si no hay, usa la primera de la bandeja.
+        const objetivo = bandejaConsejo.find(esPendienteConsejo) || bandejaConsejo[0];
+        state.viewProposalId = objetivo.id;
+        state.viewProposal = objetivo.code;
+      }
+    } else {
+      console.warn("cargarBandejaConsejo:", await errorDesdeRespuesta(res));
+      bandejaConsejo = [];
+    }
+  } catch (err) {
+    console.warn("cargarBandejaConsejo error:", err);
+    bandejaConsejo = [];
+  }
+  return bandejaConsejo;
+}
+
+/**
+ * Descargar el expediente de aval del Consejo de Escuela con sus escuelas y acuerdos.
+ * parametros:
+ *     - number : idPropuesta Identificador del expediente; por defecto usa la propuesta activa.
+ * return:
+ *     + Promise<Object|null> : avalConsejo Detalle del aval y de las escuelas involucradas.
+ */
+async function cargarAvalConsejo(idPropuesta = propuestaActivaId()) {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idPropuesta || !idUsuario) return null;
+  if (consejoCargadoId !== Number(idPropuesta)) {
+    // [Línea clave]: Al cambiar de expediente se descartan los datos del aval anterior
+    // para no mezclar acuerdos entre propuestas distintas.
+    Object.keys(state.saved)
+      .filter((clave) => clave.startsWith("consejo:"))
+      .forEach((clave) => delete state.saved[clave]);
+    consejoCargadoId = Number(idPropuesta);
+  }
+  try {
+    const res = await fetch(
+      `${API_URL}/propuestas/consejo/${idPropuesta}?id_usuario=${idUsuario}`,
+    );
+    if (res.ok) {
+      avalConsejo = await res.json();
+      // [Línea clave]: Refleja en el formulario el aval ya registrado para abrir en modo consulta.
+      if (avalConsejo?.mi_aval) {
+        const aval = avalConsejo.mi_aval;
+        state.saved["consejo:sesion"] = aval.numero_sesion || "";
+        state.saved["consejo:articulo"] = aval.articulo || "";
+        state.saved["consejo:fecha"] = aval.fecha_acuerdo || "";
+        state.saved["consejo:oficio"] = aval.numero_oficio || "";
+        state.saved["consejo:observaciones"] = aval.observaciones || "";
+        state.saved["consejo:ratifica"] = aval.ratifica_calificacion !== false;
+        state.saved["consejo:presupuesto"] = aval.avala_presupuesto !== false;
+        state.saved["consejo:horas"] = aval.avala_horas_personal !== false;
+      }
+    } else {
+      console.warn("cargarAvalConsejo:", await errorDesdeRespuesta(res));
+      avalConsejo = null;
+    }
+  } catch (err) {
+    console.warn("cargarAvalConsejo error:", err);
+    avalConsejo = null;
+  }
+  save();
+  return avalConsejo;
+}
+
+/**
+ * Registrar el aval del Consejo de Escuela y devolver el nuevo estado de la propuesta.
+ * parametros:
+ *     - number : idPropuesta Identificador de la propuesta.
+ *     - Object : payload Datos del acuerdo, decisiones y documento firmado.
+ * return:
+ *     + Promise<Object> : resultado Respuesta del backend con estado y avales pendientes.
+ */
+async function guardarAvalConsejo(idPropuesta, payload) {
+  const res = await fetch(`${API_URL}/propuestas/consejo/${idPropuesta}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await errorDesdeRespuesta(res));
+  return res.json();
+}
+
+/**
+ * Construir el payload del aval del Consejo de Escuela desde el formulario de la pantalla 25.
+ * parametros:
+ *     - string : decision Resultado favorable, observaciones o rechazo.
+ *     - string : observaciones Detalle de la devolución o del rechazo.
+ *     - number|null : idDocumento Acuerdo firmado ya subido al expediente.
+ * return:
+ *     + Object : payload Cuerpo JSON esperado por POST /propuestas/consejo/{id}.
+ */
+function payloadAvalConsejo(decision = "favorable", observaciones = "", idDocumento = null) {
+  // [Línea clave]: Los valores se leen del formulario visible para respetar lo que el
+  // consejo escribió (incluso campos que nunca cambiaron y siguen con su valor por defecto).
+  const valor = (clave) => {
+    const control = document.querySelector(`[data-field="${clave}"]`);
+    if (control)
+      return control.type === "checkbox" ? control.checked : String(control.value || "").trim();
+    return state.saved[clave] ?? "";
+  };
+  return {
+    id_usuario_aval: session?.user?.id_usuario,
+    decision,
+    tipo_instancia: avalConsejo?.escuela_usuario?.es_coordinadora
+      ? "coordinadora"
+      : "participante",
+    numero_sesion: valor("consejo:sesion"),
+    articulo: valor("consejo:articulo"),
+    fecha_acuerdo: valor("consejo:fecha") || null,
+    numero_oficio: valor("consejo:oficio"),
+    ratifica_calificacion: valor("consejo:ratifica") !== false,
+    avala_presupuesto: valor("consejo:presupuesto") !== false,
+    avala_horas_personal: valor("consejo:horas") !== false,
+    observaciones: observaciones || state.saved["consejo:observaciones"] || "",
     id_documento: idDocumento,
   };
 }
@@ -2142,15 +2307,20 @@ function dashboard() {
     // que espera su dictamen; el resto de roles conserva el escenario demo.
     const esVinculacion = state.role === "vinculacion";
     const esComite = state.role === "comite";
+    const esConsejo = state.role === "consejo";
     const bandeja = esVinculacion
       ? bandejaPropuestas || []
       : esComite
         ? bandejaComite || []
-        : [];
-    const pendientes = bandeja.filter(esComite ? esPendienteComite : esPendienteVinculacion);
+        : esConsejo
+          ? bandejaConsejo || []
+          : [];
+    const pendientes = bandeja.filter(
+      esComite ? esPendienteComite : esConsejo ? esPendienteConsejo : esPendienteVinculacion,
+    );
     const reciente = pendientes[0] || null;
     const dictaminadas = bandeja.length - pendientes.length;
-    const metricas = esVinculacion || esComite
+    const metricas = esVinculacion || esComite || esConsejo
       ? [
           ["Pendientes", String(pendientes.length)],
           ["Dictaminadas", String(dictaminadas)],
@@ -2176,6 +2346,21 @@ function dashboard() {
             ),
           ]
         : [`<span class="muted">No hay propuestas pendientes de dictamen.</span>`, "", "", ""]
+      : esConsejo
+        ? reciente
+          ? [
+              `<span class="project-code">${esc(reciente.code)}</span><strong>${esc(reciente.title)}</strong>`,
+              esc(reciente.status),
+              badge("Sin aval"),
+              btn(
+                "Avalar",
+                roles[state.role].screen,
+                "text",
+                "arrow",
+                `data-proposal="${esc(reciente.code)}" data-proposal-id="${reciente.id || ""}"`,
+              ),
+            ]
+          : [`<span class="muted">No hay propuestas pendientes de aval.</span>`, "", "", ""]
       : esVinculacion
         ? reciente
           ? [
@@ -2197,16 +2382,20 @@ function dashboard() {
             badge("Dentro del plazo"),
             btn("Revisar", roles[state.role].screen, "text", "arrow"),
           ];
-    const heroTitulo = esVinculacion || esComite
+    const heroTitulo = esVinculacion || esComite || esConsejo
       ? reciente
         ? pendientes.length === 1
           ? esComite
             ? "Una propuesta espera tu evaluación"
-            : "Una propuesta espera tu revisión"
-          : `${pendientes.length} propuestas esperan tu ${esComite ? "evaluación" : "revisión"}`
+            : esConsejo
+              ? "Una propuesta espera tu aval"
+              : "Una propuesta espera tu revisión"
+          : `${pendientes.length} propuestas esperan tu ${esComite ? "evaluación" : esConsejo ? "aval" : "revisión"}`
         : esComite
           ? "No tienes propuestas pendientes de evaluación"
-          : "No tienes propuestas pendientes"
+          : esConsejo
+            ? "No tienes propuestas pendientes de aval"
+            : "No tienes propuestas pendientes"
       : "Una propuesta espera tu revisión";
     const fechaLegible = (valor) =>
       valor
@@ -2224,14 +2413,22 @@ function dashboard() {
         : fechaLegible(reciente?.fechaCreacion)
           ? ` Creada el ${fechaLegible(reciente.fechaCreacion)}.`
           : ""
-      : "";
+      : esConsejo
+        ? fechaLegible(reciente?.fechaIngresoConsejo)
+          ? ` Ingresó al Consejo el ${fechaLegible(reciente.fechaIngresoConsejo)}.`
+          : fechaLegible(reciente?.fechaCreacion)
+            ? ` Creada el ${fechaLegible(reciente.fechaCreacion)}.`
+            : ""
+        : "";
     const heroTexto =
-      (esVinculacion || esComite) && reciente
+      (esVinculacion || esComite || esConsejo) && reciente
         ? `Más reciente: ${esc(reciente.code)} · ${esc(reciente.title)}.${momentoIngreso}`
         : `Consulta el expediente completo antes de registrar la decisión de ${roles[state.role].label}.`;
     const cabeceras = esComite
       ? ["Expediente", "Etapa", "Dictamen", ""]
-      : ["Expediente", "Etapa", "Prioridad", ""];
+      : esConsejo
+        ? ["Expediente", "Etapa", "Aval", ""]
+        : ["Expediente", "Etapa", "Prioridad", ""];
     return shell(
       `<div class="hero"><div><h2>${heroTitulo}</h2><p>${heroTexto}</p></div>${btn("Abrir bandeja", "21", "", "arrow")}</div><div class="grid three mt">${metricas
         .map(
@@ -3484,28 +3681,47 @@ function inbox() {
       ? bandejaPropuestas || []
       : state.role === "comite"
         ? bandejaComite || []
-        : top3propuestasmasrecientes || [];
+        : state.role === "consejo"
+          ? bandejaConsejo || []
+          : top3propuestasmasrecientes || [];
   const closedStatuses =
     state.role === "vinculacion"
       ? ["En evaluación del Comité Técnico", "Con observaciones", "Rechazada", "Aprobada por CIE", "Cerrada", "Resuelta"]
       : state.role === "comite"
         ? ["Pendiente de aval del Consejo", "Avalada", "Sometida ante VIE", "Dictaminada por Dirección", "Con observaciones", "Rechazada", "Aprobada por CIE", "En ejecución", "Cerrada"]
-        : ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"];
-  const pending = list.filter((p) => !closedStatuses.includes(p.status));
-  const closed = list.filter((p) => closedStatuses.includes(p.status));
+        : state.role === "consejo"
+          ? ["Avalada", "Sometida ante VIE", "Dictaminada por Dirección", "Con observaciones", "Rechazada", "Aprobada por CIE", "En ejecución", "Cerrada"]
+          : ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"];
+  const pending = state.role === "consejo"
+    ? list.filter(esPendienteConsejo)
+    : list.filter((p) => !closedStatuses.includes(p.status));
+  const closed = state.role === "consejo"
+    ? list.filter((p) => !esPendienteConsejo(p))
+    : list.filter((p) => closedStatuses.includes(p.status));
 
   let filtered = activeFilter === "Finalizadas" ? closed : pending;
   if (activeFilter === "En revisión") filtered = pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación"));
+  // [Línea clave]: El Consejo de Escuela filtra por los avales que su escuela ya registró.
+  if (activeFilter === "Avalados") filtered = list.filter((p) => p.miAval);
 
   const rows = filtered.map((p) => {
     const puedeEvaluar = state.role === "comite" && !closedStatuses.includes(p.status);
+    // [Línea clave]: El Consejo de Escuela solo ofrece registrar aval cuando la propuesta
+    // sigue pendiente y su escuela todavía no registró el acuerdo.
+    const puedeAvalar = state.role === "consejo" && esPendienteConsejo(p);
+    const etiquetaBoton = puedeEvaluar
+      ? "Evaluar propuesta"
+      : puedeAvalar
+        ? "Registrar aval"
+        : "Abrir expediente";
+    const destino = puedeEvaluar ? "24" : puedeAvalar ? "25" : "22";
     return [
       `<span class="project-code">${esc(p.code)}</span><strong>${esc(p.title)}</strong><br><span class="micro muted">${esc(p.leader || "Investigador")} · ${esc(p.school || "TEC")}</span>`,
       esc(p.type),
       badge(p.status),
       btn(
-        puedeEvaluar ? "Evaluar propuesta" : "Abrir expediente",
-        puedeEvaluar ? "24" : "22",
+        etiquetaBoton,
+        destino,
         "secondary compact",
         "arrow",
         `data-proposal="${p.code}" data-proposal-id="${p.id || ""}"`,
@@ -3513,19 +3729,34 @@ function inbox() {
     ];
   });
 
+  const metricas =
+    state.role === "consejo"
+      ? [
+          ["Pendientes de aval", String(pending.length)],
+          ["Avaladas por tu escuela", String(list.filter((p) => p.miAval).length)],
+          ["Total en tu bandeja", String(list.length)],
+        ]
+      : [
+          ["Pendientes de revisión", String(pending.length)],
+          ["En evaluación / revisión", String(pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación")).length)],
+          ["Finalizadas en la convocatoria", String(closed.length)],
+        ];
+
   return shell(
-    `<div class="grid three mb">${[
-      ["Pendientes de revisión", String(pending.length)],
-      ["En evaluación / revisión", String(pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación")).length)],
-      ["Finalizadas en la convocatoria", String(closed.length)],
-    ]
+    `<div class="grid three mb">${metricas
       .map(
         ([a, b]) =>
           `<div class="card metric"><span class="label">${a}</span><span class="value">${b}</span></div>`,
       )
       .join(
         "",
-      )}</div>${tabs(["Pendientes", "En revisión", "Finalizadas"], activeFilter === "Todas" ? "Pendientes" : activeFilter, "data-filter")}<div class="card">${table(["Expediente", "Modalidad", "Etapa", ""], rows.length ? rows : [[`<span class="muted">No hay expedientes para este filtro</span>`, "", "", ""]])}</div>`,
+      )}</div>${tabs(
+        state.role === "consejo"
+          ? ["Pendientes", "Avalados", "Finalizadas"]
+          : ["Pendientes", "En revisión", "Finalizadas"],
+        activeFilter === "Todas" ? "Pendientes" : activeFilter,
+        "data-filter",
+      )}<div class="card">${table(["Expediente", "Modalidad", "Etapa", ""], rows.length ? rows : [[`<span class="muted">No hay expedientes para este filtro</span>`, "", "", ""]])}</div>`,
     "Bandeja de trabajo",
     "Expedientes asignados a tu instancia en Fondos VIE 2027.",
     "",
@@ -3633,7 +3864,26 @@ function dossier() {
         act("Ver rúbrica oficial", "rubric-summary", "text"),
       ]);
     }
-    filas.push(["Consejo de Escuela", "Aval otorgado", act("Ver acuerdo", "preview", "text")]);
+    // [Línea clave]: Los avales del Consejo de Escuela se leen del expediente real
+    // (council_endorsements) y solo caen al texto demostrativo si no hay acuerdo.
+    const avales = d?.avales_consejo || [];
+    if (avales.length) {
+      avales.forEach((aval) =>
+        filas.push([
+          "Consejo de Escuela",
+          esc(
+            `${aval.escuela_siglas || aval.escuela} · ${aval.tipo_instancia === "coordinadora" ? "Coordinadora" : "Participante"} · ${aval.numero_oficio || "sin oficio"}`,
+          ),
+          `<button class="btn text" data-go="28">Ver acuerdo</button>`,
+        ]),
+      );
+    } else {
+      filas.push([
+        "Consejo de Escuela",
+        "Sin aval registrado",
+        act("Ver acuerdo", "preview", "text"),
+      ]);
+    }
     body = table(["Instancia", "Resultado", "Documento"], filas);
   } else if (dossierTab === "Resolución") {
     const cie = (d?.evaluaciones || []).find((e) => e.rol_evaluador === "CIE");
@@ -3873,8 +4123,72 @@ function evaluation(id) {
         "",
       )}</div><label class="checkline"><input type="checkbox" id="products-ok" ${!state.notRecommended ? "checked" : ""}${yaDictaminado ? " disabled" : ""}>Producción no sumativa conforme: software + artículo WoS/Scopus + manual técnico para ${totalHorasEquipo()} h.</label>${field("Justificación de criterios obligatorios", dictamen?.justificacion || "La propuesta identifica responsables, plazos, beca, riesgos y declaración ética; consta dictamen de Vinculación.", "textarea", "Justifica los criterios obligatorios con referencia a la evidencia.", true, "comite:justificacion")}<div id="score-result" class="notice ${sc.recommended ? "" : "warning"}"><div><strong>${sc.sum.toFixed(1)} / 100 · ${sc.recommended ? "Recomendada" : "No recomendada"}</strong><p>${sc.blocked ? "Hay un criterio obligatorio con nivel insuficiente." : "La recomendación depende de la nota y de los requisitos obligatorios."}</p></div></div>`;
   }
-  if (id === "25")
-    inner = `${notice("El aval no somete automáticamente", "Después del acuerdo, el investigador realiza el sometimiento formal ante VIE.")}<div class="mt">${field("Instancia", ["Escuela de Ingeniería Ambiental · Coordinadora", "Escuela de Ingeniería Electrónica · Participante"], "select", "Cada consejo avala a su propio personal.", true)}<div class="field-row">${field("Sesión y artículo", "18-2026 · Artículo 4", "text", "", true)}${field("Fecha del acuerdo", "2026-09-17", "date", "", true)}</div>${field("Oficio", "IA-AVAL-014-2026", "text", "", true)}${["Aval de la propuesta y presupuesto de ₡9.400.000", "Participación y horas del personal de la instancia", "Ratificación de la calificación del Comité Técnico"].map((t) => `<label class="checkline"><input type="checkbox" checked required>${t}</label>`).join("")}${docPendiente("Acuerdo firmado de la coordinadora", "Se adjunta tras el aval")}${docPendiente("Acuerdo firmado de instancia participante", "Se adjunta tras el aval")}</div>`;
+  if (id === "25") {
+    // [Línea clave]: El aval del Consejo de Escuela se construye con los datos reales de
+    // PostgreSQL: escuelas involucradas, avales previos y acuerdos firmados del expediente.
+    const detalle = avalConsejo || {};
+    const escuela = detalle.escuela_usuario || {};
+    const instancias = detalle.escuelas_involucradas || [];
+    const yaAvalado = !!detalle.mi_aval;
+    const puedeAvalar = !!detalle.puede_aval;
+    const pendientes = instancias.filter((instancia) => !instancia.avalada);
+    const hoy = new Date().toISOString().slice(0, 10);
+    const tablaInstancias = instancias.length
+      ? table(
+          ["Escuela", "Instancia", "Aval"],
+          instancias.map((instancia) => [
+            `${esc(instancia.siglas || "")} · ${esc(instancia.nombre)}`,
+            instancia.tipo_instancia === "coordinadora" ? "Coordinadora" : "Participante",
+            badge(
+              instancia.avalada ? "Aval registrado" : "Pendiente",
+              instancia.avalada ? "solid" : "",
+            ),
+          ]),
+        )
+      : notice(
+          "Escuelas involucradas",
+          "No se detectaron escuelas con personal vinculado a la propuesta.",
+        );
+    const estadoAval = yaAvalado
+      ? notice(
+          "Aval ya registrado",
+          `Tu escuela registró el aval el ${String(detalle.mi_aval.fecha_acuerdo || "").slice(0, 10)} con oficio ${detalle.mi_aval.numero_oficio || "sin número"}. El formulario queda en modo consulta.`,
+        )
+      : puedeAvalar
+        ? ""
+        : notice(
+            "Aval no disponible",
+            detalle.motivo_bloqueo ||
+              "La propuesta no está pendiente de aval de tu escuela.",
+          );
+    const avisoPendientes = pendientes.length
+      ? notice(
+          "Avales pendientes",
+          `Falta el aval de: ${pendientes.map((instancia) => instancia.siglas || instancia.nombre).join(", ")}. La propuesta solo pasa a «Avalada» cuando todas las escuelas relacionadas con ella registren su aval.`,
+        )
+      : "";
+    const resumen = `<div class="mt">${definition([
+      ["Instancia que avala", `${escuela.siglas || ""} · ${escuela.nombre || "Consejo de Escuela"}`],
+      ["Tipo de instancia", escuela.es_coordinadora ? "Coordinadora" : "Participante"],
+      [
+        "Puntaje del Comité Técnico",
+        detalle.puntaje_comite != null
+          ? `${Number(detalle.puntaje_comite).toFixed(1)}/100`
+          : "Sin dictamen registrado",
+      ],
+      [
+        "Aval de tu escuela",
+        yaAvalado
+          ? `Registrado · ${detalle.mi_aval.numero_oficio || "sin oficio"}`
+          : "Pendiente",
+      ],
+    ])}</div>`;
+    const documentosAval = (detalle.documentos || []).length
+      ? `<div class="mt">${detalle.documentos.map(docPropuesta).join("")}</div>`
+      : "";
+    const formularioAval = `${field("Número de sesión", "", "text", "Sesión en la que se aprobó el acuerdo.", true, "consejo:sesion")}<div class="field-row">${field("Artículo", "", "text", "Artículo del acuerdo que sustenta el aval.", true, "consejo:articulo")}${field("Fecha del acuerdo", hoy, "date", "", true, "consejo:fecha")}</div>${field("Número de oficio", "", "text", "Oficio emitido por el Consejo de Escuela.", true, "consejo:oficio")}${field("Ratificación de la calificación técnica", true, "checkbox", "El consejo ratifica la evaluación técnica del Comité Técnico.", false, "consejo:ratifica")}${field("Aval de la propuesta y del presupuesto", true, "checkbox", "El consejo avala la propuesta y el monto solicitado.", false, "consejo:presupuesto")}${field("Aval de las horas del personal", true, "checkbox", "El consejo avala la carga horaria del personal de su escuela.", false, "consejo:horas")}${field("Observaciones del acuerdo", "", "textarea", "Detalle del acuerdo o condiciones del aval.", false, "consejo:observaciones")}<div class="field"><label for="consejo-doc">Acuerdo firmado (PDF, DOCX)</label><input id="consejo-doc" type="file" accept=".pdf,.docx"><span class="help">Máximo 20 MB. Se almacena en el expediente de la propuesta.</span></div>`;
+    inner = `${notice("El aval no somete automáticamente", "Después del acuerdo, el investigador realiza el sometimiento formal ante VIE.")}${estadoAval}${avisoPendientes}${resumen}${puedeAvalar ? `<div class="mt">${formularioAval}</div>` : ""}<div class="mt">${tablaInstancias}</div>${documentosAval}`;
+  }
   if (id === "26")
     inner = `${notice("Propuesta sometida el 28 sep 2026", "La Dirección verifica el expediente antes de emitir el dictamen para CIE.")}<div class="mt">${["Responsabilidades institucionales al día", "Riesgos por actividad y mitigación coherente", "Participación estudiantil presupuestada", "Declaración ética y permisos verificados", "Documentos, evaluación y acuerdos completos"].map((t) => `<label class="checkline"><input type="checkbox" checked required>${t}</label>`).join("")}</div>${field("Verificación restringida", "Al día", "readonly")}${field("Dictamen", ["Favorable", "Con observaciones", "Desfavorable"], "select", "", true)}${field("Fundamentación", "El expediente incorpora la evaluación, los avales y la documentación requerida. Se remite al CIE para resolución.", "textarea", "09 oct 2026.", true)}${docPendiente("Dictamen de Dirección", "Pendiente de emitir")}`;
   if (id === "27")
@@ -3900,7 +4214,10 @@ function evaluation(id) {
   }[id];
   const dictamenExistente =
     (id === "23" && !!evaluacionVinculacion?.id_evaluacion) ||
-    (id === "24" && !!evaluacionComite?.evaluacion?.id_evaluacion);
+    (id === "24" && !!evaluacionComite?.evaluacion?.id_evaluacion) ||
+    // [Línea clave]: El Consejo de Escuela solo registra aval una vez por escuela; después
+    // el expediente queda en modo consulta.
+    (id === "25" && (!!avalConsejo?.mi_aval || (!!avalConsejo && !avalConsejo.puede_aval)));
   const accionesEvaluacion = dictamenExistente
     ? btn("Volver a la bandeja", "21", "secondary", "back")
     : `${act("Devolver con observaciones", "return", "secondary")}${act(actionLabel, "decision", "", "check", `data-step="${id}"`)}`;
@@ -4032,6 +4349,47 @@ function dictamenVinculacion(d = null) {
 }
 
 /**
+ * Construir la tarjeta con los avales reales del Consejo de Escuela y sus acuerdos.
+ * Muestra una fila por escuela involucrada con la sesión, el artículo, el oficio y el alcance del aval.
+ * parametros:
+ *     - Object|null : d Expediente consolidado.
+ * return:
+ *     + string : avalesHtml Tarjeta con el detalle de los avales registrados.
+ */
+function dictamenConsejo(d = null) {
+  const avales = d?.avales_consejo || [];
+  if (!avales.length)
+    return notice(
+      "Avales del Consejo de Escuela",
+      "El expediente todavía no registra avales del Consejo de Escuela.",
+    );
+  const fecha = (valor) => (valor ? String(valor).slice(0, 10) : "sin fecha");
+  const filas = avales.map((aval) => [
+    `${esc(aval.escuela_siglas || "")} · ${esc(aval.escuela)}`,
+    esc(aval.tipo_instancia === "coordinadora" ? "Coordinadora" : "Participante"),
+    esc(`${aval.numero_sesion || "sin sesión"} · ${aval.articulo || "sin artículo"}`),
+    esc(fecha(aval.fecha_acuerdo)),
+    esc(aval.numero_oficio || "sin oficio"),
+    esc(
+      [
+        aval.ratifica_calificacion ? "Ratifica calificación" : null,
+        aval.avala_presupuesto ? "Avala presupuesto" : null,
+        aval.avala_horas_personal ? "Avala horas" : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || "Sin ratificaciones",
+    ),
+  ]);
+  const detalles = avales
+    .map(
+      (aval) =>
+        `<div class="mt"><strong>${esc(aval.escuela_siglas || aval.escuela)}</strong>${aval.observaciones ? `<p class="small muted">${esc(aval.observaciones)}</p>` : ""}<p class="micro muted">Registrado por ${esc(aval.registrado_por || "Consejo de Escuela")} · ${esc(fecha(aval.fecha_registro))}</p></div>`,
+    )
+    .join("");
+  return `${table(["Escuela", "Instancia", "Sesión y artículo", "Fecha", "Oficio", "Alcance del aval"], filas)}${detalles}`;
+}
+
+/**
  * Renderizar la pantalla completa de historial y auditoría del expediente (Pantalla 28).
  * Encapsula historyContent() dentro del shell institucional con botón para retornar al expediente.
  * parametros:
@@ -4044,7 +4402,7 @@ function history() {
   const d = dossierActual && Number(dossierActual.id_propuesta) === Number(idActivo) ? dossierActual : null;
   const code = d?.codigo || state.viewProposal || "SI-2027-014";
   return shell(
-    `${card(`${esc(code)} · Historial de actuaciones`, historyContent(d))}${card("Dictamen de Vinculación", dictamenVinculacion(d))}`,
+    `${card(`${esc(code)} · Historial de actuaciones`, historyContent(d))}${card("Dictamen de Vinculación", dictamenVinculacion(d))}${card("Avales del Consejo de Escuela", dictamenConsejo(d))}`,
     "Historial del expediente",
     "Cada cambio conserva su responsable, fecha, versión y evidencia.",
     btn("Volver al expediente", "22", "secondary", "back"),
@@ -5170,7 +5528,7 @@ async function handleAction(action, el) {
           confirmBtn(
             "Registrar devolución",
             "return-confirm",
-            ["23", "24"].includes(current) ? `data-step="${current}"` : "",
+            ["23", "24", "25"].includes(current) ? `data-step="${current}"` : "",
           ),
         false,
         "return",
@@ -5227,6 +5585,31 @@ async function handleAction(action, el) {
         }
         break;
       }
+      if (el.dataset.step === "25" || current === "25") {
+        const idPropuesta = propuestaActivaId();
+        try {
+          const resultado = await guardarAvalConsejo(
+            idPropuesta,
+            payloadAvalConsejo("observaciones", state.saved["modal:return"] || ""),
+          );
+          state.stage = resultado.nombre_estado;
+          state.viewProposalId = idPropuesta;
+          save();
+          closeModal();
+          await Promise.all([
+            cargarBandejaConsejo(),
+            cargarDossier(idPropuesta, true),
+            cargarAvalConsejo(idPropuesta),
+          ]);
+          go("21");
+          toast(
+            "Devolución registrada. El investigador podrá atender las observaciones del Consejo de Escuela.",
+          );
+        } catch (err) {
+          toast(err.message || "No se pudo registrar la devolución del Consejo de Escuela.");
+        }
+        break;
+      }
       state.stage = "Con observaciones";
       save();
       closeModal();
@@ -5253,7 +5636,12 @@ async function handleAction(action, el) {
                     "Registro en PostgreSQL",
                     `${gruposRubrica().reduce((total, [, cs]) => total + cs.length, 0)} puntajes, la justificación y el resultado ponderado se guardarán en el expediente. El estado pasará a «${sc.recommended ? "Pendiente de aval del Consejo" : "Con observaciones"}».`,
                   )
-                : "<p>Esta acción es una simulación y no emite un acuerdo institucional real.</p>"
+                : id === "25"
+                  ? notice(
+                      "Registro en PostgreSQL",
+                      "El acuerdo se guardará en «council_endorsements» con la escuela, el tipo de instancia, la sesión, el artículo, la fecha y el oficio. La propuesta solo pasará a «Avalada» cuando todas las escuelas relacionadas con ella registren su aval.",
+                    )
+                  : "<p>Esta acción es una simulación y no emite un acuerdo institucional real.</p>"
           }`,
           act("Revisar", "close", "secondary") +
             confirmBtn(
@@ -5341,6 +5729,50 @@ async function handleAction(action, el) {
           );
         } catch (err) {
           toast(err.message || "No se pudo registrar la evaluación del Comité Técnico.");
+        }
+        break;
+      }
+      if (id === "25") {
+        const idPropuesta = propuestaActivaId();
+        try {
+          const fileInput = $("#consejo-doc");
+          let idDocumento = null;
+          if (fileInput?.files?.length) {
+            const subido = await subirDocumentoPropuesta(
+              idPropuesta,
+              fileInput.files[0],
+              "Acuerdo de aval del Consejo de Escuela",
+            );
+            idDocumento = subido.id_documento;
+          }
+          const resultado = await guardarAvalConsejo(
+            idPropuesta,
+            payloadAvalConsejo("favorable", "", idDocumento),
+          );
+          state.stage = resultado.nombre_estado;
+          state.viewProposalId = idPropuesta;
+          save();
+          closeModal();
+          await Promise.all([
+            cargarBandejaConsejo(),
+            cargarDossier(idPropuesta, true),
+            cargarAvalConsejo(idPropuesta),
+          ]);
+          modal(
+            resultado.aval_completo ? "Aval registrado" : "Aval parcial registrado",
+            notice(
+              "Registro guardado y sincronizado con PostgreSQL",
+              resultado.aval_completo
+                ? `Nuevo estado: ${resultado.nombre_estado}. ${resultado.mensaje}`
+                : resultado.mensaje,
+            ),
+            btn("Volver a la bandeja", "21", "secondary") +
+              btn("Ver expediente", "22", "", "arrow"),
+            false,
+            "decision-saved",
+          );
+        } catch (err) {
+          toast(err.message || "No se pudo registrar el aval del Consejo de Escuela.");
         }
         break;
       }

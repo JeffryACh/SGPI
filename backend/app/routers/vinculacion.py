@@ -52,7 +52,17 @@ MIME_POR_EXTENSION = {
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
-ESTADO_POR_DECISION = {"favorable": 3, "observaciones": 9, "rechazo": 10}
+# [Línea clave]: Los estados se resuelven por nombre porque el orden de los identificadores
+# en la tabla «estados» de la base desplegada no coincide con el seed V3.
+NOMBRE_ESTADO_VINCULACION = "En revisión de Vinculación"
+NOMBRE_ESTADO_COMITE = "En evaluación del Comité Técnico"
+NOMBRE_ESTADO_OBSERVACIONES = "Con observaciones"
+NOMBRE_ESTADO_RECHAZADA = "Rechazada"
+ESTADO_POR_DECISION = {
+    "favorable": NOMBRE_ESTADO_COMITE,
+    "observaciones": NOMBRE_ESTADO_OBSERVACIONES,
+    "rechazo": NOMBRE_ESTADO_RECHAZADA,
+}
 
 
 class VinculacionEvaluacionIn(BaseModel):
@@ -162,6 +172,22 @@ def _url_documento(file_path: str) -> str:
     return f"{url}/storage/v1/object/public/{BUCKET}/{file_path.lstrip('/')}"
 
 
+def _id_estado(cur, nombre_estado: str) -> int:
+    """Resolver el identificador de un estado por su nombre oficial."""
+
+    cur.execute(
+        "SELECT id_estado FROM estados WHERE nombre_estado = %s",
+        (nombre_estado,),
+    )
+    fila = cur.fetchone()
+    if not fila:
+        raise HTTPException(
+            500,
+            f"El estado «{nombre_estado}» no está configurado en la base de datos.",
+        )
+    return fila["id_estado"]
+
+
 def _obtener_rol_vinculacion(cur, id_usuario: int) -> int:
     """Validar que el usuario exista, esté activo y tenga el rol Vinculación."""
 
@@ -242,7 +268,9 @@ def obtener_bandeja_vinculacion(
             JOIN estados e ON e.id_estado = p.estado_actual
             JOIN usuarios u ON u.id_usuario = p.id_usuario_lider
             LEFT JOIN proposal_budget pb ON pb.id_propuesta = p.id_propuesta
-            WHERE p.estado_actual = 2
+            WHERE p.estado_actual = (
+                      SELECT id_estado FROM estados WHERE nombre_estado = %s
+                  )
                OR EXISTS (
                     SELECT 1
                     FROM evaluations ev
@@ -256,7 +284,7 @@ def obtener_bandeja_vinculacion(
                      p.fecha_creacion
             ORDER BY p.fecha_creacion DESC, p.id_propuesta DESC
             """,
-            (ROL_VINCULACION,),
+            (NOMBRE_ESTADO_VINCULACION, ROL_VINCULACION),
         )
         filas = cur.fetchall()
 
@@ -313,9 +341,10 @@ def registrar_vinculacion(
 ):
     """Registrar el dictamen de Vinculación y ejecutar la transición controlada de estado."""
 
-    estado_nuevo = ESTADO_POR_DECISION[payload.decision]
     with conn.cursor() as cur:
         id_rol = _obtener_rol_vinculacion(cur, payload.id_usuario_eval)
+        estado_vinculacion = _id_estado(cur, NOMBRE_ESTADO_VINCULACION)
+        estado_nuevo = _id_estado(cur, ESTADO_POR_DECISION[payload.decision])
 
         cur.execute(
             """
@@ -330,7 +359,7 @@ def registrar_vinculacion(
         propuesta = cur.fetchone()
         if not propuesta:
             raise HTTPException(404, "Propuesta no encontrada.")
-        if propuesta["estado_actual"] != 2:
+        if propuesta["estado_actual"] != estado_vinculacion:
             raise HTTPException(
                 409,
                 "La propuesta no está en revisión de Vinculación; no se puede registrar el dictamen.",
@@ -415,9 +444,9 @@ def registrar_vinculacion(
                 INSERT INTO proposal_state_history
                     (id_propuesta, id_estado_anterior, id_estado_nuevo,
                      id_usuario_responsable, fecha_cambio, observaciones)
-                VALUES (%s, 2, %s, %s, NOW(), %s)
+                VALUES (%s, %s, %s, %s, NOW(), %s)
                 """,
-                (id_propuesta, estado_nuevo, payload.id_usuario_eval, detalle_historial),
+                (id_propuesta, estado_vinculacion, estado_nuevo, payload.id_usuario_eval, detalle_historial),
             )
 
         cur.execute("SELECT nombre_estado FROM estados WHERE id_estado = %s", (estado_nuevo,))

@@ -51,6 +51,7 @@ from .routers import (
     ia,
     vinculacion,
     comite,
+    consejo,
 )
 
 
@@ -92,6 +93,9 @@ app.include_router(vinculacion.router)
 # [Línea clave]: Monta la bandeja, la rúbrica y el dictamen del Comité Técnico antes de las
 # rutas dinámicas de propuestas para que /propuestas/comite/... resuelva correctamente.
 app.include_router(comite.router)
+# [Línea clave]: Monta la bandeja y el aval del Consejo de Escuela antes de las rutas
+# dinámicas de propuestas para que /propuestas/consejo/... resuelva correctamente.
+app.include_router(consejo.router)
 # [Línea clave]: Monta el router de propuestas (dashboard, creación atómica, expediente, cambios de estado y evaluaciones).
 app.include_router(propuestas.router)
 # [Línea clave]: Monta el router de notificaciones y marcado de lectura en base de datos.

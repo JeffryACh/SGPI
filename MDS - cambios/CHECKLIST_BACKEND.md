@@ -24,9 +24,10 @@
 - [x] Cambio genérico de estado con historial y notificación.
 - [x] Registro genérico de evaluaciones para Comité Técnico y CIE.
 - [x] Flujo específico del Comité Técnico: bandeja, rúbrica ponderada y dictamen con transición de estado.
+- [x] Flujo específico del Consejo de Escuela: bandeja por escuela, aval institucional con persistencia y transición a «Avalada».
 - [x] Evaluación preliminar: auditoría normativa local al crear/cambiar estado y Gemini solo en re-evaluación manual.
 - [ ] Autorización real por rol en el backend.
-- [ ] **Parcial:** flujos específicos de Vinculación y Comité implementados; faltan Consejo, Dirección y CIE.
+- [ ] **Parcial:** flujos específicos de Vinculación, Comité Técnico y Consejo implementados; faltan Dirección y CIE.
 - [ ] Administración de convocatorias, catálogos y rúbricas.
 - [ ] Guardado de borrador en servidor.
 - [x] Carga real de documentos de propuesta.
@@ -57,6 +58,8 @@
 - [x] Se bloquean bienes duraderos fuera del Año 1.
 - [x] Se exige un mínimo de productos académicos según horas del equipo.
 - [x] `client_uuid` evita duplicados por reenvío.
+- [x] Los estados de las transiciones por rol se resuelven por nombre (`estados.nombre_estado`), porque el orden de los identificadores en la base desplegada difiere del seed V3.
+- [x] La propuesta solo pasa a `5 · Avalada` cuando **todas** las escuelas relacionadas con ella (escuela líder + escuelas del equipo investigador) registraron su aval en `council_endorsements`.
 - [ ] **Parcial:** la mayoría de reglas VIE del presupuesto se validan solo en el frontend.
 - [ ] Validar en servidor el tope anual de ₡5.000.000.
 - [ ] Validar en servidor duración máxima según modalidad.
@@ -104,6 +107,7 @@
 - [ ] Pruebas de cada transición de estado.
 - [ ] Pruebas de cada dictamen por rol.
 - [x] Pruebas manuales del Comité Técnico en `test_endpoints.ps1` (FASE 5): rúbrica, bandeja, 403 sin rol, bloqueo por obligatorio, dictamen favorable, duplicado y expediente.
+- [x] Pruebas manuales del Consejo de Escuela en `test_endpoints.ps1` (FASE 6): bandeja por escuela, 403 sin rol, expediente de aval, aval favorable con transición a `Avalada`, aval duplicado, prohibición de avalar personal de otra escuela y **aval parcial con dos escuelas involucradas** (la propuesta sigue en `4 · Pendiente de aval del Consejo` hasta que avalen todas).
 - [ ] Pruebas de notificaciones y lectura.
 - [ ] Pruebas de autorización: un rol no puede ejecutar acciones de otro.
 - [ ] Pruebas de idempotencia y concurrencia.
@@ -140,6 +144,9 @@
 | OK | GET | `/propuestas/comite/rubrica` | Rúbrica oficial ponderada (V12) |
 | OK | GET | `/propuestas/comite/{id_propuesta}` | Dictamen y puntajes por criterio |
 | OK | POST | `/propuestas/comite/{id_propuesta}` | Registrar dictamen y transición de estado |
+| OK | GET | `/propuestas/consejo/bandeja` | Bandeja filtrada por escuela del Consejo de Escuela |
+| OK | GET | `/propuestas/consejo/{id_propuesta}` | Escuelas involucradas, avales y acuerdos firmados |
+| OK | POST | `/propuestas/consejo/{id_propuesta}` | Registrar aval, devolución o rechazo con transición de estado |
 | OK | GET | `/ia/estado` | Estado del servicio IA |
 | OK | GET | `/ia/criterios` | Criterios normativos |
 | OK | GET | `/ia/evaluacion-preliminar/{id_propuesta}` | Evaluación IA guardada (null si no existe; no genera) |
@@ -233,22 +240,25 @@ Pantallas principales: `02`, `21`, `22`, `24`, `28`.
 
 ### 4.4 Consejo de Escuela
 
-Pantallas principales: `21`, `22`, `25`, `28`.
+Pantallas principales: `02`, `21`, `22`, `25`, `28`.
 
-- [ ] **21 · Bandeja:** filtrar propuestas pendientes de aval.
-- [ ] **25 · Aval:** persistir en `council_endorsements`.
-- [ ] **25 · Aval:** guardar instancia/escuela que avala.
-- [ ] **25 · Aval:** guardar tipo de instancia, sesión, artículo y fecha.
-- [ ] **25 · Aval:** guardar número de oficio.
-- [ ] **25 · Aval:** guardar ratificación de calificación.
-- [ ] **25 · Aval:** guardar aval de presupuesto y horas de personal.
-- [ ] **25 · Aval:** guardar observaciones.
-- [ ] **25 · Aval:** soportar avales de varias escuelas para una misma propuesta.
-- [ ] **25 · Aval:** validar que cada escuela avale a su propio personal.
-- [ ] **25 · Aval:** adjuntar acuerdo firmado.
-- [ ] **25 · Aval:** transición controlada a `5 · Avalada`.
-- [ ] **25 · Aval:** notificar al investigador para el sometimiento formal.
-- [ ] **28 · Historial:** mostrar avales y acuerdos.
+- [x] **02 · Inicio:** tarjetas de pendientes, dictaminadas y total calculadas desde la bandeja real del Consejo.
+- [x] **02 · Inicio:** propuesta destacada = última propuesta que ingresó al estado 4, ordenada por `proposal_state_history`.
+- [x] **21 · Bandeja:** filtrar propuestas pendientes de aval (`GET /propuestas/consejo/bandeja`).
+- [x] **21 · Bandeja:** filtrar por la escuela del usuario (escuela líder y escuelas del equipo investigador).
+- [x] **25 · Aval:** persistir en `council_endorsements`.
+- [x] **25 · Aval:** guardar instancia/escuela que avala.
+- [x] **25 · Aval:** guardar tipo de instancia, sesión, artículo y fecha.
+- [x] **25 · Aval:** guardar número de oficio.
+- [x] **25 · Aval:** guardar ratificación de calificación.
+- [x] **25 · Aval:** guardar aval de presupuesto y horas de personal.
+- [x] **25 · Aval:** guardar observaciones.
+- [x] **25 · Aval:** soportar avales de varias escuelas para una misma propuesta (una fila por escuela).
+- [x] **25 · Aval:** validar que cada escuela avale a su propio personal.
+- [x] **25 · Aval:** adjuntar acuerdo firmado (documento validado contra el expediente).
+- [x] **25 · Aval:** transición controlada a `5 · Avalada` cuando todas las escuelas involucradas avalaron.
+- [x] **25 · Aval:** notificar al investigador para el sometimiento formal.
+- [x] **28 · Historial:** mostrar avales y acuerdos.
 
 ### 4.5 Dirección de Investigación
 
@@ -313,7 +323,7 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 | `convocatoria_etapas` | Lectura | CRUD administrativo |
 | `convocatoria_documentos` | Lectura y subida | Edición, reemplazo, borrado |
 | `vinculacion_evaluations` | Uso completo | Mantener al versionar el dictamen |
-| `council_endorsements` | Sin uso | Endpoint/persistencia de pantalla 25 |
+| `council_endorsements` | Uso completo | Falta relacionar el acuerdo firmado (`id_documento`) con el aval |
 | `rubric_sections` | Lectura | CRUD y versionado de la rúbrica |
 | `rubric_criteria` | Lectura | CRUD y versionado de criterios y pesos |
 | `technical_committee_scores` | Uso completo | Mantener la integridad al versionar rúbricas |
@@ -364,6 +374,9 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 - [x] `GET /propuestas/comite/rubrica`.
 - [x] `GET /propuestas/comite/{id_propuesta}`.
 - [x] `POST /propuestas/comite/{id_propuesta}`.
+- [x] `GET /propuestas/consejo/bandeja`.
+- [x] `GET /propuestas/consejo/{id_propuesta}`.
+- [x] `POST /propuestas/consejo/{id_propuesta}`.
 - [ ] `POST /propuestas/{id}/consejo`.
 - [ ] `GET /propuestas/{id}/consejo`.
 - [ ] `POST /propuestas/{id}/direccion`.
@@ -390,7 +403,7 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 - [ ] Un investigador solo ve y modifica sus propias propuestas.
 - [ ] Vinculación no puede actuar como Comité, Consejo, Dirección ni CIE.
 - [ ] Comité no puede emitir resolución CIE.
-- [ ] Consejo solo avala propuestas de su escuela.
+- [x] Consejo solo avala propuestas de su escuela (403 validado en `test_endpoints.ps1`, FASE 6).
 - [ ] Dirección no puede resolver CIE.
 - [ ] CIE no puede modificar un dictamen de Dirección.
 - [ ] Crear propuesta completa y consultarla por ID.

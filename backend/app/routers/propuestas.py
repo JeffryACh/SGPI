@@ -945,8 +945,9 @@ def obtener_dossier_propuesta(
         evaluaciones_cur = stack.enter_context(conn.cursor())
         vinculacion_cur = stack.enter_context(conn.cursor())
         comite_cur = stack.enter_context(conn.cursor())
+        consejo_cur = stack.enter_context(conn.cursor())
 
-        # [Línea clave]: Envía las 15 consultas del expediente en un solo pipeline para pagar un único round-trip.
+        # [Línea clave]: Envía las 16 consultas del expediente en un solo pipeline para pagar un único round-trip.
         with conn.pipeline():
             prop_cur.execute(sql_prop, (id_propuesta,))
 
@@ -1150,6 +1151,26 @@ def obtener_dossier_propuesta(
                 (id_propuesta,),
             )
 
+            # [Línea clave]: Recupera los avales del Consejo de Escuela con su escuela y
+            # responsable para que las pantallas 22 y 28 muestren los acuerdos reales.
+            consejo_cur.execute(
+                """
+                SELECT ce.id_aval, ce.id_propuesta, ce.id_escuela,
+                       e.nombre AS escuela, e.siglas AS escuela_siglas,
+                       ce.tipo_instancia, ce.numero_sesion, ce.articulo, ce.fecha_acuerdo,
+                       ce.numero_oficio, ce.ratifica_calificacion, ce.avala_presupuesto,
+                       ce.avala_horas_personal, ce.observaciones, ce.id_usuario_registro,
+                       TRIM(u.nombre || ' ' || COALESCE(u.lastname, '')) AS registrado_por,
+                       ce.fecha_registro
+                FROM council_endorsements ce
+                JOIN escuelas e ON e.id_escuela = ce.id_escuela
+                JOIN usuarios u ON u.id_usuario = ce.id_usuario_registro
+                WHERE ce.id_propuesta = %s
+                ORDER BY ce.fecha_registro ASC, ce.id_aval ASC
+                """,
+                (id_propuesta,),
+            )
+
         prop = prop_cur.fetchone()
         if not prop:
             raise HTTPException(status_code=404, detail="Propuesta no encontrada")
@@ -1171,6 +1192,7 @@ def obtener_dossier_propuesta(
         evaluaciones = evaluaciones_cur.fetchall()
         vinculacion_evaluaciones = vinculacion_cur.fetchall()
         comite_evaluacion = comite_cur.fetchall()
+        avales_consejo = consejo_cur.fetchall()
 
     # [Línea clave]: Incluye la evaluación preliminar ya guardada, sin generarla en la ruta de lectura.
     evaluacion_ia = None
@@ -1195,6 +1217,7 @@ def obtener_dossier_propuesta(
         "evaluaciones": evaluaciones,
         "vinculacion_evaluaciones": vinculacion_evaluaciones,
         "comite_evaluacion": comite_evaluacion,
+        "avales_consejo": avales_consejo,
         "evaluacion_ia": evaluacion_ia,
     }
 

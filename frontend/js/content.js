@@ -330,7 +330,7 @@ window.SGPI_CONTENT = {
       id: "25",
       title: "Aval del Consejo de Escuela",
       description:
-        "Registra el acuerdo de la instancia coordinadora y su evidencia.",
+        "Registra el acuerdo de tu escuela (coordinadora o participante) y su evidencia.",
       module: "Evaluación",
     },
     {

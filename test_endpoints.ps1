@@ -316,7 +316,7 @@ if ($idPropuestaComite) {
     Write-Host "  -> Propuesta en evaluación del Comité: ID $idPropuestaComite" -ForegroundColor Cyan
 
     # C5. Expediente de evaluación del Comité (aún sin dictamen)
-    $detalleComite = Test-Endpoint -Name "Expediente sin dictamen del Comité" -Endpoint "/propuestas/comite/$idPropuestaComite?id_usuario=$idUsuarioComite"
+    $detalleComite = Test-Endpoint -Name "Expediente sin dictamen del Comité" -Endpoint "/propuestas/comite/${idPropuestaComite}?id_usuario=$idUsuarioComite"
 
     # C6. Caso negativo: obligatorio en 6 con decisión favorable (409 esperado, sin cambios en BD)
     $criteriosBloqueo = @()
@@ -366,7 +366,7 @@ if ($idPropuestaComite) {
     }
 
     # C8. Relectura del expediente con los puntajes persistidos por criterio
-    $detalleComite = Test-Endpoint -Name "Dictamen del Comité persistido" -Endpoint "/propuestas/comite/$idPropuestaComite?id_usuario=$idUsuarioComite"
+    $detalleComite = Test-Endpoint -Name "Dictamen del Comité persistido" -Endpoint "/propuestas/comite/${idPropuestaComite}?id_usuario=$idUsuarioComite"
     if ($detalleComite -and $detalleComite.evaluacion) {
         Write-Host "  -> Evaluación: $($detalleComite.evaluacion.id_evaluacion) | Puntajes: $($detalleComite.puntajes.Count) | Total: $($detalleComite.puntaje_total)" -ForegroundColor Gray
     }
@@ -387,7 +387,140 @@ if ($idPropuestaComite) {
 }
 
 # -------------------------------------------------------------
-# FASE 6: DISPONIBILIDAD DEL SERVIDOR FRONTEND (SPA)
+# FASE 6: CONSEJO DE ESCUELA (AVAL INSTITUCIONAL POR ESCUELA)
+# -------------------------------------------------------------
+
+# C11. Autenticación del usuario con rol Consejo de Escuela
+$loginConsejo = Test-Endpoint -Name "Login del Consejo de Escuela" -Method "POST" -Endpoint "/auth/login" -Body @{
+    correo = "patricia.vargas@example.com"
+    password = "demostracion"
+}
+$idUsuarioConsejo = if ($loginConsejo) { $loginConsejo.id_usuario } else { 15 }
+if ($loginConsejo) {
+    Write-Host "  -> Usuario: $($loginConsejo.nombre) | ID: $idUsuarioConsejo | Roles: $($loginConsejo.roles -join ', ')" -ForegroundColor Gray
+}
+
+# C12. Bandeja del Consejo de Escuela (200 con Patricia, 403 con un investigador)
+$bandejaConsejo = Test-Endpoint -Name "Bandeja del Consejo de Escuela" -Endpoint "/propuestas/consejo/bandeja?rol=Consejo%20de%20Escuela&id_usuario=$idUsuarioConsejo"
+if ($bandejaConsejo) {
+    Write-Host "  -> Expedientes en la bandeja: $($bandejaConsejo.Count)" -ForegroundColor Gray
+    $pendientesConsejo = @($bandejaConsejo | Where-Object { $_.id_estado -eq 4 -and -not $_.mi_aval })
+    $avaladosConsejo = @($bandejaConsejo | Where-Object { $_.mi_aval })
+    Write-Host "  -> Pendientes de aval: $($pendientesConsejo.Count) | Avalados por mi escuela: $($avaladosConsejo.Count)" -ForegroundColor Gray
+    if ($pendientesConsejo.Count -gt 0) {
+        $masRecienteConsejo = @($pendientesConsejo | Sort-Object { $_.fecha_ingreso_consejo } -Descending)[0]
+        Write-Host "  -> Pendiente más reciente: $($masRecienteConsejo.codigo) (ingreso $($masRecienteConsejo.fecha_ingreso_consejo))" -ForegroundColor Gray
+    }
+}
+$bandejaConsejoProhibida = Test-Endpoint -Name "Bandeja del Consejo con rol Investigador (403 esperado)" -Endpoint "/propuestas/consejo/bandeja?rol=Consejo%20de%20Escuela&id_usuario=1"
+if ($bandejaConsejoProhibida) {
+    Write-Host "  [AVISO] El backend permitió la bandeja a un usuario sin rol Consejo de Escuela." -ForegroundColor Yellow
+} else {
+    Write-Host "  -> Rechazo correcto: el usuario 1 no tiene rol Consejo de Escuela." -ForegroundColor Gray
+}
+
+# C13. Propuesta de prueba creada directamente en estado 4 (Pendiente de aval del Consejo)
+$propuestaConsejo = $nuevaPropuesta.Clone()
+$propuestaConsejo.titulo = "Test Consejo de Escuela - Aval institucional $marcaHora"
+$propuestaConsejo.estado_inicial = 4
+$creacionConsejo = Test-Endpoint -Name "Creación de propuesta para el Consejo de Escuela" -Method "POST" -Endpoint "/propuestas" -Body $propuestaConsejo
+$idPropuestaConsejo = if ($creacionConsejo -and $creacionConsejo.propuesta) { $creacionConsejo.propuesta.id_propuesta } else { $null }
+# C15. Aval favorable: la propuesta avanza a «Avalada» cuando todas las escuelas avalaron
+$bodyAval = @{
+    id_usuario_aval = $idUsuarioConsejo
+    decision = "favorable"
+    numero_sesion = "Sesión Ordinaria 08-2026"
+    articulo = "Artículo 4.2"
+    fecha_acuerdo = "2026-10-31"
+    numero_oficio = "OFIC-IC-999-2026"
+    ratifica_calificacion = $true
+    avala_presupuesto = $true
+    avala_horas_personal = $true
+    observaciones = "Aval de prueba registrado por el script."
+}
+if ($idPropuestaConsejo) {
+    Write-Host "  -> Propuesta pendiente de aval: ID $idPropuestaConsejo" -ForegroundColor Cyan
+
+    # C14. Expediente de aval: escuelas involucradas y permiso para avalar
+    $detalleConsejo = Test-Endpoint -Name "Expediente de aval del Consejo de Escuela" -Endpoint "/propuestas/consejo/${idPropuestaConsejo}?id_usuario=$idUsuarioConsejo"
+    if ($detalleConsejo) {
+        Write-Host "  -> Escuela: $($detalleConsejo.escuela_usuario.siglas) | Involucradas: $($detalleConsejo.escuelas_involucradas.Count) | Puede avalar: $($detalleConsejo.puede_aval)" -ForegroundColor Gray
+    }
+
+    $resAval = Test-Endpoint -Name "Aval favorable del Consejo de Escuela" -Method "POST" -Endpoint "/propuestas/consejo/$idPropuestaConsejo" -Body $bodyAval
+    if ($resAval) {
+        Write-Host "  -> Estado: $($resAval.nombre_estado) ($($resAval.estado_actual)) | Aval completo: $($resAval.aval_completo) | Pendientes: $($resAval.avales_pendientes -join ', ')" -ForegroundColor Cyan
+    }
+
+    # C16. El aval quedó persistido y el expediente lo muestra
+    $detalleConsejo = Test-Endpoint -Name "Aval persistido del Consejo de Escuela" -Endpoint "/propuestas/consejo/${idPropuestaConsejo}?id_usuario=$idUsuarioConsejo"
+    if ($detalleConsejo -and $detalleConsejo.mi_aval) {
+        Write-Host "  -> Aval registrado: $($detalleConsejo.mi_aval.numero_oficio) | Puede avalar de nuevo: $($detalleConsejo.puede_aval)" -ForegroundColor Gray
+    }
+    $dossierConsejo = Test-Endpoint -Name "Expediente con avales del Consejo de Escuela" -Endpoint "/propuestas/$idPropuestaConsejo"
+    if ($dossierConsejo) {
+        Write-Host "  -> Avales en el expediente: $($dossierConsejo.avales_consejo.Count) | Estado: $($dossierConsejo.nombre_estado)" -ForegroundColor Gray
+    }
+
+    # C17. Segundo aval de la misma escuela (409 esperado)
+    $resAvalDuplicado = Test-Endpoint -Name "Aval duplicado de la misma escuela (409 esperado)" -Method "POST" -Endpoint "/propuestas/consejo/$idPropuestaConsejo" -Body $bodyAval
+    if ($resAvalDuplicado) {
+        Write-Host "  [AVISO] El backend permitió dos avales de la misma escuela sobre la misma propuesta." -ForegroundColor Yellow
+    } else {
+        Write-Host "  -> Rechazo correcto: la escuela ya había registrado su aval." -ForegroundColor Gray
+    }
+}
+
+# C18. Una escuela no puede avalar a personal de otra escuela (403 esperado)
+$propuestaOtraEscuela = $nuevaPropuesta.Clone()
+$propuestaOtraEscuela.titulo = "Test Consejo de Escuela - Escuela ajena $marcaHora"
+$propuestaOtraEscuela.id_usuario_lider = 11
+$propuestaOtraEscuela.id_escuela = 2
+$propuestaOtraEscuela.estado_inicial = 4
+$propuestaOtraEscuela.equipo = @(
+    @{ id_usuario = 11; id_tipo_hora = 1; horas_asignadas = 12 }
+)
+$creacionOtraEscuela = Test-Endpoint -Name "Creación de propuesta de otra escuela" -Method "POST" -Endpoint "/propuestas" -Body $propuestaOtraEscuela
+$idPropuestaOtraEscuela = if ($creacionOtraEscuela -and $creacionOtraEscuela.propuesta) { $creacionOtraEscuela.propuesta.id_propuesta } else { $null }
+if ($idPropuestaOtraEscuela) {
+    $resAjena = Test-Endpoint -Name "Aval sobre personal de otra escuela (403 esperado)" -Method "POST" -Endpoint "/propuestas/consejo/$idPropuestaOtraEscuela" -Body $bodyAval
+    if ($resAjena) {
+        Write-Host "  [AVISO] El backend permitió avalar una propuesta con personal de otra escuela." -ForegroundColor Yellow
+    } else {
+        Write-Host "  -> Rechazo correcto: el Consejo solo avala a su propio personal." -ForegroundColor Gray
+    }
+}
+
+# C19. Aval parcial multi-escuela: la propuesta NO avanza si falta el aval de otra escuela
+$propuestaMultiEscuela = $nuevaPropuesta.Clone()
+$propuestaMultiEscuela.titulo = "Test Consejo de Escuela - Dos escuelas $marcaHora"
+$propuestaMultiEscuela.id_usuario_lider = 1
+$propuestaMultiEscuela.id_escuela = 1
+$propuestaMultiEscuela.estado_inicial = 4
+$propuestaMultiEscuela.equipo = @(
+    @{ id_usuario = 1; id_tipo_hora = 1; horas_asignadas = 12 },
+    @{ id_usuario = 11; id_tipo_hora = 2; horas_asignadas = 6 }
+)
+$creacionMultiEscuela = Test-Endpoint -Name "Creación de propuesta con dos escuelas" -Method "POST" -Endpoint "/propuestas" -Body $propuestaMultiEscuela
+$idPropuestaMultiEscuela = if ($creacionMultiEscuela -and $creacionMultiEscuela.propuesta) { $creacionMultiEscuela.propuesta.id_propuesta } else { $null }
+if ($idPropuestaMultiEscuela) {
+    $detalleMultiEscuela = Test-Endpoint -Name "Expediente con dos escuelas involucradas" -Endpoint "/propuestas/consejo/${idPropuestaMultiEscuela}?id_usuario=$idUsuarioConsejo"
+    if ($detalleMultiEscuela) {
+        Write-Host "  -> Escuelas involucradas: $(($detalleMultiEscuela.escuelas_involucradas | ForEach-Object { $_.siglas }) -join ', ')" -ForegroundColor Gray
+    }
+    $resAvalParcial = Test-Endpoint -Name "Aval de una sola escuela (debe quedar pendiente)" -Method "POST" -Endpoint "/propuestas/consejo/$idPropuestaMultiEscuela" -Body $bodyAval
+    if ($resAvalParcial) {
+        Write-Host "  -> Estado: $($resAvalParcial.nombre_estado) ($($resAvalParcial.estado_actual)) | Aval completo: $($resAvalParcial.aval_completo) | Pendientes: $($resAvalParcial.avales_pendientes -join ', ')" -ForegroundColor Cyan
+        if ($resAvalParcial.aval_completo -or $resAvalParcial.nombre_estado -ne "Pendiente de aval del Consejo") {
+            Write-Host "  [AVISO] La propuesta avanzó a Avalada aunque faltaba el aval de otra escuela." -ForegroundColor Yellow
+        } else {
+            Write-Host "  -> Correcto: la propuesta sigue pendiente hasta que avalen todas las escuelas." -ForegroundColor Green
+        }
+    }
+}
+
+# -------------------------------------------------------------
+# FASE 7: DISPONIBILIDAD DEL SERVIDOR FRONTEND (SPA)
 # -------------------------------------------------------------
 
 # 20. Servidor Frontend Nginx / HTML
