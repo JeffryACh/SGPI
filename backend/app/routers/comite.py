@@ -40,8 +40,7 @@ from pydantic import BaseModel, Field
 
 from ..db import get_conn
 
-# [Línea clave]: Se registra antes que propuestas.router en main.py para que las rutas
-# literales /propuestas/comite/... no sean capturadas por /propuestas/{id_propuesta}.
+# [Línea clave]: ¿Por qué soy importante? Declara el router antes de propuestas.py. ¿Para qué? Evitar que rutas literales /propuestas/comite/... sean capturadas por /propuestas/{id_propuesta}. ¿Dónde me usan? En backend/app/main.py al registrar los routers.
 router = APIRouter(prefix="/propuestas", tags=["comite"])
 
 ROL_COMITE = "Comité Técnico"
@@ -68,7 +67,19 @@ BUCKET = "convocatorias"
 # =====================================================================
 
 class PuntajeCriterioIn(BaseModel):
-    """Nivel asignado a un criterio de la rúbrica por el Comité Técnico."""
+    """
+    Nivel de cumplimiento asignado a un criterio individual de la rúbrica por el Comité Técnico.
+
+    Valida la calificación numérica individual (0, 6, 8 o 10) y su justificación asociada
+    cuando el evaluador califica un criterio en el formulario de la pantalla 24.
+
+    Se utiliza como elemento de la lista 'puntajes' en el payload ComiteEvaluacionIn.
+
+    atributos:
+        * int : id_criterio_rubrica Identificador único del criterio evaluado en 'rubric_criteria'.
+        * int : puntaje Nivel numérico otorgado según la escala oficial (0, 6, 8 o 10).
+        * Optional[str] : justificacion Justificación textual opcional u obligatoria según la regla de negocio.
+    """
 
     id_criterio_rubrica: int
     puntaje: int = Field(ge=0, le=10)
@@ -76,7 +87,23 @@ class PuntajeCriterioIn(BaseModel):
 
 
 class ComiteEvaluacionIn(BaseModel):
-    """Formulario de evaluación técnica enviado desde la pantalla 24."""
+    """
+    Estructura de entrada que transporta el dictamen colegiado emitido por el Comité Técnico.
+
+    Recibe los puntajes de los 23 criterios de la rúbrica oficial V12, la justificación global,
+    observaciones, decisión institucional y el documento de respaldo adjunto.
+
+    Se utiliza como cuerpo de la petición POST /propuestas/comite/{id_propuesta} desde la pantalla 24.
+
+    atributos:
+        * int : id_usuario_eval Identificador del usuario autenticado que emite la evaluación técnica.
+        * list[PuntajeCriterioIn] : puntajes Lista obligatoria de calificaciones por criterio de rúbrica.
+        * str : justificacion Justificación técnica general del dictamen colegiado.
+        * Optional[str] : observaciones Observaciones complementarias o razones de devolución/rechazo.
+        * bool : produccion_conforme Bandera que certifica la suficiencia no sumativa de productos académicos.
+        * Literal["favorable", "observaciones", "rechazo"] : decision Veredicto emitido ('favorable', 'observaciones' o 'rechazo').
+        * Optional[int] : id_documento Identificador opcional de un acta o informe técnico adjunto en Storage.
+    """
 
     id_usuario_eval: int
     puntajes: list[PuntajeCriterioIn] = Field(min_length=1)
@@ -88,7 +115,20 @@ class ComiteEvaluacionIn(BaseModel):
 
 
 class CriterioRubricaOut(BaseModel):
-    """Criterio de la rúbrica con su peso y obligatoriedad."""
+    """
+    Representación de un criterio evaluativo perteneciente a una sección temática de la rúbrica.
+
+    Transporta el nombre normativo del criterio, su ponderación porcentual y su condición de obligatoriedad.
+
+    Se utiliza dentro de SeccionRubricaOut para alimentar los formularios interactivos en frontend.
+
+    atributos:
+        * int : id_criterio_rubrica Clave primaria del criterio en la tabla 'rubric_criteria'.
+        * str : nombre_criterio Denominación oficial del criterio de evaluación.
+        * float : peso_relativo Ponderación relativa del criterio dentro de la escala global de 100 puntos.
+        * bool : es_obligatorio Indica si el criterio exige calificación mínima de 8 para habilitar recomendación.
+        * int : orden Posición ordinal de visualización en la interfaz.
+    """
 
     id_criterio_rubrica: int
     nombre_criterio: str
@@ -98,7 +138,20 @@ class CriterioRubricaOut(BaseModel):
 
 
 class SeccionRubricaOut(BaseModel):
-    """Sección temática de la rúbrica con sus criterios."""
+    """
+    Representación de una sección temática de la rúbrica oficial de evaluación técnica.
+
+    Agrupa un conjunto de criterios relacionados bajo un mismo eje temático y porcentaje ponderado.
+
+    Se utiliza en la respuesta de GET /propuestas/comite/rubrica para estructurar la vista de evaluación.
+
+    atributos:
+        * int : id_seccion Clave primaria de la sección temática en 'rubric_sections'.
+        * str : nombre_seccion Nombre descriptivo de la sección (ej. Equipo, Metodología).
+        * float : peso_porcentual Porcentaje acumulado de la sección sobre la nota final.
+        * int : orden Secuencia de presentación en la rúbrica oficial.
+        * list[CriterioRubricaOut] : criterios Colección ordenada de criterios pertenecientes a la sección.
+    """
 
     id_seccion: int
     nombre_seccion: str
@@ -108,7 +161,21 @@ class SeccionRubricaOut(BaseModel):
 
 
 class RubricaOut(BaseModel):
-    """Rúbrica completa del Comité Técnico y sus reglas de recomendación."""
+    """
+    Catálogo consolidado de la rúbrica de evaluación técnica oficial del Comité Técnico.
+
+    Reúne las 8 secciones temáticas, los 23 criterios, la suma total de pesos y los umbrales de aprobación.
+
+    Se utiliza como response_model en el endpoint GET /propuestas/comite/rubrica.
+
+    atributos:
+        * list[SeccionRubricaOut] : secciones Lista de secciones con sus respectivos criterios anidados.
+        * float : total_peso Suma ponderada de todos los pesos de la rúbrica (debe ser 100.0).
+        * int : total_criterios Cantidad total de criterios configurados en la rúbrica oficial.
+        * list[int] : niveles_validos Escala de niveles discretos admitidos (0, 6, 8, 10).
+        * int : puntaje_minimo Umbral mínimo de aprobación para dictamen favorable (70 puntos).
+        * int : nivel_obligatorio_minimo Nivel mínimo exigido en criterios obligatorios (8 - Bueno).
+    """
 
     secciones: list[SeccionRubricaOut] = []
     total_peso: float
@@ -119,7 +186,22 @@ class RubricaOut(BaseModel):
 
 
 class PuntajeCriterioOut(BaseModel):
-    """Puntaje registrado para un criterio de la rúbrica."""
+    """
+    Detalle del puntaje otorgado a un criterio específico en una evaluación técnica persistida.
+
+    Permite reconstruir la justificación y ponderación de cada aspecto evaluado en el expediente.
+
+    Se utiliza en la lista 'puntajes' de ComiteDetalleOut para visualización en pantalla 24.
+
+    atributos:
+        * int : id_criterio_rubrica Clave del criterio evaluado en 'rubric_criteria'.
+        * str : nombre_seccion Nombre de la sección a la que pertenece el criterio.
+        * str : nombre_criterio Nombre oficial del criterio de evaluación.
+        * float : peso_relativo Ponderación relativa del criterio en la rúbrica.
+        * bool : es_obligatorio Indica si el criterio tiene condición obligatoria de aprobación.
+        * int : puntaje Calificación otorgada en la evaluación (0, 6, 8 o 10).
+        * Optional[str] : justificacion Justificación registrada por el evaluador para este criterio.
+    """
 
     id_criterio_rubrica: int
     nombre_seccion: str
@@ -131,7 +213,25 @@ class PuntajeCriterioOut(BaseModel):
 
 
 class EvaluacionComiteOut(BaseModel):
-    """Dictamen consolidado del Comité Técnico."""
+    """
+    Cabecera del dictamen técnico oficial emitido por el Comité Técnico.
+
+    Resume la fecha, evaluador, puntaje final ponderado, decisión adoptada y marcas de bloqueo.
+
+    Se utiliza en la propiedad 'evaluacion' de ComiteDetalleOut para consultar el veredicto vigente.
+
+    atributos:
+        * int : id_evaluacion Clave primaria de la evaluación en la tabla 'evaluations'.
+        * int : id_propuesta Identificador de la propuesta dictaminada.
+        * int : id_usuario_eval Identificador del usuario miembro del comité que dictaminó.
+        * str : evaluador_nombre Nombre completo del evaluador que emitió el dictamen.
+        * datetime : fecha_evaluacion Marca temporal UTC de registro del dictamen técnico.
+        * Optional[str] : observaciones Observaciones o recomendaciones registradas en el dictamen.
+        * float : puntaje Calificación ponderada final sobre 100 calculada por el servidor.
+        * Optional[str] : decision Veredicto institucional asignado ('favorable', 'observaciones' o 'rechazo').
+        * Optional[str] : justificacion Justificación global registrada en el dictamen técnico.
+        * bool : tiene_bloqueo_obligatorio Indica si la propuesta tuvo criterios obligatorios en 0 o 6.
+    """
 
     id_evaluacion: int
     id_propuesta: int
@@ -146,7 +246,26 @@ class EvaluacionComiteOut(BaseModel):
 
 
 class DocumentoPropuestaOut(BaseModel):
-    """Metadatos de un documento adjunto a una propuesta."""
+    """
+    Metadatos y enlaces de acceso a un documento digital adjunto al expediente de la propuesta.
+
+    Permite descargar actas, oficios y anexos almacenados en Supabase Storage o URLs remotas.
+
+    Se utiliza en la lista 'documentos' del expediente para consulta del Comité Técnico.
+
+    atributos:
+        * int : id_documento Clave primaria del documento en 'proposal_documents'.
+        * int : id_propuesta Identificador de la propuesta asociada.
+        * str : nombre_archivo Nombre del archivo adjunto con su extensión.
+        * str : tipo_documento Clasificación documental (oficio, acta, aval, informe).
+        * str : extension Extensión de archivo normalizada (pdf, docx, etc.).
+        * str : file_path Ruta interna del archivo dentro del bucket de Storage.
+        * str : file_url URL pública firmada o directa para visualización en el navegador.
+        * int : tamano_bytes Tamaño físico del archivo en bytes.
+        * str : version Versión del documento en el historial.
+        * int : id_usuario_subio Identificador del usuario que cargó el archivo.
+        * datetime : fecha_subida Marca de tiempo en que se almacenó el archivo.
+    """
 
     id_documento: int
     id_propuesta: int
@@ -162,7 +281,26 @@ class DocumentoPropuestaOut(BaseModel):
 
 
 class ComiteDetalleOut(BaseModel):
-    """Expediente de evaluación del Comité Técnico."""
+    """
+    Expediente técnico consolidado de una propuesta sometida al Comité Técnico.
+
+    Contiene los datos generales de la propuesta, su última evaluación técnica registrada,
+    el desglose de puntajes por criterio, marcas de bloqueo y la documentación adjunta.
+
+    Se utiliza como response_model en el endpoint GET /propuestas/comite/{id_propuesta}.
+
+    atributos:
+        * int : id_propuesta Identificador único de la propuesta.
+        * str : codigo Código institucional de la propuesta (ej. SI-2027-028).
+        * str : titulo Título oficial del proyecto de investigación.
+        * int : estado_actual Código del estado en que se encuentra la propuesta.
+        * str : nombre_estado Descripción textual legible del estado actual.
+        * Optional[EvaluacionComiteOut] : evaluacion Último dictamen técnico emitido (o null si está pendiente).
+        * list[PuntajeCriterioOut] : puntajes Lista de calificaciones por criterio registradas en el dictamen.
+        * Optional[float] : puntaje_total Puntaje ponderado final obtenido (o null si no ha sido evaluada).
+        * bool : tiene_bloqueo_obligatorio Indica si existe bloqueo por criterio obligatorio menor a 8.
+        * list[DocumentoPropuestaOut] : documentos Lista de documentos y anexos vinculados a la propuesta.
+    """
 
     id_propuesta: int
     codigo: str
@@ -177,7 +315,25 @@ class ComiteDetalleOut(BaseModel):
 
 
 class ComiteResultadoOut(BaseModel):
-    """Resultado de registrar el dictamen del Comité Técnico."""
+    """
+    Respuesta tras la persistencia transaccional del dictamen técnico del Comité.
+
+    Confirma el éxito de la operación, el nuevo estado de la propuesta y las métricas calculadas.
+
+    Se utiliza como response_model en el endpoint POST /propuestas/comite/{id_propuesta}.
+
+    atributos:
+        * bool : ok Bandera de confirmación de registro exitoso.
+        * int : id_evaluacion Identificador de la evaluación registrada en 'evaluations'.
+        * int : id_propuesta Identificador de la propuesta calificada.
+        * int : estado_actual Nuevo identificador del estado tras la transición (4, 9 o 10).
+        * str : nombre_estado Denominación del nuevo estado de tramitación.
+        * str : decision Decisión colegiada adoptada ('favorable', 'observaciones' o 'rechazo').
+        * float : puntaje Calificación ponderada final calculada por el backend.
+        * bool : tiene_bloqueo_obligatorio Indica si se detectó bloqueo obligatorio.
+        * Optional[int] : id_documento Identificador del documento de respaldo asociado si se suministró.
+        * str : mensaje Mensaje explicativo del resultado de la operación.
+    """
 
     ok: bool
     id_evaluacion: int
@@ -196,7 +352,19 @@ class ComiteResultadoOut(BaseModel):
 # =====================================================================
 
 def _columnas_tabla(cur, nombre_tabla: str) -> set[str]:
-    """Leer las columnas existentes de una tabla del esquema público."""
+    """
+    Leer los nombres de las columnas existentes en una tabla del esquema público.
+
+    Ejecuta una consulta sobre information_schema.columns filtrando por el esquema 'public'
+    y la tabla indicada, retornando un conjunto de nombres en minúsculas.
+
+    parametros:
+        - Cursor : cur Cursor activo de la conexión a PostgreSQL.
+        - str : nombre_tabla Nombre de la tabla cuya estructura se desea verificar.
+
+    return:
+        + set[str] : columnas Conjunto de nombres de las columnas presentes en la tabla.
+    """
 
     cur.execute(
         """
@@ -210,7 +378,18 @@ def _columnas_tabla(cur, nombre_tabla: str) -> set[str]:
 
 
 def _exigir_migracion_v12(cur) -> set[str]:
-    """Validar que la migración V12 esté aplicada antes de escribir el dictamen."""
+    """
+    Verificar que las columnas requeridas por la migración V12 existan en la base de datos.
+
+    Inspecciona 'technical_committee_evaluations' para comprobar la presencia de las columnas
+    'decision', 'justificacion' y 'tiene_bloqueo_obligatorio', arrojando HTTP 503 si faltan.
+
+    parametros:
+        - Cursor : cur Cursor activo sobre la conexión a PostgreSQL.
+
+    return:
+        + set[str] : columnas Conjunto de columnas verificadas de la tabla.
+    """
 
     columnas = _columnas_tabla(cur, "technical_committee_evaluations")
     requeridas = {"decision", "justificacion", "tiene_bloqueo_obligatorio"}
@@ -240,7 +419,19 @@ def _id_estado(cur, nombre_estado: str) -> int:
 
 
 def _obtener_rol_comite(cur, id_usuario: int) -> int:
-    """Validar que el usuario exista, esté activo y tenga el rol Comité Técnico."""
+    """
+    Validar que el usuario especificado exista, se encuentre activo y posea el rol de Comité Técnico.
+
+    Cruza las tablas 'usuarios', 'user_roles' y 'roles' verificando la coincidencia con 'Comité Técnico'
+    y el estado activo del usuario, arrojando HTTP 403 en caso contrario.
+
+    parametros:
+        - Cursor : cur Cursor de la base de datos.
+        - int : id_usuario Identificador único del usuario a autenticar.
+
+    return:
+        + int : id_rol Identificador numérico del rol Comité Técnico verificado.
+    """
 
     cur.execute(
         """
@@ -259,7 +450,18 @@ def _obtener_rol_comite(cur, id_usuario: int) -> int:
 
 
 def _url_documento(file_path: str) -> str:
-    """Construir la URL pública de un documento sin romper lecturas si Storage no está configurado."""
+    """
+    Construir la URL pública o firmada de descarga para un archivo almacenado en Supabase Storage.
+
+    Examina la ruta del archivo; si ya es absoluta la retorna intacta, de lo contrario concatena
+    la variable de entorno SUPABASE_URL con el endpoint público del bucket de convocatorias.
+
+    parametros:
+        - str : file_path Ruta relativa o URL del archivo en el sistema de almacenamiento.
+
+    return:
+        + str : url URL pública accesible para visualización o descarga del documento.
+    """
 
     if not file_path:
         return ""
@@ -272,7 +474,19 @@ def _url_documento(file_path: str) -> str:
 
 
 def _documentos_propuesta(cur, id_propuesta: int) -> list[DocumentoPropuestaOut]:
-    """Listar los documentos de una propuesta con su URL pública."""
+    """
+    Listar los documentos adjuntos a una propuesta con sus metadatos y enlaces de acceso.
+
+    Consulta la tabla 'proposal_documents' ordenando por fecha de subida descendente e
+    instancia objetos DocumentoPropuestaOut incorporando la URL pública calculada.
+
+    parametros:
+        - Cursor : cur Cursor activo de PostgreSQL.
+        - int : id_propuesta Identificador único de la propuesta analizada.
+
+    return:
+        + list[DocumentoPropuestaOut] : documentos Lista de documentos y anexos de la propuesta.
+    """
 
     cur.execute(
         """
@@ -291,7 +505,18 @@ def _documentos_propuesta(cur, id_propuesta: int) -> list[DocumentoPropuestaOut]
 
 
 def _filas_rubrica(cur) -> list[dict]:
-    """Consultar los criterios de la rúbrica ordenados por sección."""
+    """
+    Consultar todos los criterios de la rúbrica oficial ordenados por sección y criterio.
+
+    Ejecuta un JOIN entre 'rubric_sections' y 'rubric_criteria' ordenando por los campos
+    de secuencia ordinal oficiales para mantener la consistencia institucional.
+
+    parametros:
+        - Cursor : cur Cursor de PostgreSQL.
+
+    return:
+        + list[dict] : filas Lista de registros con las secciones y criterios de la rúbrica.
+    """
 
     cur.execute(
         """
@@ -314,7 +539,18 @@ def _filas_rubrica(cur) -> list[dict]:
 
 
 def _agrupar_rubrica(filas: list[dict]) -> list[SeccionRubricaOut]:
-    """Agrupar los criterios planos en secciones ordenadas."""
+    """
+    Agrupar los registros planos de criterios de rúbrica en una jerarquía estructurada de secciones.
+
+    Itera sobre la lista tabular devuelta por la base de datos y organiza los criterios
+    dentro de sus respectivas instancias de SeccionRubricaOut.
+
+    parametros:
+        - list[dict] : filas Lista de diccionarios planos con criterios y secciones.
+
+    return:
+        + list[SeccionRubricaOut] : secciones Colección jerárquica de secciones con criterios anidados.
+    """
 
     secciones: list[SeccionRubricaOut] = []
     indice: dict[int, SeccionRubricaOut] = {}
@@ -342,7 +578,20 @@ def _agrupar_rubrica(filas: list[dict]) -> list[SeccionRubricaOut]:
 
 
 def _calcular_puntaje(cur, puntajes: list[PuntajeCriterioIn]) -> tuple[float, bool, dict[int, dict]]:
-    """Validar los niveles enviados y calcular el puntaje ponderado en el servidor."""
+    """
+    Validar las calificaciones asignadas y calcular el puntaje ponderado oficial en el servidor.
+
+    Comprueba que todos los 23 criterios de la rúbrica estén presentes, que los niveles pertenezcan
+    a la escala discreta (0, 6, 8, 10), calcula la suma ponderada (peso * nivel / 10) y determina
+    si existe bloqueo obligatorio (criterio obligatorio con nota menor a 8).
+
+    parametros:
+        - Cursor : cur Cursor activo de base de datos.
+        - list[PuntajeCriterioIn] : puntajes Lista de calificaciones enviadas por el evaluador.
+
+    return:
+        + tuple[float, bool, dict[int, dict]] : resultado Tupla con (puntaje_total, tiene_bloqueo, catalogo_criterios).
+    """
 
     filas = _filas_rubrica(cur)
     if not filas:
@@ -390,7 +639,21 @@ def obtener_bandeja_comite(
     rol: str = Query("Comité Técnico", description="Rol solicitado por el frontend"),
     conn: Connection = Depends(get_conn),
 ):
-    """Listar propuestas pendientes o ya dictaminadas por el Comité Técnico."""
+    """
+    Listar las propuestas asignadas a la bandeja del Comité Técnico ordenadas por prioridad temporal.
+
+    Valida la autorización del usuario con rol 'Comité Técnico', consulta las propuestas en estado 3
+    o con dictamen técnico previo, calcula montos y vincula la fecha de ingreso al comité para
+    ordenar las pendientes de manera prioritaria.
+
+    parametros:
+        - int : id_usuario Identificador del usuario autenticado que solicita la bandeja.
+        - str : rol Nombre del rol institucional declarado por el cliente.
+        - Connection : conn Conexión transaccional inyectada por FastAPI desde el pool.
+
+    return:
+        + list[dict] : bandeja Lista de expedientes de propuestas asignadas a la bandeja técnica.
+    """
 
     if rol.strip().lower() not in ("comité técnico", "comite tecnico"):
         raise HTTPException(400, "Bandeja no disponible para el rol solicitado.")
@@ -418,7 +681,7 @@ def obtener_bandeja_comite(
                     ELSE '2027–2028'
                 END AS periodo,
                 p.fecha_creacion,
-                ingreso.fecha_ingreso_comite,
+                COALESCE(ingreso.fecha_ingreso_comite, p.fecha_creacion) AS fecha_ingreso_comite,
                 COALESCE(
                     (SELECT SUM(pb.monto) FROM proposal_budget pb WHERE pb.id_propuesta = p.id_propuesta),
                     0
@@ -477,7 +740,18 @@ def obtener_bandeja_comite(
 
 @router.get("/comite/rubrica", response_model=RubricaOut)
 def obtener_rubrica_comite(conn: Connection = Depends(get_conn)):
-    """Entregar la rúbrica oficial del Comité Técnico cargada en PostgreSQL."""
+    """
+    Obtener el catálogo oficial y estructurado de la rúbrica ponderada del Comité Técnico.
+
+    Lee las secciones temáticas y criterios desde PostgreSQL y retorna la especificación
+    completa con pesos, criterios obligatorios y escala de niveles.
+
+    parametros:
+        - Connection : conn Conexión a la base de datos inyectada por FastAPI.
+
+    return:
+        + RubricaOut : rubrica Estructura completa de la rúbrica oficial con sus secciones y criterios.
+    """
 
     with conn.cursor() as cur:
         secciones = _agrupar_rubrica(_filas_rubrica(cur))
@@ -502,7 +776,20 @@ def obtener_evaluacion_comite(
     id_usuario: int = Query(..., description="Usuario autenticado con rol Comité Técnico"),
     conn: Connection = Depends(get_conn),
 ):
-    """Consultar el último dictamen del Comité Técnico y sus puntajes por criterio."""
+    """
+    Obtener el expediente completo de evaluación técnica de una propuesta específica.
+
+    Verifica los permisos del evaluador, obtiene la información de la propuesta, la última
+    evaluación técnica emitida con su desglose de puntajes y los documentos adjuntos.
+
+    parametros:
+        - int : id_propuesta Identificador único de la propuesta requerida.
+        - int : id_usuario Identificador del usuario consultante con rol Comité Técnico.
+        - Connection : conn Conexión a la base de datos inyectada por FastAPI.
+
+    return:
+        + ComiteDetalleOut : expediente Expediente completo con datos de la propuesta, evaluación y rúbrica.
+    """
 
     with conn.cursor() as cur:
         _obtener_rol_comite(cur, id_usuario)
@@ -612,7 +899,22 @@ def registrar_evaluacion_comite(
     payload: ComiteEvaluacionIn,
     conn: Connection = Depends(get_conn),
 ):
-    """Registrar el dictamen del Comité Técnico y ejecutar la transición controlada de estado."""
+    """
+    Registrar el dictamen técnico colegiado de una propuesta y ejecutar la transición de estado.
+
+    Bloquea la propuesta de forma concurrente, valida permisos, recalcula el puntaje ponderado,
+    aplica las reglas de bloqueo obligatorio (nota < 8 en obligatorios impide dictamen favorable),
+    persiste la evaluación en 'evaluations', 'technical_committee_evaluations' y 'technical_committee_scores',
+    actualiza el estado de la propuesta (a 4, 9 o 10), registra el historial y notifica al Consejo de Escuela.
+
+    parametros:
+        - int : id_propuesta Identificador único de la propuesta dictaminada.
+        - ComiteEvaluacionIn : payload Cuerpo con los puntajes de la rúbrica, justificación y decisión.
+        - Connection : conn Conexión transaccional inyectada por FastAPI.
+
+    return:
+        + ComiteResultadoOut : resultado Objeto de confirmación con el id de evaluación y el nuevo estado.
+    """
 
     with conn.cursor() as cur:
         id_rol_comite = _obtener_rol_comite(cur, payload.id_usuario_eval)

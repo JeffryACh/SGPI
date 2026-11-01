@@ -1,3 +1,23 @@
+-- ============================================================================
+-- ARCHIVO: Base de datos/Scripts/V12__rubrica_comite_tecnico.sql
+-- ============================================================================
+-- 2.1. OBJETIVO DEL ARCHIVO:
+--      Implementar en PostgreSQL la rúbrica oficial ponderada del Comité Técnico
+--      (8 secciones y 23 criterios) según el Acuerdo CIE-237-2026 de Fondos VIE 2027.
+--
+-- 2.2. RELACIONES CON OTRAS PARTES DEL SISTEMA:
+--      2.2.1. De dónde obtiene datos:
+--             - Catálogo normativo oficial de la Rúbrica de Evaluación Técnica VIE 2027.
+--      2.2.2. A dónde envía datos / Qué entidades modifica:
+--             - Inserta en 'rubric_sections' y 'rubric_criteria', y amplía
+--               'technical_committee_evaluations' con columnas de decisión y bloqueo.
+--
+-- 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
+--      Inserta las 8 secciones temáticas y 23 criterios ponderados de la rúbrica oficial,
+--      agrega las columnas 'decision', 'justificacion' y 'tiene_bloqueo_obligatorio'
+--      en 'technical_committee_evaluations', e implementa validaciones de escala 0/6/8/10.
+-- ============================================================================
+
 -- =====================================================================
 -- MIGRACIÓN V12: RÚBRICA PONDERADA DEL COMITÉ TÉCNICO
 -- Sistema de Gestión de Propuestas de Investigación (SGPI - TEC)
@@ -23,6 +43,7 @@
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.rubric_sections) THEN
+    -- [Línea clave]: ¿Por qué soy importante? Inserta las 8 secciones oficiales de la rúbrica técnica con sus pesos porcentuales. ¿Para qué? Estructurar la evaluación colegiada del Comité Técnico en 100 puntos. ¿Dónde me usan? En backend/app/routers/comite.py (GET /propuestas/comite/rubrica).
     INSERT INTO public.rubric_sections (nombre_seccion, peso_porcentual, orden)
     VALUES
       ('Equipo',                15, 1),
@@ -92,6 +113,7 @@ END $$;
 -- ---------------------------------------------------------------------
 -- El puntaje ponderado puede tener decimales (ej. 87.5), por lo que se
 -- amplía la columna original integer a numeric(5,1).
+-- [Línea clave]: ¿Por qué soy importante? Agrega las columnas decision, justificacion y tiene_bloqueo_obligatorio. ¿Para qué? Almacenar en la BD la resolución técnica del comité y el bloqueo por obligatorio insuficiente. ¿Dónde me usan? En POST /propuestas/comite/{id} de comite.py.
 ALTER TABLE public.technical_committee_evaluations
   ALTER COLUMN puntaje TYPE numeric(5,1) USING puntaje::numeric(5,1);
 

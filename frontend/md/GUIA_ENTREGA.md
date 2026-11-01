@@ -7,7 +7,7 @@
 2. **Backend API REST:** Desarrollado en FastAPI 0.143.2 y Python 3.12, configurado para despliegue en **Render** (`render.yaml`) o Docker Compose local (`http://localhost:3001`), con documentación interactiva en `/docs`.
 3. **Base de Datos en Supabase Cloud:** Instancia de PostgreSQL 14.17 en AWS `us-west-2` (Oregon) con 37 tablas relacionales (incluyendo `public.ai_preliminary_evaluations`), triggers automáticos para generación de códigos `SI-YYYY-NNN`, trazabilidad inmutable y Row Level Security (RLS).
 4. **Motor de IA Google Gemini (Plan Gratuito):** Integración nativa con Google AI Studio Free Tier (`gemini-3.5-flash` con fallback automático a `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-flash-lite-latest` y motor normativo determinista VIE 2027) para generar evaluaciones preliminares estructuradas en 5 niveles.
-5. **Verificación Automatizada:** Suite de pruebas en [`test_endpoints.ps1`](../../test_endpoints.ps1) con **20 verificaciones funcionales de extremo a extremo** en 5 fases pasando al 100% (código HTTP 200/201).
+5. **Verificación Automatizada:** Suite de pruebas en [`test_endpoints.ps1`](../../test_endpoints.ps1) con **27 verificaciones funcionales de extremo a extremo** en 6 fases pasando al 100% (incluyendo el flujo completo de evaluación, rúbrica V12 y dictamen del Comité Técnico).
 
 ---
 
@@ -35,11 +35,11 @@ Usa el selector interactivo de rol institucional en la barra superior o en Mi Pe
    - Registra el dictamen de vinculación.
 
 2. **Nivel 2: Comité Técnico (Pantalla 24)**
-   - Ingresa como evaluador del Comité Técnico.
+   - Ingresa como evaluador del Comité Técnico (ej. Gabriel Sánchez Mora). Accede a la bandeja de expedientes en evaluación (`GET /propuestas/comite/bandeja`).
    - Observa el panel de IA con el puntaje ponderado calculado sobre 100% y la recomendación técnica.
-   - Haz clic en el botón **«Aplicar puntajes IA como base»**: los 19 selectores de la rúbrica se auto-completan con los valores sugeridos (`0, 6, 8, 10`).
-   - Modifica cualquier criterio (por ejemplo, cambia un criterio obligatorio a *Regular - 6* para observar cómo se activa el bloqueo de recomendación).
-   - Registra la nota final y avanza al Consejo de Escuela.
+   - Haz clic en el botón **«Aplicar puntajes IA como base»**: los selectores de la rúbrica oficial V12 (8 secciones / 23 criterios) se auto-completan con los valores sugeridos (`0, 6, 8, 10`).
+   - Modifica cualquier criterio obligatorio a *Regular - 6*: el servidor rechaza la recomendación con código 409 (regla bloqueante verificada en backend).
+   - Al emitir dictamen favorable (`POST /propuestas/comite/{id}`), el backend persiste las notas en `technical_committee_scores` y avanza automáticamente la propuesta al estado 4 (*Pendiente de aval del Consejo*).
 
 3. **Nivel 3: Consejo de Escuela (Pantalla 25)**
    - Como Coordinador de Escuela, revisa la tarjeta de IA: confirma que la dedicación horaria semanal de los docentes es viable y que el proyecto se alinea a los programas del departamento.
@@ -67,7 +67,7 @@ Usa el selector interactivo de rol institucional en la barra superior o en Mi Pe
 
 ## Comprobación Automatizada de la API
 
-Para verificar el funcionamiento completo de las 20 pruebas de endpoints en PowerShell:
+Para verificar el funcionamiento completo de las 27 pruebas de endpoints (incluyendo la Fase 5 del Comité Técnico) en PowerShell:
 ```powershell
 .\test_endpoints.ps1
 ```

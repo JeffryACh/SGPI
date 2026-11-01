@@ -1,6 +1,27 @@
+-- ============================================================================
+-- ARCHIVO: Base de datos/Scripts/V2__llenado_de_usuarios.sql
+-- ============================================================================
+-- 2.1. OBJETIVO DEL ARCHIVO:
+--      Sembrar los usuarios iniciales, roles institucionales y asignaciones
+--      rol-usuario para pruebas, verificación y demostración del SGPI.
+--
+-- 2.2. RELACIONES CON OTRAS PARTES DEL SISTEMA:
+--      2.2.1. De dónde obtiene datos:
+--             - Especificación de roles institucionales y perfiles piloto de prueba.
+--      2.2.2. A dónde envía datos / Qué entidades modifica:
+--             - Inserta registros en las tablas maestras 'roles', 'escuelas',
+--               'usuarios' y 'user_roles'.
+--
+-- 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
+--      Inserta los 6 roles de la convocatoria, 2 escuelas piloto y 8 usuarios con
+--      contraseña predeterminada sha256('demostracion') cubriendo todos los niveles
+--      evaluadores (Investigador, Vinculación, Comité Técnico, Consejo, Dirección, CIE).
+-- ============================================================================
+
 -- ---------------------------------------------------------------
 -- Dependencias mínimas (usuarios/user_roles las exigen por FK)
 -- ---------------------------------------------------------------
+-- [Línea clave]: ¿Por qué soy importante? Inserta los 6 roles oficiales del SGPI. ¿Para qué? Permitir el control de acceso basado en roles (RBAC). ¿Dónde me usan? En routers auth.py, vinculacion.py, comite.py y en frontend.
 INSERT INTO public.roles (nombre_rol) VALUES
   ('Investigador'),
   ('Vinculación'),
@@ -21,6 +42,7 @@ INSERT INTO public.usuarios
 VALUES
   -- Investigadores
   ((SELECT id_escuela FROM public.escuelas WHERE siglas = 'IAMB'),
+   -- [Línea clave]: ¿Por qué soy importante? Crea a Laura Méndez como Investigadora líder. ¿Para qué? Servir como usuaria principal de demostración para el recorrido de formulación. ¿Dónde me usan? En login institucional y creación de propuestas.
    'Laura',   'Méndez',   'Quesada',  'laura.mendez@example.com',
    encode(sha256('demostracion'::bytea), 'hex'), true),
 

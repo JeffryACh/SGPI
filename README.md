@@ -169,6 +169,7 @@ SGPI/
 │       └── routers/
 │           ├── auth.py                 # POST /auth/login (validación SHA-256 + hmac.compare_digest)
 │           ├── catalogos.py            # GET /catalogos (catálogos unificados en una sola petición)
+│           ├── comite.py               # Rúbrica oficial V12, bandeja por rol y dictamen del Comité Técnico
 │           ├── convocatorias.py        # Convocatorias, 11 etapas y 9 instrumentos oficiales descargables
 │           ├── escuelas.py             # GET /escuelas/totalescuelas (abierto para filtros históricos)
 │           ├── ia.py                   # Motor Gemini Free Tier y endpoints /ia (estado, criterios, evaluación)
@@ -226,7 +227,11 @@ SGPI/
 | **Propuestas** | `POST /propuestas` | Creación atómica multitabla de una propuesta completa en Supabase. |
 | **Propuestas** | `GET /propuestas/{id}` | Dossier completo del expediente digital (incluyendo clave `"evaluacion_ia"`). |
 | **Propuestas** | `PATCH /propuestas/{id}/estado` | Transición de estado con registro automático en `proposal_state_history`. |
-| **Propuestas** | `POST /propuestas/{id}/evaluaciones` | Registro de notas del Comité Técnico o resoluciones del CIE. |
+| **Propuestas** | `POST /propuestas/{id}/evaluaciones` | Registro genérico de evaluaciones para otras instancias o resoluciones del CIE. |
+| **Comité Técnico** | `GET /propuestas/comite/rubrica` | Catálogo de secciones y 23 criterios ponderados de la rúbrica oficial (V12). |
+| **Comité Técnico** | `GET /propuestas/comite/bandeja` | Bandeja autorizada de propuestas en estado 3 (`403 Forbidden` para otros roles). |
+| **Comité Técnico** | `GET /propuestas/comite/{id}` | Expediente técnico y consulta de último dictamen del Comité. |
+| **Comité Técnico** | `POST /propuestas/comite/{id}` | Dictamen formal con cálculo ponderado, control de obligatorios (`409`) y avance a estado 4. |
 | **Notificaciones** | `GET /notificaciones/notificaciones` | Listado de notificaciones para el usuario autenticado. |
 | **Notificaciones** | `PATCH /notificaciones/{id}/leer` | Marca una notificación individual como leída. |
 | **Notificaciones** | `PATCH /notificaciones/leer-todas` | Marca todas las notificaciones pendientes del usuario como leídas. |
@@ -240,7 +245,7 @@ SGPI/
 
 ## 🧪 Verificación Automatizada (`test_endpoints.ps1`)
 
-El proyecto incluye un script en PowerShell que comprueba **20 endpoints de extremo a extremo** contra el backend, la IA de Google Gemini (`gemini-3.5-flash`), la base de datos en Supabase y el servidor de Frontend:
+El proyecto incluye un script en PowerShell que comprueba **27 verificaciones funcionales de extremo a extremo organizadas en 6 fases** contra el backend, la IA de Google Gemini (`gemini-3.5-flash`), la base de datos en Supabase, el flujo del Comité Técnico (V12) y el servidor Frontend:
 
 ```powershell
 # Ejecución local o contra el backend desplegado
@@ -248,8 +253,13 @@ El proyecto incluye un script en PowerShell que comprueba **20 endpoints de extr
 ```
 
 ### Resultados de la Suite:
-- **20 / 20 pruebas pasando exitosamente (`[OK 200]` / `[OK 201]`).**
-- Valida salud de base de datos, autenticación institucional (`POST /auth/login`), catálogos, convocatorias, inserción atómica con código `SI-YYYY-NNN`, transición con auditoría, registro de calificaciones, notificaciones, disponibilidad del Frontend SPA y los 5 endpoints de **Google Gemini IA (`/ia/estado`, `/ia/criterios`, `/ia/evaluacion-preliminar/1`, `/ia/evaluar-borrador`, `/ia/evaluar-propuesta/{id}`)**.
+- **27 / 27 pruebas pasando exitosamente (`[OK 200]`, `[OK 403 Esperado]` y `[OK 409 Esperado]`).**
+- **Fase 1:** Salud transaccional de Supabase (`/health`) y autenticación institucional (`POST /auth/login`).
+- **Fase 2:** Catálogos unificados, tipos de hora, escuelas abiertas e instrumentos oficiales en Supabase Storage.
+- **Fase 3:** Métricas de dashboard, recientes, listados, inserción atómica con código `SI-YYYY-NNN`, transición con auditoría e historial.
+- **Fase 4:** Diagnóstico del motor de IA (`gemini-3.5-flash`), catálogo normativo, evaluación en Supabase, evaluación de borrador en vivo y regeneración bajo demanda.
+- **Fase 5 (Comité Técnico V12):** Rúbrica oficial (100 pts), login del evaluador, bandeja autorizada (`200`), rechazo por falta de rol (`403`), creación en estado 3, rechazo por obligatorio insuficiente (`409`), dictamen favorable (100/100) con avance a estado 4 (*Pendiente de aval*), persistencia por criterio en `technical_committee_scores` y rechazo de duplicados (`409`).
+- **Fase 6:** Disponibilidad y entrega del Frontend SPA en Nginx (`http://localhost:8080`).
 
 ---
 

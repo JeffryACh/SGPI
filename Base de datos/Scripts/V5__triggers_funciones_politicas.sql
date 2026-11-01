@@ -1,3 +1,22 @@
+-- ============================================================================
+-- ARCHIVO: Base de datos/Scripts/V5__triggers_funciones_politicas.sql
+-- ============================================================================
+-- 2.1. OBJETIVO DEL ARCHIVO:
+--      Implementar la lógica procedural del SGPI mediante funciones PL/pgSQL,
+--      triggers automáticos de auditoría y políticas de seguridad Row Level Security (RLS).
+--
+-- 2.2. RELACIONES CON OTRAS PARTES DEL SISTEMA:
+--      2.2.1. De dónde obtiene datos:
+--             - Eventos DML sobre las tablas 'propuestas', 'proposal_budget' y 'risks'.
+--      2.2.2. A dónde envía datos / Qué entidades modifica:
+--             - Altera 'propuestas', 'proposal_budget', 'risks', e inserta en 'proposal_state_history'.
+--
+-- 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
+--      Crea funciones y triggers para asignación automática del código institucional
+--      SI-YYYY-NNN, registro automático de auditoría en cada cambio de estado,
+--      y habilita políticas RLS para consumo seguro desde FastAPI y Supabase Studio.
+-- ============================================================================
+
 -- =====================================================================
 -- MIGRACIÓN V5: FUNCIONES, TRIGGERS Y AJUSTES ESTRUCTURALES
 -- Sistema de Gestión de Propuestas de Investigación (SGPI - TEC)
@@ -18,6 +37,7 @@ ALTER TABLE public.risks
   ADD COLUMN IF NOT EXISTS id_plan_accion integer REFERENCES public.action_plans(id_plan_accion);
 
 -- 3. FUNCIÓN Y TRIGGER: GENERACIÓN AUTOMÁTICA DEL CÓDIGO INSTITUCIONAL (SI-YYYY-NNN)
+-- [Línea clave]: ¿Por qué soy importante? Función generadora de código institucional SI-YYYY-NNN. ¿Para qué? Asignar un identificador único correlativo por año automáticamente al insertar. ¿Dónde me usan? Disparada por trigger_generate_proposal_code en la tabla propuestas.
 CREATE OR REPLACE FUNCTION public.trg_generate_proposal_code()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -43,6 +63,7 @@ BEFORE INSERT ON public.propuestas
 FOR EACH ROW EXECUTE FUNCTION public.trg_generate_proposal_code();
 
 -- 4. FUNCIÓN Y TRIGGER: AUDITORÍA AUTOMÁTICA DE CAMBIOS DE ESTADO (proposal_state_history)
+-- [Línea clave]: ¿Por qué soy importante? Trigger de auditoría de transiciones de estado. ¿Para qué? Registrar automáticamente en proposal_state_history cualquier cambio en estado_actual. ¿Dónde me usan? Disparada por trigger_log_proposal_state_change en la tabla propuestas.
 CREATE OR REPLACE FUNCTION public.trg_log_proposal_state_change()
 RETURNS TRIGGER AS $$
 BEGIN

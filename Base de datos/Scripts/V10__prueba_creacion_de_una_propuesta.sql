@@ -1,3 +1,25 @@
+-- ============================================================================
+-- ARCHIVO: Base de datos/Scripts/V10__prueba_creacion_de_una_propuesta.sql
+-- ============================================================================
+-- 2.1. OBJETIVO DEL ARCHIVO:
+--      Proveer un script SQL de verificación integral para auditar el expediente
+--      completo de una propuesta recién formulada desde la interfaz.
+--
+-- 2.2. RELACIONES CON OTRAS PARTES DEL SISTEMA:
+--      2.2.1. De dónde obtiene datos:
+--             - Consulta 'propuestas', 'research_team', 'proposal_objectives',
+--               'academic_product_commitments', 'action_plans', 'risks', 'proposal_budget',
+--               'proposal_ethics_declarations', 'proposal_sections', 'proposal_documents',
+--               'external_collaborators', 'proposal_state_history', 'notificaciones' y 'ai_preliminary_evaluations'.
+--      2.2.2. A dónde envía datos / Qué entidades modifica:
+--             - No modifica datos (script de solo lectura para diagnóstico y verificación).
+--
+-- 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
+--      Ejecuta una consulta agregada con CTEs sobre la propuesta más reciente,
+--      verificando los conteos esperados en las 14 tablas hijas y el resultado
+--      de la evaluación preliminar generada por la IA de Google Gemini.
+-- ============================================================================
+
 -- =====================================================================
 -- V10: VERIFICACIÓN DE LA CREACIÓN DE UNA PROPUESTA
 -- Sistema de Gestión de Propuestas de Investigación (SGPI - TEC)
@@ -38,6 +60,7 @@
 --   WHERE codigo = 'SI-2027-015'
 -- =====================================================================
 
+-- [Línea clave]: ¿Por qué soy importante? CTE que selecciona la propuesta más reciente o una específica. ¿Para qué? Focalizar todas las consultas de verificación sobre el mismo expediente. ¿Dónde me usan? Ejecutado en el SQL Editor de Supabase para pruebas de aceptación.
 WITH ultima AS (
   SELECT id_propuesta
   FROM public.propuestas

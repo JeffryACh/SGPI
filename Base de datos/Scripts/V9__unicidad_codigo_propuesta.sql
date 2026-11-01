@@ -1,3 +1,21 @@
+-- ============================================================================
+-- ARCHIVO: Base de datos/Scripts/V9__unicidad_codigo_propuesta.sql
+-- ============================================================================
+-- 2.1. OBJETIVO DEL ARCHIVO:
+--      Implementar la generación segura y concurrente del código institucional de
+--      propuesta mediante un bloqueo consultivo transaccional (advisory lock).
+--
+-- 2.2. RELACIONES CON OTRAS PARTES DEL SISTEMA:
+--      2.2.1. De dónde obtiene datos:
+--             - Año de 'convocatorias' o fecha de creación, y correlativo máximo de 'propuestas'.
+--      2.2.2. A dónde envía datos / Qué entidades modifica:
+--             - Reemplaza la función fn_asignar_codigo_propuesta y su trigger en 'propuestas'.
+--
+-- 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
+--      Adquiere un bloqueo 'pg_advisory_xact_lock' por año antes de calcular el consecutivo,
+--      garantizando códigos consecutivos 'SI-YYYY-NNN' libres de colisiones entre inserciones concurrentes.
+-- ============================================================================
+
 -- =====================================================================
 -- MIGRACIÓN V9: GENERACIÓN SEGURA DEL CÓDIGO DE PROPUESTA
 -- Sistema de Gestión de Propuestas de Investigación (SGPI - TEC)
@@ -24,6 +42,7 @@ BEGIN
 
     v_anio := COALESCE(v_anio, to_char(COALESCE(NEW.fecha_creacion, clock_timestamp()), 'YYYY'));
 
+    -- [Línea clave]: ¿Por qué soy importante? Adquiere un lock consultivo transaccional pg_advisory_xact_lock. ¿Para qué? Evitar que dos transacciones concurrentes generen el mismo código correlativo de propuesta. ¿Dónde me usan? Dentro de la función fn_asignar_codigo_propuesta() antes de calcular el consecutivo.
     PERFORM pg_advisory_xact_lock(hashtext('sgpi_codigo_propuesta_' || v_anio));
 
     SELECT COALESCE(MAX(SUBSTRING(codigo FROM '^SI-[0-9]{4}-([0-9]+)$')::integer), 0) + 1

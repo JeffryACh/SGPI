@@ -1,3 +1,24 @@
+-- ============================================================================
+-- ARCHIVO: Base de datos/Scripts/V3__catalogos_y_seed_data.sql
+-- ============================================================================
+-- 2.1. OBJETIVO DEL ARCHIVO:
+--      Poblar los catálogos maestros institucionales y datos semilla de convocatorias,
+--      modalidades, líneas, tipos de hora, rubros y propuestas demo del SGPI.
+--
+-- 2.2. RELACIONES CON OTRAS PARTES DEL SISTEMA:
+--      2.2.1. De dónde obtiene datos:
+--             - Bases normativas del Acuerdo CIE-237-2026 de Fondos VIE 2027.
+--      2.2.2. A dónde envía datos / Qué entidades modifica:
+--             - Inserta datos en 'escuelas', 'estados', 'modalidades',
+--               'lineas_investigacion', 'tipos_hora', 'rubros_presupuesto',
+--               'convocatorias' y 'propuestas'.
+--
+-- 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
+--      Carga los 12 estados de tramitación, 3 modalidades VIE, 5 líneas prioritarias,
+--      6 tipos de hora reconocidos, catálogo presupuestario y expedientes de prueba
+--      para alimentar selectores y filtros de búsqueda en la aplicación.
+-- ============================================================================
+
 -- =====================================================================
 -- PARTE 1: CATÁLOGOS INSTITUCIONALES (Requeridos por FKs)
 -- =====================================================================
@@ -9,6 +30,7 @@ INSERT INTO public.escuelas (nombre, siglas) VALUES
   ('Escuela de Administración de Empresas', 'ADE');
 
 -- 2. Estados de la convocatoria Fondos VIE
+-- [Línea clave]: ¿Por qué soy importante? Define los 12 estados del flujo oficial de propuestas. ¿Para qué? Controlar la máquina de estados y las transiciones del ciclo de vida. ¿Dónde me usan? En propuestas.py, vinculacion.py, comite.py y en frontend/js/app.js.
 INSERT INTO public.estados (nombre_estado) VALUES
   ('En formulación'),
   ('En revisión de Vinculación'),

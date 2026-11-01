@@ -39,8 +39,7 @@ from pydantic import BaseModel, Field
 
 from ..db import get_conn
 
-# [Línea clave]: Se registra antes que propuestas.router para que /propuestas/bandeja no
-# sea interpretado por la ruta dinámica /propuestas/{id_propuesta}.
+# [Línea clave]: ¿Por qué soy importante? Declara el router antes de propuestas.py. ¿Para qué? Evitar que /propuestas/bandeja sea interpretado como /propuestas/{id_propuesta}. ¿Dónde me usan? En backend/app/main.py al registrar los routers.
 router = APIRouter(prefix="/propuestas", tags=["vinculacion"])
 
 ROL_VINCULACION = "Vinculación"
@@ -66,7 +65,26 @@ ESTADO_POR_DECISION = {
 
 
 class VinculacionEvaluacionIn(BaseModel):
-    """Datos del dictamen técnico emitido por Vinculación."""
+    """
+    Datos de entrada para el registro del dictamen técnico emitido por el Centro de Vinculación.
+
+    Valida la captura del número de oficio, identificación de propiedad intelectual, tipo de
+    innovación, valoración técnica y la decisión institucional sobre la propuesta.
+
+    Se utiliza como cuerpo de la petición POST /propuestas/{id_propuesta}/vinculacion desde la pantalla 23.
+
+    atributos:
+        * int : id_usuario_eval Identificador del usuario evaluador con rol Vinculación.
+        * str : numero_oficio_dictamen Número de oficio formal asignado al dictamen (ej. CV-2027-042).
+        * bool : potencial_pi_identificado Indica si la propuesta presenta potencial de activos de PI.
+        * Optional[str] : tipo_innovacion Clasificación del tipo de innovación si aplica (producto, proceso, servicio).
+        * Optional[str] : activo_previsto Tipo de activo de propiedad intelectual proyectado (software, patente, etc.).
+        * str : valoracion_tecnica Justificación y valoración técnica desarrollada por Vinculación.
+        * bool : requiere_reserva Indica si los resultados requieren acuerdo de confidencialidad o reserva.
+        * Optional[str] : observaciones Observaciones o condiciones adicionales para la ejecución.
+        * Literal["favorable", "observaciones", "rechazo"] : decision Decisión adoptada ('favorable', 'observaciones' o 'rechazo').
+        * Optional[int] : id_documento Identificador opcional del oficio firmado en formato PDF adjunto.
+    """
 
     id_usuario_eval: int
     numero_oficio_dictamen: str = Field(min_length=1)
@@ -81,7 +99,28 @@ class VinculacionEvaluacionIn(BaseModel):
 
 
 class VinculacionEvaluacionOut(BaseModel):
-    """Dictamen de Vinculación con los datos de la evaluación base."""
+    """
+    Datos del dictamen técnico de Vinculación asociado a la evaluación institucional de una propuesta.
+
+    Estructura la información del dictamen técnico emitido por el Centro de Vinculación,
+    incluyendo el evaluador, oficio, valoración, identificación de PI y reserva.
+
+    Se utiliza en la propiedad 'evaluacion' de VinculacionDetalleOut para alimentar la vista del expediente.
+
+    atributos:
+        * int : id_evaluacion Identificador único de la evaluación en la tabla 'evaluations'.
+        * int : id_propuesta Identificador de la propuesta dictaminada.
+        * int : id_usuario_eval Identificador del usuario con rol Vinculación que dictaminó.
+        * str : evaluador_nombre Nombre completo del funcionario de Vinculación evaluador.
+        * datetime : fecha_evaluacion Fecha y hora de emisión del dictamen técnico.
+        * Optional[str] : observaciones Observaciones generales registradas en la evaluación.
+        * str : numero_oficio_dictamen Número formal de oficio institucional asignado al dictamen.
+        * bool : potencial_pi_identificado Bandera que indica si se identificó potencial de PI.
+        * Optional[str] : tipo_innovacion Clasificación de la innovación identificada.
+        * Optional[str] : activo_previsto Nombre o tipo del activo de propiedad intelectual proyectado.
+        * str : valoracion_tecnica Texto descriptivo con la valoración técnica de vinculación.
+        * bool : requiere_reserva Marca de necesidad de reserva o confidencialidad de resultados.
+    """
 
     id_evaluacion: int
     id_propuesta: int
@@ -98,7 +137,26 @@ class VinculacionEvaluacionOut(BaseModel):
 
 
 class DocumentoPropuestaOut(BaseModel):
-    """Metadatos de un documento adjunto a una propuesta."""
+    """
+    Metadatos y enlaces de acceso a un documento digital adjunto al expediente de la propuesta.
+
+    Permite descargar oficios, anexos o acuerdos almacenados en Supabase Storage o URLs remotas.
+
+    Se utiliza en la lista 'documentos' del expediente para consulta de Vinculación.
+
+    atributos:
+        * int : id_documento Clave primaria del documento en 'proposal_documents'.
+        * int : id_propuesta Identificador de la propuesta asociada.
+        * str : nombre_archivo Nombre del archivo adjunto con su extensión.
+        * str : tipo_documento Clasificación documental (Dictamen de Vinculación, Oficio, etc.).
+        * str : extension Extensión de archivo normalizada (pdf, docx, etc.).
+        * str : file_path Ruta interna del archivo dentro del bucket de Storage.
+        * str : file_url URL pública firmada o directa para visualización en el navegador.
+        * int : tamano_bytes Tamaño físico del archivo en bytes.
+        * str : version Versión del documento en el historial.
+        * int : id_usuario_subio Identificador del usuario que cargó el archivo.
+        * datetime : fecha_subida Marca de tiempo en que se almacenó el archivo.
+    """
 
     id_documento: int
     id_propuesta: int
@@ -114,7 +172,18 @@ class DocumentoPropuestaOut(BaseModel):
 
 
 class VinculacionDetalleOut(BaseModel):
-    """Respuesta consolidada del expediente de Vinculación."""
+    """
+    Respuesta consolidada del expediente de Vinculación para una propuesta específica.
+
+    Reúne el dictamen técnico vigente y la colección de documentos y oficios adjuntos.
+
+    Se utiliza como response_model en el endpoint GET /propuestas/{id_propuesta}/vinculacion.
+
+    atributos:
+        * int : id_propuesta Identificador único de la propuesta consultada.
+        * Optional[VinculacionEvaluacionOut] : evaluacion Último dictamen técnico emitido por Vinculación (o null).
+        * list[DocumentoPropuestaOut] : documentos Lista de oficios y documentos vinculados a la propuesta.
+    """
 
     id_propuesta: int
     evaluacion: Optional[VinculacionEvaluacionOut] = None
@@ -122,7 +191,23 @@ class VinculacionDetalleOut(BaseModel):
 
 
 class VinculacionResultadoOut(BaseModel):
-    """Resultado de registrar un dictamen de Vinculación."""
+    """
+    Resultado de la persistencia del dictamen emitido por el Centro de Vinculación.
+
+    Confirma el registro transaccional en la base de datos y la transición de estado resultante.
+
+    Se utiliza como response_model en el endpoint POST /propuestas/{id_propuesta}/vinculacion.
+
+    atributos:
+        * bool : ok Bandera de confirmación de registro exitoso.
+        * int : id_evaluacion Identificador de la evaluación registrada en 'evaluations'.
+        * int : id_propuesta Identificador de la propuesta calificada.
+        * int : estado_actual Nuevo identificador del estado tras la transición (3, 9 o 10).
+        * str : nombre_estado Denominación legible del nuevo estado institucional.
+        * str : decision Decisión adoptada ('favorable', 'observaciones' o 'rechazo').
+        * Optional[int] : id_documento Identificador del oficio de respaldo adjunto en Storage.
+        * str : mensaje Mensaje descriptivo del resultado de la operación.
+    """
 
     ok: bool
     id_evaluacion: int
@@ -135,7 +220,18 @@ class VinculacionResultadoOut(BaseModel):
 
 
 def _slugify(texto: str) -> str:
-    """Normalizar un texto para usarlo como nombre seguro dentro de Storage."""
+    """
+    Normalizar una cadena de texto para su uso seguro como nombre de objeto o carpeta en Storage.
+
+    Elimina acentos, caracteres diacríticos y caracteres especiales, convirtiendo a minúsculas
+    y separando palabras con guiones.
+
+    parametros:
+        - str : texto Cadena de caracteres a normalizar.
+
+    return:
+        + str : slug Cadena alfanumérica limpia y segura para rutas de almacenamiento.
+    """
 
     t = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode()
     t = "".join(c if c.isalnum() else "-" for c in t.lower()).strip("-")
@@ -143,14 +239,31 @@ def _slugify(texto: str) -> str:
 
 
 def _nombre_archivo_seguro(nombre: str) -> str:
-    """Conservar la extensión y normalizar el nombre del archivo."""
+    """
+    Sanitizar el nombre de un archivo preservando su extensión original.
+
+    Aplica normalización slug al nombre base del archivo y conserva la extensión en minúsculas.
+
+    parametros:
+        - str : nombre Nombre original del archivo suministrado por el cliente.
+
+    return:
+        + str : nombre_seguro Nombre sanitizado y libre de caracteres incompatibles con el filesystem o URL.
+    """
 
     base, ext = os.path.splitext(nombre or "")
     return f"{_slugify(base)}{ext.lower()}"
 
 
 def _config_storage() -> tuple[str, str]:
-    """Leer la URL y la service key de Supabase Storage."""
+    """
+    Obtener las credenciales y URL de configuración del servicio Supabase Storage.
+
+    Lee las variables de entorno SUPABASE_URL y SUPABASE_SERVICE_KEY, validando su existencia.
+
+    return:
+        + tuple[str, str] : configuracion Tupla con (url_base, service_key).
+    """
 
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
     key = os.getenv("SUPABASE_SERVICE_KEY", "")
@@ -160,7 +273,18 @@ def _config_storage() -> tuple[str, str]:
 
 
 def _url_documento(file_path: str) -> str:
-    """Construir la URL pública de un documento sin romper lecturas si Storage no está configurado."""
+    """
+    Construir la URL pública accesible para un archivo almacenado en Supabase Storage.
+
+    Si la ruta ya es una URL absoluta la devuelve tal cual; de lo contrario concatena
+    el endpoint de Storage del bucket 'convocatorias'.
+
+    parametros:
+        - str : file_path Ruta relativa del archivo en el bucket.
+
+    return:
+        + str : url URL completa de acceso al documento.
+    """
 
     if not file_path:
         return ""
@@ -189,7 +313,19 @@ def _id_estado(cur, nombre_estado: str) -> int:
 
 
 def _obtener_rol_vinculacion(cur, id_usuario: int) -> int:
-    """Validar que el usuario exista, esté activo y tenga el rol Vinculación."""
+    """
+    Validar que el usuario especificado exista, esté activo y cuente con el rol Vinculación.
+
+    Verifica la asignación en 'user_roles' y 'roles', arrojando HTTP 403 si el usuario
+    no tiene autorización.
+
+    parametros:
+        - Cursor : cur Cursor activo de la conexión a PostgreSQL.
+        - int : id_usuario Identificador del usuario a validar.
+
+    return:
+        + int : id_rol Identificador del rol Vinculación verificado.
+    """
 
     cur.execute(
         """
@@ -208,7 +344,18 @@ def _obtener_rol_vinculacion(cur, id_usuario: int) -> int:
 
 
 def _documentos_propuesta(cur, id_propuesta: int) -> list[DocumentoPropuestaOut]:
-    """Listar los documentos de una propuesta con su URL pública."""
+    """
+    Listar los documentos adjuntos a una propuesta con sus metadatos y enlaces de acceso.
+
+    Consulta la tabla 'proposal_documents' ordenando por fecha de subida descendente.
+
+    parametros:
+        - Cursor : cur Cursor activo de PostgreSQL.
+        - int : id_propuesta Identificador único de la propuesta.
+
+    return:
+        + list[DocumentoPropuestaOut] : documentos Lista de documentos vinculados a la propuesta.
+    """
 
     cur.execute(
         """
@@ -232,7 +379,21 @@ def obtener_bandeja_vinculacion(
     rol: str = Query("Vinculación", description="Rol solicitado por el frontend"),
     conn: Connection = Depends(get_conn),
 ):
-    """Listar propuestas pendientes o ya dictaminadas por Vinculación."""
+    """
+    Listar las propuestas asignadas a la bandeja de revisión del Centro de Vinculación.
+
+    Valida la autorización del usuario con rol 'Vinculación', consulta las propuestas en estado 2
+    (En revisión de Vinculación) o que ya cuentan con dictamen de Vinculación, calculando montos
+    y ordenando por fecha de creación descendente.
+
+    parametros:
+        - int : id_usuario Identificador del usuario autenticado que solicita la bandeja.
+        - str : rol Nombre del rol institucional declarado por el cliente.
+        - Connection : conn Conexión transaccional inyectada por FastAPI desde el pool.
+
+    return:
+        + list[dict] : bandeja Lista de expedientes de propuestas asignadas a Vinculación.
+    """
 
     if rol.strip().lower() not in ("vinculación", "vinculacion"):
         raise HTTPException(400, "Bandeja no disponible para el rol solicitado.")
@@ -297,7 +458,20 @@ def obtener_vinculacion_propuesta(
     id_usuario: int = Query(..., description="Usuario autenticado con rol Vinculación"),
     conn: Connection = Depends(get_conn),
 ):
-    """Consultar el último dictamen de Vinculación y sus documentos firmados."""
+    """
+    Consultar el expediente de Vinculación de una propuesta con su último dictamen y documentos.
+
+    Verifica los permisos del evaluador y obtiene el dictamen emitido por Vinculación junto con
+    los documentos y oficios filtrados.
+
+    parametros:
+        - int : id_propuesta Identificador de la propuesta consultada.
+        - int : id_usuario Identificador del usuario consultante con rol Vinculación.
+        - Connection : conn Conexión a la base de datos inyectada por FastAPI.
+
+    return:
+        + VinculacionDetalleOut : expediente Expediente con el dictamen de Vinculación y anexos.
+    """
 
     with conn.cursor() as cur:
         _obtener_rol_vinculacion(cur, id_usuario)
@@ -339,7 +513,21 @@ def registrar_vinculacion(
     payload: VinculacionEvaluacionIn,
     conn: Connection = Depends(get_conn),
 ):
-    """Registrar el dictamen de Vinculación y ejecutar la transición controlada de estado."""
+    """
+    Registrar el dictamen técnico del Centro de Vinculación y ejecutar la transición de estado.
+
+    Bloquea la propuesta de manera concurrente, valida permisos, persiste la evaluación en
+    'evaluations' y 'vinculacion_evaluations', actualiza el estado (3 si es favorable, 9 si tiene observaciones,
+    o 10 si es rechazo), actualiza el historial y notifica al Comité Técnico.
+
+    parametros:
+        - int : id_propuesta Identificador único de la propuesta dictaminada.
+        - VinculacionEvaluacionIn : payload Formulario con el dictamen técnico y decisión.
+        - Connection : conn Conexión transaccional inyectada por FastAPI.
+
+    return:
+        + VinculacionResultadoOut : resultado Objeto de confirmación con el id de evaluación y el nuevo estado.
+    """
 
     with conn.cursor() as cur:
         id_rol = _obtener_rol_vinculacion(cur, payload.id_usuario_eval)
@@ -498,7 +686,18 @@ def listar_documentos_propuesta(
     id_propuesta: int,
     conn: Connection = Depends(get_conn),
 ):
-    """Listar los documentos registrados para una propuesta."""
+    """
+    Listar los documentos y anexos registrados para una propuesta específica.
+
+    Lee los registros de la tabla 'proposal_documents' y retorna la lista de metadatos con URLs públicas.
+
+    parametros:
+        - int : id_propuesta Identificador único de la propuesta.
+        - Connection : conn Conexión a la base de datos.
+
+    return:
+        + list[DocumentoPropuestaOut] : documentos Lista de documentos adjuntos a la propuesta.
+    """
 
     with conn.cursor() as cur:
         return _documentos_propuesta(cur, id_propuesta)
@@ -513,7 +712,23 @@ def subir_documento_propuesta(
     version: str = Form("1.0"),
     conn: Connection = Depends(get_conn),
 ):
-    """Subir un documento de propuesta a Supabase Storage y registrar sus metadatos."""
+    """
+    Subir un documento o dictamen en PDF a Supabase Storage y registrar sus metadatos en la base de datos.
+
+    Valida la extensión y el tamaño del archivo, lo carga mediante HTTP en el bucket 'convocatorias'
+    de Supabase Storage y registra la fila correspondiente en 'proposal_documents'.
+
+    parametros:
+        - int : id_propuesta Identificador de la propuesta a la que se adjunta el documento.
+        - UploadFile : archivo Archivo binario cargado en la petición multipart.
+        - int : id_usuario Identificador del usuario que sube el archivo.
+        - str : tipo_documento Clasificación del documento (por defecto 'Dictamen de Vinculación').
+        - str : version Versión del documento (ej. '1.0').
+        - Connection : conn Conexión transaccional inyectada por FastAPI.
+
+    return:
+        + DocumentoPropuestaOut : documento Metadatos del documento creado con su URL pública.
+    """
 
     nombre_archivo = _nombre_archivo_seguro(archivo.filename or "")
     extension = os.path.splitext(nombre_archivo)[1].lstrip(".")

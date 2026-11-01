@@ -1,4 +1,24 @@
+-- ============================================================================
+-- ARCHIVO: Base de datos/Scripts/V4__seed_notificaciones.sql
+-- ============================================================================
+-- 2.1. OBJETIVO DEL ARCHIVO:
+--      Generar notificaciones iniciales del sistema para poblar la bandeja de entrada
+--      de los usuarios según el estado de sus propuestas y roles asignados.
+--
+-- 2.2. RELACIONES CON OTRAS PARTES DEL SISTEMA:
+--      2.2.1. De dónde obtiene datos:
+--             - Consulta 'propuestas', 'research_team', 'estados', 'user_roles' y 'roles'.
+--      2.2.2. A dónde envía datos / Qué entidades modifica:
+--             - Inserta registros en la tabla 'notificaciones'.
+--
+-- 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
+--      Genera notificaciones de trámite para investigadores líderes según el estado
+--      actual, avisos de inclusión en equipo para coinvestigadores, recordatorios de
+--      convocatoria y alertas de expedientes pendientes para los comités evaluadores.
+-- ============================================================================
+
 -- 1) Estado actual de cada propuesta, para su líder (tipo trámite)
+-- [Línea clave]: ¿Por qué soy importante? Genera notificaciones de trámite para los líderes de propuesta. ¿Para qué? Alertar sobre el estado vigente en la pantalla 03 y campana de la SPA. ¿Dónde me usan? En backend/app/routers/notificaciones.py.
 INSERT INTO public.notificaciones (id_usuario, id_propuesta, tipo, titulo, mensaje, fecha_creacion, leida, fecha_lectura)
 SELECT
   p.id_usuario_lider,

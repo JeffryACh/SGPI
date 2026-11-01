@@ -816,33 +816,44 @@ Una vez desplegado el Backend y la Base de Datos en cualquiera de las opciones a
    cd "c:\Proyecto-Diseño\SGPI"
    .\test_endpoints.ps1
    ```
-3. **Resultado esperado para cumplir el 100% de la rúbrica de la Etapa 4 (20 pruebas en 5 fases):**
-   - **Fase 1 (Infraestructura y Catálogos):**
+3. **Resultado esperado para cumplir el 100% de la rúbrica de la Etapa 4 (27 pruebas en 6 fases):**
+   - **Fase 1 (Salud y Autenticación):**
      - `[GET] /health` $\rightarrow$ `[OK 200]`
+     - `[POST] /auth/login` $\rightarrow$ `[OK 200]` *(Login institucional Laura Méndez)*
+   - **Fase 2 (Catálogos y Convocatorias):**
      - `[GET] /catalogos` $\rightarrow$ `[OK 200]`
      - `[GET] /tipos_hora/totalTiposHora` $\rightarrow$ `[OK 200]`
      - `[GET] /escuelas/totalescuelas` $\rightarrow$ `[OK 200]`
-     - `[GET] /modalidades/totalmodalidades` $\rightarrow$ `[OK 200]`
-     - `[GET] /lineas_de_investigacion/totalLineas` $\rightarrow$ `[OK 200]`
-   - **Fase 2 (Autenticación y Convocatorias):**
-     - `[POST] /auth/login` $\rightarrow$ `[OK 200]`
-     - `[GET] /convocatorias/totalConvocatorias` $\rightarrow$ `[OK 200]`
-     - `[GET] /convocatorias/etapas_convocatorias?id_convocatoria=1` $\rightarrow$ `[OK 200]`
-     - `[GET] /convocatorias/documentos_convocatoria?id_convocatoria=1` $\rightarrow$ `[OK 200]` *(9 instrumentos oficiales encontrados)*
+     - `[GET] /convocatorias/documentos_convocatoria?id_convocatoria=1` $\rightarrow$ `[OK 200]` *(Instrumentos oficiales en Supabase Storage)*
    - **Fase 3 (Dashboard, Formulación y Transiciones):**
      - `[GET] /propuestas/dashboardpropuestas?id_usuario=1` $\rightarrow$ `[OK 200]`
      - `[GET] /propuestas/top3PropuestaMasReciente?id_usuario=1` $\rightarrow$ `[OK 200]`
      - `[GET] /propuestas` $\rightarrow$ `[OK 200]`
-     - `[POST] /propuestas` $\rightarrow$ `[OK 201]` *(Creación atómica con código `SI-YYYY-NNN`)*
+     - `[POST] /propuestas` $\rightarrow$ `[OK 200]` *(Creación atómica con código `SI-YYYY-NNN`)*
      - `[GET] /propuestas/{id}` $\rightarrow$ `[OK 200]`
-     - `[PATCH] /propuestas/{id}/estado` $\rightarrow$ `[OK 200]`
+     - `[PATCH] /propuestas/{id}/estado` $\rightarrow$ `[OK 200]` *(Disparo automático de IA)*
+     - `[POST] /propuestas/{id}/evaluaciones` $\rightarrow$ `[OK 200]`
      - `[PATCH] /notificaciones/leer-todas?id_usuario=1` $\rightarrow$ `[OK 200]`
-   - **Fase 4 y 5 (Motor de Evaluación Preliminar con Google Gemini IA Free Tier: `gemini-3.5-flash`):**
+   - **Fase 4 (Motor de Evaluación Preliminar con Google Gemini IA Free Tier: `gemini-3.5-flash`):**
      - `[GET] /ia/estado` $\rightarrow$ `[OK 200]`
      - `[GET] /ia/criterios` $\rightarrow$ `[OK 200]`
-     - `[POST] /ia/evaluar-borrador` $\rightarrow$ `[OK 200]`
      - `[GET] /ia/evaluacion-preliminar/{id}` $\rightarrow$ `[OK 200]`
+     - `[POST] /ia/evaluar-borrador` $\rightarrow$ `[OK 200]`
      - `[POST] /ia/evaluar-propuesta/{id}` $\rightarrow$ `[OK 200]`
+   - **Fase 5 (Comité Técnico — Rúbrica Ponderada y Dictamen V12):**
+     - `[GET] /propuestas/comite/rubrica` $\rightarrow$ `[OK 200]` *(8 secciones / 23 criterios / 100 pts)*
+     - `[POST] /auth/login` $\rightarrow$ `[OK 200]` *(Login de Gabriel Sánchez / rol Comité Técnico)*
+     - `[GET] /propuestas/comite/bandeja` $\rightarrow$ `[OK 200]` *(Expedientes en estado 3)*
+     - `[GET] /propuestas/comite/bandeja` $\rightarrow$ `[OK 403 Esperado]` *(Control de autorización)*
+     - `[POST] /propuestas` $\rightarrow$ `[OK 200]` *(Creación de propuesta de prueba en estado 3)*
+     - `[GET] /propuestas/comite/{id}` $\rightarrow$ `[OK 200]` *(Expediente sin dictamen previo)*
+     - `[POST] /propuestas/comite/{id}` $\rightarrow$ `[OK 409 Esperado]` *(Rechazo por criterio obligatorio < 8)*
+     - `[POST] /propuestas/comite/{id}` $\rightarrow$ `[OK 200]` *(Dictamen favorable 100/100 y avance a estado 4)*
+     - `[GET] /propuestas/comite/{id}` $\rightarrow$ `[OK 200]` *(Dictamen y puntajes persistidos)*
+     - `[POST] /propuestas/comite/{id}` $\rightarrow$ `[OK 409 Esperado]` *(Control de dictámenes duplicados)*
+     - `[GET] /propuestas/{id}` $\rightarrow$ `[OK 200]` *(Expediente general con puntajes del Comité)*
+   - **Fase 6 (Disponibilidad Frontend):**
+     - `[GET] /html/SGPI.html` $\rightarrow$ `[OK 200]` *(Servidor Nginx / SPA)*
 
 ---
 

@@ -28,10 +28,10 @@ Este catálogo define las **33 pantallas base** del prototipo interactivo del SG
 | **18** | Asistente: Revisión y Pre-envío | Formulación (Paso 11)| Investigador | Resumen pre-validado + `POST /ia/evaluar-borrador` al confirmar envío |
 | **19** | Confirmación: Propuesta Enviada | Formulación / Estado | Investigador | `POST /propuestas` (Código `SI-YYYY-NNN`) + Insignia de Puntaje Preliminar IA |
 | **20** | Seguimiento de Propuesta | Seguimiento | Investigador | Bitácora inmutable `proposal_state_history` |
-| **21** | Bandeja de Trabajo de Evaluación | Evaluación | Evaluadores | `GET /propuestas?estado=X` |
+| **21** | Bandeja de Trabajo de Evaluación | Evaluación | Evaluadores | `GET /propuestas?estado=X` y `GET /propuestas/comite/bandeja` (Comité Técnico con autorización) |
 | **22** | Expediente Completo de Propuesta | Evaluación | Evaluadores | `GET /propuestas/{id_propuesta}` + Tarjeta y Modal de Evaluación Preliminar IA |
 | **23** | Evaluación: Centro de Vinculación | Evaluación (Dictamen) | Vinculación | `GET /ia/evaluacion-preliminar/{id}` (Panel IA: PI y TRL) + `POST /propuestas/{id}/evaluaciones` |
-| **24** | Evaluación: Comité Técnico | Evaluación (Rúbrica) | Comité Técnico | Rúbrica 0/6/8/10 + Panel IA con botón **«Aplicar puntajes IA como base»** |
+| **24** | Evaluación: Comité Técnico | Evaluación (Rúbrica) | Comité Técnico | Rúbrica oficial V12 (8 secciones / 23 criterios / 100 pts) vía `GET /propuestas/comite/rubrica`, dictamen en `POST /propuestas/comite/{id}` + Panel IA con botón **«Aplicar puntajes IA como base»** |
 | **25** | Aval del Consejo de Escuela | Evaluación (Aval) | Coordinador Escuela | Panel IA de pertinencia y viabilidad horaria + `PATCH /propuestas/{id}/estado` |
 | **26** | Dictamen Dirección de Investigación | Evaluación (VIE) | Dirección / VIE | Panel IA con checklist automatizado de los 5 puntos normativos VIE |
 | **27** | Resolución del CIE | Evaluación (Resolución) | Miembro CIE | Panel IA con borrador motivado de acuerdo + Fallo colegiado |

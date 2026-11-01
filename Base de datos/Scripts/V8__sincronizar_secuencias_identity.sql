@@ -1,3 +1,22 @@
+-- ============================================================================
+-- ARCHIVO: Base de datos/Scripts/V8__sincronizar_secuencias_identity.sql
+-- ============================================================================
+-- 2.1. OBJETIVO DEL ARCHIVO:
+--      Sincronizar el valor actual de todas las secuencias IDENTITY de PostgreSQL
+--      con respecto al valor máximo existente en cada tabla.
+--
+-- 2.2. RELACIONES CON OTRAS PARTES DEL SISTEMA:
+--      2.2.1. De dónde obtiene datos:
+--             - Metadatos de 'information_schema.columns' y función 'pg_get_serial_sequence'.
+--      2.2.2. A dónde envía datos / Qué entidades modifica:
+--             - Ejecuta setval() sobre las secuencias de las columnas IDENTITY.
+--
+-- 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
+--      Itera dinámicamente sobre todas las tablas del esquema 'public' que poseen
+--      columnas identity y ajusta el próximo valor a MAX(columna) + 1, evitando colisiones
+--      de clave duplicada tras inserciones manuales de datos de prueba o migraciones.
+-- ============================================================================
+
 -- =====================================================================
 -- MIGRACIÓN V8: SINCRONIZACIÓN DE SECUENCIAS IDENTITY
 -- Sistema de Gestión de Propuestas de Investigación (SGPI - TEC)
@@ -14,6 +33,7 @@ DECLARE
   is_called boolean;
   seq text;
 BEGIN
+  -- [Línea clave]: ¿Por qué soy importante? Itera sobre todas las columnas identity de la base de datos. ¿Para qué? Prevenir errores de clave duplicada al insertar registros tras cargas manuales de datos. ¿Dónde me usan? Script de mantenimiento y migración ejecutado en Supabase.
   FOR r IN
     SELECT table_schema, table_name, column_name
     FROM information_schema.columns

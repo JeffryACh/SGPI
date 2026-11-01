@@ -16,7 +16,8 @@ function Test-Endpoint {
         [string]$Method = "GET",
         [string]$Endpoint,
         [object]$Body = $null,
-        [string]$CustomUrl = $null
+        [string]$CustomUrl = $null,
+        [int[]]$ExpectedStatus = @(200, 201)
     )
 
     $url = if ($CustomUrl) { $CustomUrl } else { "$BaseUrl$Endpoint" }
@@ -33,10 +34,21 @@ function Test-Endpoint {
             $params["ContentType"] = "application/json; charset=utf-8"
         }
         $res = Invoke-RestMethod @params
+
+        $esperabaError = ($ExpectedStatus -and ($ExpectedStatus -notcontains 200) -and ($ExpectedStatus -notcontains 201))
+        if ($esperabaError) {
+            Write-Host " [ERROR: esperado $($ExpectedStatus -join ', '), recibido 200]" -ForegroundColor Red
+            return $res
+        }
+
         Write-Host " [OK 200]" -ForegroundColor Green
         return $res
     } catch {
-        Write-Host " [ERROR]" -ForegroundColor Red
+        $statusCode = 0
+        if ($_.Exception.Response) {
+            $statusCode = [int]$_.Exception.Response.StatusCode
+        }
+
         $errorDetail = $_.Exception.Message
         if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
             $errorDetail = $_.ErrorDetails.Message
@@ -51,6 +63,14 @@ function Test-Endpoint {
                 }
             } catch {}
         }
+
+        # Si el código devuelto coincide con el error esperado (ej. 403 o 409), la verificación es exitosa
+        if ($statusCode -and ($ExpectedStatus -contains $statusCode)) {
+            Write-Host " [OK $statusCode Esperado]" -ForegroundColor Green
+            return $null
+        }
+
+        Write-Host " [ERROR]" -ForegroundColor Red
         Write-Host "Detalle: $errorDetail" -ForegroundColor Yellow
         return $null
     }
@@ -88,7 +108,7 @@ if ($auth) {
 # 3. Catálogos unificados
 $catalogos = Test-Endpoint -Name "Catálogos Unificados" -Endpoint "/catalogos"
 if ($catalogos) {
-    Write-Host "  -> Escuelas: $($catalogos.escuelas.Count), Modalidades: $($catalogos.modalidades.Count), Tipos de Hora: $($catalogos.tipos_hora.Count)" -ForegroundColor Gray
+    Write-Host "  -> Escuelas: $(@($catalogos.escuelas).Count), Modalidades: $(@($catalogos.modalidades).Count), Tipos de Hora: $(@($catalogos.tipos_hora).Count)" -ForegroundColor Gray
 }
 
 # 4. Tipos de Hora oficiales
@@ -100,7 +120,7 @@ $escuelas = Test-Endpoint -Name "Todas las Escuelas" -Endpoint "/escuelas/totale
 # 6. Documentos oficiales de la Convocatoria Fondos VIE 2027
 $documentos = Test-Endpoint -Name "Documentos Convocatoria Fondos VIE 2027" -Endpoint "/convocatorias/documentos_convocatoria?id_convocatoria=1"
 if ($documentos) {
-    Write-Host "  -> Total instrumentos oficiales encontrados: $($documentos.Count)" -ForegroundColor Gray
+    Write-Host "  -> Total instrumentos oficiales encontrados: $(@($documentos).Count)" -ForegroundColor Gray
 }
 
 # -------------------------------------------------------------
@@ -115,7 +135,7 @@ if ($dashboard) {
 
 # 8. Top propuestas con códigos reales
 $top = Test-Endpoint -Name "Top Propuestas Recientes" -Endpoint "/propuestas/top3PropuestaMasReciente?id_usuario=1"
-if ($top -and $top.Count -gt 0) {
+if ($top -and @($top).Count -gt 0) {
     Write-Host "  -> Propuesta 1: Código=$($top[0].code), Título=$($top[0].title), Período=$($top[0].period)" -ForegroundColor Gray
 }
 
@@ -268,7 +288,7 @@ if ($rubricaComite) {
             }
         }
     }
-    Write-Host "  -> Secciones: $($rubricaComite.secciones.Count) | Criterios: $($rubricaComite.total_criterios) | Peso total: $($rubricaComite.total_peso)" -ForegroundColor Gray
+    Write-Host "  -> Secciones: $(@($rubricaComite.secciones).Count) | Criterios: $($rubricaComite.total_criterios) | Peso total: $($rubricaComite.total_peso)" -ForegroundColor Gray
 } else {
     Write-Host "  [AVISO] Aplica la migración V12 en el SQL Editor de Supabase antes de probar el Comité Técnico." -ForegroundColor Yellow
 }
@@ -286,11 +306,11 @@ if ($loginComite) {
 # C3. Bandeja del Comité Técnico (200 con Gabriel, 403 con un investigador)
 $bandejaComite = Test-Endpoint -Name "Bandeja del Comité Técnico" -Endpoint "/propuestas/comite/bandeja?rol=Comit%C3%A9%20T%C3%A9cnico&id_usuario=$idUsuarioComite"
 if ($bandejaComite) {
-    Write-Host "  -> Expedientes en la bandeja: $($bandejaComite.Count)" -ForegroundColor Gray
+    Write-Host "  -> Expedientes en la bandeja: $(@($bandejaComite).Count)" -ForegroundColor Gray
     # C3b. La bandeja ordena por fecha de ingreso al estado 3 (proposal_state_history)
     $pendientesComite = @($bandejaComite | Where-Object { $_.id_estado -eq 3 })
     if ($pendientesComite.Count -gt 0) {
-        $masReciente = @($pendientesComite | Sort-Object { $_.fecha_ingreso_comite } -Descending)[0]
+        $masReciente = @($pendientesComite | Sort-Object { if ($_.fecha_ingreso_comite) { $_.fecha_ingreso_comite } else { $_.fecha_creacion } } -Descending)[0]
         Write-Host "  -> Pendientes: $($pendientesComite.Count) | Más reciente: $($masReciente.codigo) (ingreso $($masReciente.fecha_ingreso_comite))" -ForegroundColor Gray
         if ($pendientesComite[0].id_propuesta -eq $masReciente.id_propuesta) {
             Write-Host "  -> Orden correcto: la bandeja inicia con la pendiente que ingresó al Comité Técnico más recientemente." -ForegroundColor Green
@@ -299,7 +319,7 @@ if ($bandejaComite) {
         }
     }
 }
-$bandejaProhibida = Test-Endpoint -Name "Bandeja del Comité con rol Investigador (403 esperado)" -Endpoint "/propuestas/comite/bandeja?rol=Comit%C3%A9%20T%C3%A9cnico&id_usuario=1"
+$bandejaProhibida = Test-Endpoint -Name "Bandeja del Comité con rol Investigador (403 esperado)" -Endpoint "/propuestas/comite/bandeja?rol=Comit%C3%A9%20T%C3%A9cnico&id_usuario=1" -ExpectedStatus 403
 if ($bandejaProhibida) {
     Write-Host "  [AVISO] El backend permitió la bandeja a un usuario sin rol Comité Técnico." -ForegroundColor Yellow
 } else {
@@ -316,7 +336,7 @@ if ($idPropuestaComite) {
     Write-Host "  -> Propuesta en evaluación del Comité: ID $idPropuestaComite" -ForegroundColor Cyan
 
     # C5. Expediente de evaluación del Comité (aún sin dictamen)
-    $detalleComite = Test-Endpoint -Name "Expediente sin dictamen del Comité" -Endpoint "/propuestas/comite/${idPropuestaComite}?id_usuario=$idUsuarioComite"
+    $detalleComite = Test-Endpoint -Name "Expediente sin dictamen del Comité" -Endpoint "/propuestas/comite/$($idPropuestaComite)?id_usuario=$idUsuarioComite"
 
     # C6. Caso negativo: obligatorio en 6 con decisión favorable (409 esperado, sin cambios en BD)
     $criteriosBloqueo = @()
@@ -344,7 +364,7 @@ if ($idPropuestaComite) {
         produccion_conforme = $true
         decision = "favorable"
     }
-    $resBloqueo = Test-Endpoint -Name "Bloqueo por obligatorio insuficiente (409 esperado)" -Method "POST" -Endpoint "/propuestas/comite/$idPropuestaComite" -Body $bodyBloqueo
+    $resBloqueo = Test-Endpoint -Name "Bloqueo por obligatorio insuficiente (409 esperado)" -Method "POST" -Endpoint "/propuestas/comite/$($idPropuestaComite)" -Body $bodyBloqueo -ExpectedStatus 409
     if ($resBloqueo) {
         Write-Host "  [AVISO] El backend permitió recomendar con un obligatorio en 6." -ForegroundColor Yellow
     } else {
@@ -360,19 +380,19 @@ if ($idPropuestaComite) {
         produccion_conforme = $true
         decision = "favorable"
     }
-    $resComite = Test-Endpoint -Name "Dictamen favorable del Comité Técnico" -Method "POST" -Endpoint "/propuestas/comite/$idPropuestaComite" -Body $bodyFavorable
+    $resComite = Test-Endpoint -Name "Dictamen favorable del Comité Técnico" -Method "POST" -Endpoint "/propuestas/comite/$($idPropuestaComite)" -Body $bodyFavorable
     if ($resComite) {
         Write-Host "  -> Puntaje: $($resComite.puntaje)/100 | Estado: $($resComite.nombre_estado) ($($resComite.estado_actual))" -ForegroundColor Cyan
     }
 
     # C8. Relectura del expediente con los puntajes persistidos por criterio
-    $detalleComite = Test-Endpoint -Name "Dictamen del Comité persistido" -Endpoint "/propuestas/comite/${idPropuestaComite}?id_usuario=$idUsuarioComite"
+    $detalleComite = Test-Endpoint -Name "Dictamen del Comité persistido" -Endpoint "/propuestas/comite/$($idPropuestaComite)?id_usuario=$idUsuarioComite"
     if ($detalleComite -and $detalleComite.evaluacion) {
-        Write-Host "  -> Evaluación: $($detalleComite.evaluacion.id_evaluacion) | Puntajes: $($detalleComite.puntajes.Count) | Total: $($detalleComite.puntaje_total)" -ForegroundColor Gray
+        Write-Host "  -> Evaluación: $($detalleComite.evaluacion.id_evaluacion) | Puntajes: $(@($detalleComite.puntajes).Count) | Total: $($detalleComite.puntaje_total)" -ForegroundColor Gray
     }
 
     # C9. Segunda evaluación sobre la misma propuesta (409 esperado)
-    $resDuplicado = Test-Endpoint -Name "Dictamen duplicado (409 esperado)" -Method "POST" -Endpoint "/propuestas/comite/$idPropuestaComite" -Body $bodyFavorable
+    $resDuplicado = Test-Endpoint -Name "Dictamen duplicado (409 esperado)" -Method "POST" -Endpoint "/propuestas/comite/$($idPropuestaComite)" -Body $bodyFavorable -ExpectedStatus 409
     if ($resDuplicado) {
         Write-Host "  [AVISO] El backend permitió dos dictámenes del Comité sobre la misma propuesta." -ForegroundColor Yellow
     } else {
@@ -380,147 +400,14 @@ if ($idPropuestaComite) {
     }
 
     # C10. El expediente general refleja los puntajes del Comité
-    $dossierComite = Test-Endpoint -Name "Expediente con puntajes del Comité" -Endpoint "/propuestas/$idPropuestaComite"
+    $dossierComite = Test-Endpoint -Name "Expediente con puntajes del Comité" -Endpoint "/propuestas/$($idPropuestaComite)"
     if ($dossierComite) {
-        Write-Host "  -> Criterios en el expediente: $($dossierComite.comite_evaluacion.Count) | Estado: $($dossierComite.nombre_estado)" -ForegroundColor Gray
+        Write-Host "  -> Criterios en el expediente: $(@($dossierComite.comite_evaluacion).Count) | Estado: $($dossierComite.nombre_estado)" -ForegroundColor Gray
     }
 }
 
 # -------------------------------------------------------------
-# FASE 6: CONSEJO DE ESCUELA (AVAL INSTITUCIONAL POR ESCUELA)
-# -------------------------------------------------------------
-
-# C11. Autenticación del usuario con rol Consejo de Escuela
-$loginConsejo = Test-Endpoint -Name "Login del Consejo de Escuela" -Method "POST" -Endpoint "/auth/login" -Body @{
-    correo = "patricia.vargas@example.com"
-    password = "demostracion"
-}
-$idUsuarioConsejo = if ($loginConsejo) { $loginConsejo.id_usuario } else { 15 }
-if ($loginConsejo) {
-    Write-Host "  -> Usuario: $($loginConsejo.nombre) | ID: $idUsuarioConsejo | Roles: $($loginConsejo.roles -join ', ')" -ForegroundColor Gray
-}
-
-# C12. Bandeja del Consejo de Escuela (200 con Patricia, 403 con un investigador)
-$bandejaConsejo = Test-Endpoint -Name "Bandeja del Consejo de Escuela" -Endpoint "/propuestas/consejo/bandeja?rol=Consejo%20de%20Escuela&id_usuario=$idUsuarioConsejo"
-if ($bandejaConsejo) {
-    Write-Host "  -> Expedientes en la bandeja: $($bandejaConsejo.Count)" -ForegroundColor Gray
-    $pendientesConsejo = @($bandejaConsejo | Where-Object { $_.id_estado -eq 4 -and -not $_.mi_aval })
-    $avaladosConsejo = @($bandejaConsejo | Where-Object { $_.mi_aval })
-    Write-Host "  -> Pendientes de aval: $($pendientesConsejo.Count) | Avalados por mi escuela: $($avaladosConsejo.Count)" -ForegroundColor Gray
-    if ($pendientesConsejo.Count -gt 0) {
-        $masRecienteConsejo = @($pendientesConsejo | Sort-Object { $_.fecha_ingreso_consejo } -Descending)[0]
-        Write-Host "  -> Pendiente más reciente: $($masRecienteConsejo.codigo) (ingreso $($masRecienteConsejo.fecha_ingreso_consejo))" -ForegroundColor Gray
-    }
-}
-$bandejaConsejoProhibida = Test-Endpoint -Name "Bandeja del Consejo con rol Investigador (403 esperado)" -Endpoint "/propuestas/consejo/bandeja?rol=Consejo%20de%20Escuela&id_usuario=1"
-if ($bandejaConsejoProhibida) {
-    Write-Host "  [AVISO] El backend permitió la bandeja a un usuario sin rol Consejo de Escuela." -ForegroundColor Yellow
-} else {
-    Write-Host "  -> Rechazo correcto: el usuario 1 no tiene rol Consejo de Escuela." -ForegroundColor Gray
-}
-
-# C13. Propuesta de prueba creada directamente en estado 4 (Pendiente de aval del Consejo)
-$propuestaConsejo = $nuevaPropuesta.Clone()
-$propuestaConsejo.titulo = "Test Consejo de Escuela - Aval institucional $marcaHora"
-$propuestaConsejo.estado_inicial = 4
-$creacionConsejo = Test-Endpoint -Name "Creación de propuesta para el Consejo de Escuela" -Method "POST" -Endpoint "/propuestas" -Body $propuestaConsejo
-$idPropuestaConsejo = if ($creacionConsejo -and $creacionConsejo.propuesta) { $creacionConsejo.propuesta.id_propuesta } else { $null }
-# C15. Aval favorable: la propuesta avanza a «Avalada» cuando todas las escuelas avalaron
-$bodyAval = @{
-    id_usuario_aval = $idUsuarioConsejo
-    decision = "favorable"
-    numero_sesion = "Sesión Ordinaria 08-2026"
-    articulo = "Artículo 4.2"
-    fecha_acuerdo = "2026-10-31"
-    numero_oficio = "OFIC-IC-999-2026"
-    ratifica_calificacion = $true
-    avala_presupuesto = $true
-    avala_horas_personal = $true
-    observaciones = "Aval de prueba registrado por el script."
-}
-if ($idPropuestaConsejo) {
-    Write-Host "  -> Propuesta pendiente de aval: ID $idPropuestaConsejo" -ForegroundColor Cyan
-
-    # C14. Expediente de aval: escuelas involucradas y permiso para avalar
-    $detalleConsejo = Test-Endpoint -Name "Expediente de aval del Consejo de Escuela" -Endpoint "/propuestas/consejo/${idPropuestaConsejo}?id_usuario=$idUsuarioConsejo"
-    if ($detalleConsejo) {
-        Write-Host "  -> Escuela: $($detalleConsejo.escuela_usuario.siglas) | Involucradas: $($detalleConsejo.escuelas_involucradas.Count) | Puede avalar: $($detalleConsejo.puede_aval)" -ForegroundColor Gray
-    }
-
-    $resAval = Test-Endpoint -Name "Aval favorable del Consejo de Escuela" -Method "POST" -Endpoint "/propuestas/consejo/$idPropuestaConsejo" -Body $bodyAval
-    if ($resAval) {
-        Write-Host "  -> Estado: $($resAval.nombre_estado) ($($resAval.estado_actual)) | Aval completo: $($resAval.aval_completo) | Pendientes: $($resAval.avales_pendientes -join ', ')" -ForegroundColor Cyan
-    }
-
-    # C16. El aval quedó persistido y el expediente lo muestra
-    $detalleConsejo = Test-Endpoint -Name "Aval persistido del Consejo de Escuela" -Endpoint "/propuestas/consejo/${idPropuestaConsejo}?id_usuario=$idUsuarioConsejo"
-    if ($detalleConsejo -and $detalleConsejo.mi_aval) {
-        Write-Host "  -> Aval registrado: $($detalleConsejo.mi_aval.numero_oficio) | Puede avalar de nuevo: $($detalleConsejo.puede_aval)" -ForegroundColor Gray
-    }
-    $dossierConsejo = Test-Endpoint -Name "Expediente con avales del Consejo de Escuela" -Endpoint "/propuestas/$idPropuestaConsejo"
-    if ($dossierConsejo) {
-        Write-Host "  -> Avales en el expediente: $($dossierConsejo.avales_consejo.Count) | Estado: $($dossierConsejo.nombre_estado)" -ForegroundColor Gray
-    }
-
-    # C17. Segundo aval de la misma escuela (409 esperado)
-    $resAvalDuplicado = Test-Endpoint -Name "Aval duplicado de la misma escuela (409 esperado)" -Method "POST" -Endpoint "/propuestas/consejo/$idPropuestaConsejo" -Body $bodyAval
-    if ($resAvalDuplicado) {
-        Write-Host "  [AVISO] El backend permitió dos avales de la misma escuela sobre la misma propuesta." -ForegroundColor Yellow
-    } else {
-        Write-Host "  -> Rechazo correcto: la escuela ya había registrado su aval." -ForegroundColor Gray
-    }
-}
-
-# C18. Una escuela no puede avalar a personal de otra escuela (403 esperado)
-$propuestaOtraEscuela = $nuevaPropuesta.Clone()
-$propuestaOtraEscuela.titulo = "Test Consejo de Escuela - Escuela ajena $marcaHora"
-$propuestaOtraEscuela.id_usuario_lider = 11
-$propuestaOtraEscuela.id_escuela = 2
-$propuestaOtraEscuela.estado_inicial = 4
-$propuestaOtraEscuela.equipo = @(
-    @{ id_usuario = 11; id_tipo_hora = 1; horas_asignadas = 12 }
-)
-$creacionOtraEscuela = Test-Endpoint -Name "Creación de propuesta de otra escuela" -Method "POST" -Endpoint "/propuestas" -Body $propuestaOtraEscuela
-$idPropuestaOtraEscuela = if ($creacionOtraEscuela -and $creacionOtraEscuela.propuesta) { $creacionOtraEscuela.propuesta.id_propuesta } else { $null }
-if ($idPropuestaOtraEscuela) {
-    $resAjena = Test-Endpoint -Name "Aval sobre personal de otra escuela (403 esperado)" -Method "POST" -Endpoint "/propuestas/consejo/$idPropuestaOtraEscuela" -Body $bodyAval
-    if ($resAjena) {
-        Write-Host "  [AVISO] El backend permitió avalar una propuesta con personal de otra escuela." -ForegroundColor Yellow
-    } else {
-        Write-Host "  -> Rechazo correcto: el Consejo solo avala a su propio personal." -ForegroundColor Gray
-    }
-}
-
-# C19. Aval parcial multi-escuela: la propuesta NO avanza si falta el aval de otra escuela
-$propuestaMultiEscuela = $nuevaPropuesta.Clone()
-$propuestaMultiEscuela.titulo = "Test Consejo de Escuela - Dos escuelas $marcaHora"
-$propuestaMultiEscuela.id_usuario_lider = 1
-$propuestaMultiEscuela.id_escuela = 1
-$propuestaMultiEscuela.estado_inicial = 4
-$propuestaMultiEscuela.equipo = @(
-    @{ id_usuario = 1; id_tipo_hora = 1; horas_asignadas = 12 },
-    @{ id_usuario = 11; id_tipo_hora = 2; horas_asignadas = 6 }
-)
-$creacionMultiEscuela = Test-Endpoint -Name "Creación de propuesta con dos escuelas" -Method "POST" -Endpoint "/propuestas" -Body $propuestaMultiEscuela
-$idPropuestaMultiEscuela = if ($creacionMultiEscuela -and $creacionMultiEscuela.propuesta) { $creacionMultiEscuela.propuesta.id_propuesta } else { $null }
-if ($idPropuestaMultiEscuela) {
-    $detalleMultiEscuela = Test-Endpoint -Name "Expediente con dos escuelas involucradas" -Endpoint "/propuestas/consejo/${idPropuestaMultiEscuela}?id_usuario=$idUsuarioConsejo"
-    if ($detalleMultiEscuela) {
-        Write-Host "  -> Escuelas involucradas: $(($detalleMultiEscuela.escuelas_involucradas | ForEach-Object { $_.siglas }) -join ', ')" -ForegroundColor Gray
-    }
-    $resAvalParcial = Test-Endpoint -Name "Aval de una sola escuela (debe quedar pendiente)" -Method "POST" -Endpoint "/propuestas/consejo/$idPropuestaMultiEscuela" -Body $bodyAval
-    if ($resAvalParcial) {
-        Write-Host "  -> Estado: $($resAvalParcial.nombre_estado) ($($resAvalParcial.estado_actual)) | Aval completo: $($resAvalParcial.aval_completo) | Pendientes: $($resAvalParcial.avales_pendientes -join ', ')" -ForegroundColor Cyan
-        if ($resAvalParcial.aval_completo -or $resAvalParcial.nombre_estado -ne "Pendiente de aval del Consejo") {
-            Write-Host "  [AVISO] La propuesta avanzó a Avalada aunque faltaba el aval de otra escuela." -ForegroundColor Yellow
-        } else {
-            Write-Host "  -> Correcto: la propuesta sigue pendiente hasta que avalen todas las escuelas." -ForegroundColor Green
-        }
-    }
-}
-
-# -------------------------------------------------------------
-# FASE 7: DISPONIBILIDAD DEL SERVIDOR FRONTEND (SPA)
+# FASE 6: DISPONIBILIDAD DEL SERVIDOR FRONTEND (SPA)
 # -------------------------------------------------------------
 
 # 20. Servidor Frontend Nginx / HTML

@@ -1,3 +1,28 @@
+-- ============================================================================
+-- ARCHIVO: Base de datos/Scripts/V1__init.sql
+-- ============================================================================
+-- 2.1. OBJETIVO DEL ARCHIVO:
+--      Definir el esquema relacional inicial y completo para el Sistema de
+--      Gestión de Propuestas de Investigación (SGPI) en Supabase (PostgreSQL),
+--      estableciendo las tablas maestras, transaccionales, catálogos, historial
+--      de estados, evaluaciones colegiadas, rúbricas y auditoría por IA.
+--
+-- 2.2. RELACIONES CON OTRAS PARTES DEL SISTEMA:
+--      2.2.1. De dónde obtiene datos:
+--             - Modelo conceptual de datos de la Vicerrectoría de Investigación
+--               y Extensión (VIE - ITCR) para la Convocatoria Fondos VIE 2027.
+--      2.2.2. A dónde envía datos / Qué entidades crea:
+--             - Crea las tablas fundamentales consumidas por el Backend FastAPI
+--               (app.routers: auth, propuestas, catalogos, ia, vinculacion, comite,
+--               notificaciones, escuelas, modalidades, tipos_hora, convocatorias)
+--               y expuestas al Frontend Single Page Application (SPA).
+--
+-- 2.3. ¿QUÉ HACE EL ARCHIVO A GROSO MODO?:
+--      Crea la estructura de 30 tablas con sus respectivas claves primarias IDENTITY,
+--      restricciones de unicidad, tipos de datos, valores por defecto, claves foráneas
+--      y reglas de integridad referencial para soportar el ciclo de vida de los proyectos.
+-- ============================================================================
+
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
@@ -59,6 +84,7 @@ CREATE TABLE public.resoluciones_cie (
   nombre_resolucion character varying NOT NULL,
   CONSTRAINT resoluciones_cie_pkey PRIMARY KEY (id_resolucion)
 );
+-- [Línea clave]: ¿Por qué soy importante? Tabla maestra de usuarios institucionales. ¿Para qué? Centralizar la autenticación, datos personales y estado activo del personal. ¿Dónde me usan? En backend/app/routers/auth.py y relaciones foráneas de propuestas y evaluaciones.
 CREATE TABLE public.usuarios (
   id_usuario integer GENERATED ALWAYS AS IDENTITY NOT NULL,
   id_escuela integer,
@@ -78,6 +104,7 @@ CREATE TABLE public.user_roles (
   CONSTRAINT fk_userroles_usuario FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id_usuario),
   CONSTRAINT fk_userroles_rol FOREIGN KEY (id_rol) REFERENCES public.roles(id_rol)
 );
+-- [Línea clave]: ¿Por qué soy importante? Entidad principal del sistema que almacena las propuestas de investigación. ¿Para qué? Registrar el expediente, modalidad, escuela, fechas, TRL y estado actual del proyecto. ¿Dónde me usan? En backend/app/routers/propuestas.py y todos los módulos evaluadores.
 CREATE TABLE public.propuestas (
   id_propuesta integer GENERATED ALWAYS AS IDENTITY NOT NULL,
   id_usuario_lider integer NOT NULL,
@@ -163,6 +190,7 @@ CREATE TABLE public.risks (
   CONSTRAINT risks_id_plan_accion_fkey FOREIGN KEY (id_plan_accion) REFERENCES public.action_plans(id_plan_accion),
   CONSTRAINT risks_id_usuario_responsable_fkey FOREIGN KEY (id_usuario_responsable) REFERENCES public.usuarios(id_usuario)
 );
+-- [Línea clave]: ¿Por qué soy importante? Historial de auditoría de transiciones de estado. ¿Para qué? Registrar de forma inmutable quién cambió el estado, cuándo y por qué razón. ¿Dónde me usan? En trazabilidad institucional y en ordenamiento de bandejas en comite.py y propuestas.py.
 CREATE TABLE public.proposal_state_history (
   id_historial integer GENERATED ALWAYS AS IDENTITY NOT NULL,
   id_propuesta integer NOT NULL,
@@ -384,6 +412,7 @@ CREATE TABLE public.convocatoria_documentos (
   CONSTRAINT convocatoria_documentos_pkey PRIMARY KEY (id_documento_conv),
   CONSTRAINT convocatoria_documentos_id_convocatoria_fkey FOREIGN KEY (id_convocatoria) REFERENCES public.convocatorias(id_convocatoria)
 );
+-- [Línea clave]: ¿Por qué soy importante? Tabla de evaluación preliminar por inteligencia artificial con Gemini. ¿Para qué? Almacenar la auditoría normativa automática no vinculante por cada nivel evaluador. ¿Dónde me usan? En backend/app/routers/ia.py y vistas de referencia en frontend.
 CREATE TABLE public.ai_preliminary_evaluations (
   id_evaluacion_ia integer GENERATED ALWAYS AS IDENTITY NOT NULL,
   id_propuesta integer NOT NULL UNIQUE,

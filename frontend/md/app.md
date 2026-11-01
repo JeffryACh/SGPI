@@ -51,7 +51,11 @@ const API_URL = (typeof window !== "undefined" && window.SGPI_API_URL)
 | **24 (Rúbrica IA)**    | `/ia/evaluar-propuesta/{id_propuesta}` | `POST` | Regenera bajo demanda la evaluación de Gemini para la propuesta. |
 | **24 (Catálogo IA)**   | `/ia/criterios` | `GET` | Obtiene los 19 criterios y pesos oficiales de la rúbrica Fondos VIE 2027. |
 | **Diagnóstico**        | `/ia/estado` | `GET` | Diagnóstico de conexión con Google AI Studio, cuotas y modelo activo. |
-| **24–27 (Dictamen)**   | `/propuestas/{id}/evaluaciones` | `POST` | Registro de notas del Comité Técnico o resoluciones del CIE. |
+| **21 (Bandeja Comité)** | `/propuestas/comite/bandeja?rol=...&id_usuario=X` | `GET` | Bandeja de expedientes en estado 3 asignados al Comité Técnico con autorización por rol. |
+| **24 (Rúbrica Oficial)**| `/propuestas/comite/rubrica` | `GET` | Catálogo de las 8 secciones y 23 criterios ponderados de la rúbrica oficial (V12). |
+| **24 (Expediente Comité)**| `/propuestas/comite/{id}?id_usuario=X` | `GET` | Consulta del expediente técnico y último dictamen emitido por el Comité. |
+| **24 (Dictamen Comité)**| `/propuestas/comite/{id}` | `POST` | Emisión del dictamen formal del Comité Técnico (favorable, observaciones, rechazo) con cálculo ponderado y control de obligatorios. |
+| **24–27 (Dictamen)**   | `/propuestas/{id}/evaluaciones` | `POST` | Registro genérico de evaluaciones para otras instancias o resoluciones del CIE. |
 | **29 (Histórico)**     | `/propuestas` | `GET` | Buscador facetado con filtros combinados por escuela, modalidad y estado. |
 
 ---
