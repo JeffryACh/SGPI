@@ -1,6 +1,6 @@
 # Checklist de backend — SGPI
 
-**Fecha de inventario:** 2026-10-29 (actualizado 2026-11-01 con Dirección y administración institucional)  
+**Fecha de inventario:** 2026-10-29 (actualizado 2026-11-02 con Dirección, administración institucional y CIE)  
 **Alcance:** backend FastAPI, base de datos PostgreSQL/Supabase y conexión con las 33 pantallas del frontend.  
 **Objetivo:** marcar el avance real del backend por rol, pantalla, flujo y brecha transversal.
 
@@ -27,7 +27,7 @@
 - [x] Flujo específico del Consejo de Escuela: bandeja por escuela, aval institucional con persistencia y transición a «Avalada».
 - [x] Evaluación preliminar: auditoría normativa local al crear/cambiar estado y Gemini solo en re-evaluación manual.
 - [ ] **Parcial:** la autorización por rol existe en los routers de evaluación y en el router administrativo (`/admin`); el resto de endpoints sigue abierto.
-- [ ] **Parcial:** flujos específicos de Vinculación, Comité Técnico, Consejo y Dirección implementados; falta CIE.
+- [x] Flujos específicos de Vinculación, Comité Técnico, Consejo, Dirección y CIE implementados con transición de estado persistida.
 - [x] Administración de convocatorias, cronogramas, instrumentos oficiales, catálogos y rúbricas versionadas (pantallas 31 y 32).
 - [ ] Guardado de borrador en servidor.
 - [x] Carga real de documentos de propuesta.
@@ -60,6 +60,8 @@
 - [x] `client_uuid` evita duplicados por reenvío.
 - [x] Los estados de las transiciones por rol se resuelven por nombre (`estados.nombre_estado`), porque el orden de los identificadores en la base desplegada difiere del seed V3.
 - [x] La propuesta solo pasa a `5 · Avalada` cuando **todas** las escuelas relacionadas con ella (escuela líder + escuelas del equipo investigador) registraron su aval en `council_endorsements`.
+- [x] El CIE solo resuelve propuestas en `7 · Dictaminada por Dirección` y transiciona a `8 · Aprobada por CIE`, `10 · Con observaciones` o `11 · Rechazada` según el tipo de acuerdo del catálogo `resoluciones_cie`.
+- [x] Los estados del CIE también se resuelven por nombre (`estados.nombre_estado`), nunca por identificador fijo.
 - [ ] **Parcial:** la mayoría de reglas VIE del presupuesto se validan solo en el frontend.
 - [ ] Validar en servidor el tope anual de ₡5.000.000.
 - [ ] Validar en servidor duración máxima según modalidad.
@@ -81,6 +83,7 @@
 - [x] **Resuelto:** el frontend ya llama `PATCH /notificaciones/leer-todas` (antes usaba `POST /notificaciones/marcar-todas-leidas`).
 - [x] Alinear rutas o agregar aliases compatibles.
 - [x] Verificar que el contador de no leídas se actualice tras marcar.
+- [x] El CIE notifica al líder cuando registra la resolución y cuando añade condiciones de aceptación posteriores.
 - [ ] Definir destinatarios por rol/instancia, no solo al líder.
 
 ### 2.4 Documentos y archivos
@@ -110,6 +113,7 @@
 - [x] Pruebas manuales del Consejo de Escuela en `test_endpoints.ps1` (FASE 6): bandeja por escuela, 403 sin rol, expediente de aval, aval favorable con transición a `Avalada`, aval duplicado, prohibición de avalar personal de otra escuela y **aval parcial con dos escuelas involucradas** (la propuesta sigue en `4 · Pendiente de aval del Consejo` hasta que avalen todas).
 - [x] Pruebas manuales de Dirección de Investigación en `test_endpoints.ps1` (FASE 7): bandeja, dashboard, detalle, 403 sin rol, dictamen con transición `6` a `7` y duplicado rechazado con 409.
 - [x] Pruebas manuales de administración institucional en `test_endpoints.ps1` (FASE 8): 403 para rol no administrativo, listado de convocatorias con los tres roles facultados, CRUD de convocatoria y etapas, CRUD de catálogos, bloqueo 409 de registros en uso, orden de roles y CRUD de rúbrica.
+- [x] Pruebas manuales del Comité de Ética en Investigación en `test_endpoints.ps1` (FASE 10): login de los dos roles (`CIE` y `Evaluador Comité de Ética (CIE)`), 403 sin rol, bandeja y dashboard del CIE, expediente con el catálogo de acuerdos, resolución con transición `7` a `8`, duplicado y expediente cerrado rechazados con 409, condiciones de aceptación posteriores, condiciones sin acuerdo previo rechazadas con 409 y expediente con `resolucion_cie` persistida.
 - [ ] Pruebas de notificaciones y lectura.
 - [x] Pruebas de autorización: un rol no puede ejecutar acciones de otro (403 en `/admin`, Comité Técnico, Consejo de Escuela y Dirección).
 - [ ] Pruebas de idempotencia y concurrencia.
@@ -153,6 +157,11 @@
 | OK | GET | `/propuestas/direccion/dashboard` | Contadores reales de Dirección (`pendientes`, `determinadas`, `totales_revisadas`) |
 | OK | GET | `/propuestas/direccion/{id_propuesta}` | Detalle del expediente para Dirección con verificaciones VIE |
 | OK | POST | `/propuestas/direccion/{id_propuesta}` | Registrar dictamen de Dirección y transición `6` a `7` |
+| OK | GET | `/propuestas/cie/bandeja` | Bandeja del CIE (dictaminadas por Dirección y ya resueltas) |
+| OK | GET | `/propuestas/cie/dashboard` | Contadores reales del CIE (`pendientes`, `resueltas`, `totales_revisadas`) |
+| OK | GET | `/propuestas/cie/{id_propuesta}` | Expediente para resolver con dictamen de Dirección y catálogo de acuerdos |
+| OK | POST | `/propuestas/cie/{id_propuesta}` | Registrar resolución colegiada y transición `7` a `8`, `10` o `11` |
+| OK | POST | `/propuestas/cie/{id_propuesta}/condiciones` | Registrar condiciones de aceptación posteriores al acuerdo |
 | OK | GET | `/admin/catalogos` | Catálogos maestros editables (whitelist de tablas) |
 | OK | GET | `/admin/catalogos/{clave}` | Registros de un catálogo maestro editable |
 | OK | POST | `/admin/catalogos/{clave}` | Alta de registro en catálogo maestro |
@@ -314,19 +323,25 @@ Pantallas principales: `02`, `21`, `22`, `26`, `28`, `29`, `30`, `31`, `32`.
 
 ### 4.6 CIE
 
-Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
+Pantallas principales: `02`, `21`, `22`, `27`, `28`, `29`, `30`.
 
-- [ ] **21 · Bandeja:** filtrar propuestas con dictamen de Dirección.
-- [ ] **22 · Expediente:** cargar dossier real.
-- [ ] **27 · Resolución:** persistir resolución aprobada/rechazada/observada.
-- [ ] **27 · Resolución:** guardar sesión, artículo y fecha.
-- [ ] **27 · Resolución:** guardar fundamentación y condiciones.
-- [ ] **27 · Resolución:** adjuntar acuerdo firmado.
-- [ ] **27 · Resolución:** transición controlada de `7` a `8`, `10` o `11`.
-- [ ] **27 · Resolución:** notificar al investigador.
-- [ ] **27 · Resolución:** registrar condiciones de aceptación posteriores.
-- [ ] **28 · Historial:** mostrar resolución y condiciones.
-- [ ] **29–30 · Consulta histórica:** filtros y detalle reales.
+- [x] **02 · Inicio:** dashboard con contadores reales `pendientes`, `resueltas` y `totales_revisadas` (`GET /propuestas/cie/dashboard`).
+- [x] **02 · Inicio:** propuesta destacada = más reciente dictaminada por Dirección (por `proposal_state_history`).
+- [x] **21 · Bandeja:** filtrar propuestas con dictamen de Dirección (`GET /propuestas/cie/bandeja`).
+- [x] **21 · Bandeja:** ordenar por fecha de ingreso al estado «Dictaminada por Dirección» descendente.
+- [x] **22 · Expediente:** cargar dossier real con `resolucion_cie` incluido.
+- [x] **27 · Resolución:** persistir resolución aprobada/rechazada/observada (`cie_resolution_evaluations` + `evaluations`).
+- [x] **27 · Resolución:** guardar sesión, artículo y fecha.
+- [x] **27 · Resolución:** guardar fundamentación y condiciones.
+- [x] **27 · Resolución:** adjuntar acuerdo firmado (`id_documento` en `proposal_documents`).
+- [x] **27 · Resolución:** transición controlada de `7` a `8`, `10` o `11`.
+- [x] **27 · Resolución:** notificar al investigador.
+- [x] **27 · Resolución:** registrar condiciones de aceptación posteriores.
+- [x] **27 · Resolución:** el tipo de acuerdo se toma del catálogo `resoluciones_cie` (cuatro tipos vigentes).
+- [x] **27 · Resolución:** aceptar los dos roles del comité (`CIE` y `Evaluador Comité de Ética (CIE)`), comparados por nombre.
+- [x] **27 · Resolución:** resolver los estados por nombre desde `estados` (nada de identificadores fijos).
+- [x] **28 · Historial:** mostrar resolución y condiciones.
+- [x] **29–30 · Consulta histórica:** filtros y detalle reales.
 
 ### 4.7 Administración y cuenta
 
@@ -358,7 +373,8 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 | `technical_committee_scores` | Uso completo | Mantener la integridad al versionar rúbricas |
 | `vie_dictamen_verifications` | Uso completo | Verificación de criterios de Dirección (rol Dirección) |
 | `technical_committee_evaluations` | Uso completo | `decision`, `justificacion`, `tiene_bloqueo_obligatorio` y `puntaje numeric(5,1)` (V12) |
-| `cie_resolution_evaluations` | Uso parcial | Solo `id_resolucion`; faltan datos del acuerdo |
+| `cie_resolution_evaluations` | Uso completo | Datos del acuerdo Ampliados en V15: `numero_sesion`, `articulo`, `fecha_resolucion`, `fundamentacion`, `condiciones`, `id_documento`, `id_usuario_registro`, `fecha_registro` |
+| `resoluciones_cie` | Uso completo | Catálogo de los cuatro tipos de acuerdo; la siembra idempotente está en V15 |
 | `ai_preliminary_evaluations` | Uso completo | Mantener y versionar si cambia el modelo |
 | `proposal_documents` | Uso completo | Archivo real en Storage + metadatos; sin filas falsas de borrador |
 | `notificaciones` | Uso completo | Rutas `PATCH` alineadas (una y todas) |
@@ -410,8 +426,10 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 - [ ] `GET /propuestas/{id}/consejo`.
 - [x] `POST /propuestas/direccion/{id_propuesta}` (registrar dictamen de Dirección).
 - [x] `GET /propuestas/direccion/{id_propuesta}` (detalle con verificaciones VIE).
-- [ ] `POST /propuestas/{id}/cie`.
-- [ ] `GET /propuestas/{id}/cie`.
+- [x] `POST /propuestas/cie/{id_propuesta}` (registrar resolución colegiada del CIE).
+- [x] `GET /propuestas/cie/{id_propuesta}` (detalle con dictamen de Dirección y catálogo de acuerdos).
+- [x] `POST /propuestas/cie/{id_propuesta}/condiciones` (condiciones de aceptación posteriores).
+- [x] `GET /propuestas/cie/bandeja` y `GET /propuestas/cie/dashboard`.
 
 ### 6.5 Administración
 
@@ -433,21 +451,23 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 - [ ] Comité no puede emitir resolución CIE.
 - [x] Consejo solo avala propuestas de su escuela (403 validado en `test_endpoints.ps1`, FASE 6).
 - [ ] Dirección no puede resolver CIE.
-- [ ] CIE no puede modificar un dictamen de Dirección.
+- [x] CIE no puede modificar un dictamen de Dirección (el router del CIE solo registra resoluciones y condiciones; el dictamen de Dirección es de solo lectura).
+- [x] CIE no puede resolver una propuesta que no esté en `7 · Dictaminada por Dirección` (409 validado en `test_endpoints.ps1`, FASE 10).
 - [ ] Crear propuesta completa y consultarla por ID.
 - [ ] Reenviar el mismo `client_uuid` no duplica.
 - [ ] Consultar expediente con todas sus tablas hijas.
 - [ ] Cada transición de estado deja historial y notificación.
 - [ ] Un estado no permitido devuelve error.
-- [x] Cada dictamen queda asociado a usuario, rol, fecha y documento (Comité Técnico, Consejo de Escuela y Dirección).
+- [x] Cada dictamen queda asociado a usuario, rol, fecha y documento (Comité Técnico, Consejo de Escuela, Dirección y CIE).
 - [x] Las notificaciones se listan y se marcan como leídas.
 - [x] Los documentos se cargan, listan, descargan y eliminan (instrumentos oficiales de convocatoria, verificados de punta a punta contra Supabase Storage).
+- [x] Cada transición de estado deja historial y notificación (verificado para el CIE en `test_endpoints.ps1`, FASE 10).
 - [ ] La IA responde con Gemini o con el motor de respaldo.
 - [ ] El frontend sigue funcionando si la IA falla.
 
 ## 8. Orden sugerido de cierre
 
-> Estado a 2026-11-01: los pasos 2 a 7 y el 9 están implementados y verificados; falta el paso 1 (autenticación con token), el 8 (resolución del CIE) y el 10 (versionado de documentos).
+> Estado a 2026-11-02: los pasos 2 a 9 están implementados y verificados; falta el paso 1 (autenticación con token), el 10 (versionado de documentos) y el 11 (pruebas automatizadas y limpieza de datos demo).
 
 1. Autenticación con token y autorización por rol.
 2. Corrección de notificaciones. **Hecho.**
@@ -456,7 +476,7 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 5. Rúbrica y evaluación del Comité. **Hecho.**
 6. Avales del Consejo. **Hecho.**
 7. Verificación y dictamen de Dirección. **Hecho.**
-8. Resolución del CIE.
+8. Resolución del CIE. **Hecho.**
 9. Administración de convocatorias, catálogos y rúbricas. **Hecho.**
 10. Carga real de documentos y versionado.
 11. Pruebas automatizadas y limpieza de datos demo.
@@ -468,4 +488,6 @@ Pantallas principales: `21`, `22`, `27`, `28`, `29`, `30`.
 - La creación de propuestas ya está integrada y probada; las brechas principales están en consulta, evaluación por rol, administración y seguridad.
 - Antes de marcar un elemento como terminado, verificar también que el frontend consuma el endpoint correcto.
 - Migraciones aplicadas a la base desplegada el 2026-11-01: `V13__administracion_rubricas_roles.sql` (`roles.orden`, `version` en rúbrica, tabla `rubric_versions`) y `V14__usuario_administrador_sistema.sql` (cuenta de demostración con rol «Administrador del Sistema», `administrador@example.com` / `demostracion`).
+- Migración aplicada a la base desplegada el 2026-11-02: `V15__cie_resoluciones.sql` (columnas del acuerdo en `cie_resolution_evaluations`, índice por propuesta y siembra idempotente de `resoluciones_cie`).
+- El comité tiene dos roles institucionales: `CIE` (comité colegiado, usuario 17 `ricardo.mora@example.com`) y `Evaluador Comité de Ética (CIE)` (evaluadora 6 `patricia.solano@universidad.edu`). Ambos resuelven expedientes y el frontend los registra con la misma clave `cie`.
 - En los endpoints multipart el actor viaja en el cuerpo (`id_usuario` como `Form`), no en la URL: `POST /admin/convocatorias/{id}/documentos` y `POST /propuestas/{id}/documentos`. En el resto del router `/admin` `id_usuario` sigue siendo un parámetro de consulta.

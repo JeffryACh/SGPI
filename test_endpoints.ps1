@@ -1,4 +1,4 @@
-﻿# Script de verificación integral de endpoints y servicios de SGPI Backend (FastAPI) y Frontend
+# Script de verificación integral de endpoints y servicios de SGPI Backend (FastAPI) y Frontend
 # Ejecutar en PowerShell: .\test_endpoints.ps1
 
 $BaseUrl = "http://localhost:3001"
@@ -623,6 +623,119 @@ Test-Endpoint -Name "Rúbrica oficial del Comité Técnico" -Endpoint "/propuest
 $frontendCheck = Test-Endpoint -Name "Disponibilidad Frontend SPA" -Endpoint "/html/SGPI.html" -CustomUrl "$FrontendUrl/html/SGPI.html"
 if ($frontendCheck) {
     Write-Host "  -> Frontend servido correctamente en $FrontendUrl (Nginx/HTML5)" -ForegroundColor Green
+}
+
+# -------------------------------------------------------------
+# FASE 10: COMITÉ DE ÉTICA EN INVESTIGACIÓN (CIE)
+# -------------------------------------------------------------
+
+Write-Host "`n--- FASE 10: COMITE DE ETICA EN INVESTIGACION (CIE) ---" -ForegroundColor Cyan
+
+# C1. Autenticación de los dos roles institucionales del CIE
+$loginCie = Test-Endpoint -Name "Autenticación Comité de Ética (CIE)" -Method "POST" -Endpoint "/auth/login" -Body @{ correo = "ricardo.mora@example.com"; password = "demostracion" }
+$idUsuarioCie = if ($loginCie) { $loginCie.id_usuario } else { 17 }
+if ($loginCie) {
+    Write-Host "  -> Usuario: $($loginCie.nombre) | ID: $idUsuarioCie | Roles: $($loginCie.roles -join ', ')" -ForegroundColor Gray
+}
+
+$loginCieEvaluador = Test-Endpoint -Name "Autenticación Evaluador Comité de Ética" -Method "POST" -Endpoint "/auth/login" -Body @{ correo = "patricia.solano@universidad.edu"; password = "demostracion" }
+$idUsuarioCieEvaluador = if ($loginCieEvaluador) { $loginCieEvaluador.id_usuario } else { 6 }
+if ($loginCieEvaluador) {
+    Write-Host "  -> Evaluadora: $($loginCieEvaluador.nombre) | ID: $idUsuarioCieEvaluador | Roles: $($loginCieEvaluador.roles -join ', ')" -ForegroundColor Gray
+}
+
+# C2. Un investigador no tiene rol de CIE
+Test-Endpoint -Name "Bandeja del CIE sin rol (403 esperado)" -Endpoint "/propuestas/cie/bandeja?rol=CIE&id_usuario=1" -ExpectedStatus 403 | Out-Null
+
+# C3. Bandeja del CIE
+$bandejaCie = Test-Endpoint -Name "Bandeja del Comité de Ética" -Endpoint "/propuestas/cie/bandeja?rol=CIE&id_usuario=$idUsuarioCie"
+if ($bandejaCie) {
+    Write-Host "  -> Expedientes en la bandeja: $(@($bandejaCie).Count)" -ForegroundColor Gray
+}
+
+# C3b. El evaluador individual del CIE ve la misma bandeja
+$bandejaCieEvaluador = Test-Endpoint -Name "Bandeja del CIE (rol Evaluador Comité de Ética)" -Endpoint "/propuestas/cie/bandeja?rol=CIE&id_usuario=$idUsuarioCieEvaluador"
+if ($bandejaCieEvaluador) {
+    Write-Host "  -> Expedientes visibles para el evaluador: $(@($bandejaCieEvaluador).Count)" -ForegroundColor Gray
+}
+
+# C4. Dashboard del CIE con los contadores reales
+$dashboardCie = Test-Endpoint -Name "Dashboard del Comité de Ética" -Endpoint "/propuestas/cie/dashboard?rol=CIE&id_usuario=$idUsuarioCie"
+if ($dashboardCie) {
+    Write-Host "  -> Pendientes: $($dashboardCie.pendientes) | Resueltas: $($dashboardCie.resueltas) | Totales revisadas: $($dashboardCie.totales_revisadas)" -ForegroundColor Gray
+    if ($dashboardCie.propuesta_destacada) {
+        Write-Host "  -> Destacada (más reciente dictaminada): $($dashboardCie.propuesta_destacada.codigo)" -ForegroundColor Gray
+    }
+}
+
+# C5. Propuesta dictaminada por Dirección para resolver ante el CIE.
+# [Línea clave]: Se crea siempre una propuesta nueva en estado 7 para que cada corrida del
+# smoke test deje un expediente pendiente en la bandeja del comité (validación visual).
+$idPropuestaCie = $null
+$propuestaCie = $nuevaPropuesta.Clone()
+$propuestaCie.titulo = "Test Comité de Ética en Investigación - Resolución $marcaHora"
+$propuestaCie.resumen = "Propuesta automatizada para validar la resolución colegiado del Comité de Ética en Investigación."
+$propuestaCie.estado_inicial = 7
+$creacionCie = Test-Endpoint -Name "Creación de propuesta dictaminada para el CIE (estado 7)" -Method "POST" -Endpoint "/propuestas" -Body $propuestaCie
+if ($creacionCie -and $creacionCie.propuesta) {
+    $idPropuestaCie = $creacionCie.propuesta.id_propuesta
+    Write-Host "  -> Propuesta dictaminada por Dirección: ID $idPropuestaCie" -ForegroundColor Cyan
+}
+
+if ($idPropuestaCie) {
+    # C6. Expediente para resolver
+    $detalleCie = Test-Endpoint -Name "Expediente para resolución del CIE" -Endpoint "/propuestas/cie/$($idPropuestaCie)?id_usuario=$idUsuarioCie"
+    if ($detalleCie) {
+        Write-Host "  -> Puede resolver: $($detalleCie.puede_resolver) | Tipos de acuerdo: $(@($detalleCie.tipos_resolucion).Count) | Documentos: $(@($detalleCie.documentos).Count)" -ForegroundColor Gray
+    }
+
+    # C7. Sin acuerdo previo no se pueden registrar condiciones (409 esperado)
+    Test-Endpoint -Name "Condiciones del CIE sin resolución previa (409 esperado)" -Method "POST" -Endpoint "/propuestas/cie/$($idPropuestaCie)/condiciones" -Body @{ id_usuario_eval = $idUsuarioCie; condiciones = "Prueba sin acuerdo previo" } -ExpectedStatus 409 | Out-Null
+
+    # C8. Resolucion colegiada favorable
+    $bodyCie = @{
+        id_usuario_eval = $idUsuarioCie
+        id_resolucion = 1
+        numero_sesion = "23-2026"
+        articulo = "Articulo 5"
+        fecha_resolucion = "2026-11-02"
+        fundamentacion = "El protocolo cumple con los criterios eticos institucionales y no presenta riesgos bioeticos relevantes."
+        condiciones = "Mantener la revision etica de datos personales cada seis meses."
+        observaciones = "Acuerdo de prueba registrado por test_endpoints.ps1"
+    }
+    $resCie = Test-Endpoint -Name "Resolución favorable del CIE" -Method "POST" -Endpoint "/propuestas/cie/$($idPropuestaCie)" -Body $bodyCie
+    if ($resCie) {
+        Write-Host "  -> Estado: $($resCie.nombre_estado) ($($resCie.estado_actual)) | Acuerdo: $($resCie.resolucion)" -ForegroundColor Cyan
+    }
+
+    # C8. Duplicado (409 esperado)
+    Test-Endpoint -Name "Resolución duplicada del CIE (409 esperado)" -Method "POST" -Endpoint "/propuestas/cie/$($idPropuestaCie)" -Body $bodyCie -ExpectedStatus 409 | Out-Null
+
+    # C9. El expediente ya no admite una nueva resolucion (409 esperado)
+    Test-Endpoint -Name "Segunda resolución sobre expediente cerrado (409 esperado)" -Method "POST" -Endpoint "/propuestas/cie/$($idPropuestaCie)" -Body $bodyCie -ExpectedStatus 409 | Out-Null
+
+    # C10. Condiciones de aceptación posteriores (no cambian el estado)
+    $bodyCondiciones = @{
+        id_usuario_eval = $idUsuarioCieEvaluador
+        condiciones = "Presentar el consentimiento informado actualizado antes de la segunda collecting."
+        observaciones = "Recordatorio de la sesion 23-2026."
+    }
+    $resCondiciones = Test-Endpoint -Name "Condiciones posteriores del CIE" -Method "POST" -Endpoint "/propuestas/cie/$($idPropuestaCie)/condiciones" -Body $bodyCondiciones
+    if ($resCondiciones) {
+        Write-Host "  -> Condiciones registradas | Estado conservado: $($resCondiciones.nombre_estado)" -ForegroundColor Cyan
+    }
+
+    # C11. El expediente general expone la resolucion y la notificacion al lider
+    $dossierCie = Test-Endpoint -Name "Expediente con resolución del CIE" -Endpoint "/propuestas/$($idPropuestaCie)"
+    if ($dossierCie -and $dossierCie.resolucion_cie) {
+        Write-Host "  -> Acuerdo persistido: $($dossierCie.resolucion_cie.nombre_resolucion) | Sesión: $($dossierCie.resolucion_cie.numero_sesion) | Evaluador: $($dossierCie.resolucion_cie.evaluador_nombre)" -ForegroundColor Gray
+        $bloquesCondiciones = @([string]$dossierCie.resolucion_cie.condiciones -split "`n" | Where-Object { $_.Trim() })
+        Write-Host "  -> Condiciones acumuladas: $($bloquesCondiciones.Count) bloque(s)" -ForegroundColor Gray
+    }
+    if ($dossierCie -and @($dossierCie.historial).Count -gt 0) {
+        $ultimoHito = @($dossierCie.historial)[-1]
+        Write-Host "  -> Último hito del historial: $($ultimoHito.estado_nuevo)" -ForegroundColor Gray
+    }
 }
 
 Write-Host "`n==========================================================" -ForegroundColor Cyan

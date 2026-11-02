@@ -53,6 +53,7 @@ from .routers import (
     comite,
     consejo,
     direccion,
+    cie,
     admin,
 )
 
@@ -101,6 +102,9 @@ app.include_router(consejo.router)
 # [Línea clave]: Monta la bandeja, el detalle y el dictamen de Dirección de Investigación antes de las rutas
 # dinámicas de propuestas para que /propuestas/direccion/... resuelva correctamente.
 app.include_router(direccion.router)
+# [Línea clave]: Monta la bandeja, el detalle y la resolución del Comité de Ética en Investigación
+# antes de las rutas dinámicas de propuestas para que /propuestas/cie/... resuelva correctamente.
+app.include_router(cie.router)
 # [Línea clave]: Monta el router de propuestas (dashboard, creación atómica, expediente, cambios de estado y evaluaciones).
 app.include_router(propuestas.router)
 # [Línea clave]: Monta el router de notificaciones y marcado de lectura en base de datos.

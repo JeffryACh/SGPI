@@ -454,7 +454,9 @@ class EvaluacionIn(BaseModel):
     """
     Modelo de entrada para registrar evaluaciones, rúbricas o resoluciones sobre una propuesta.
 
-    Soporta puntajes del Comité Técnico, resoluciones del CIE y avance condicional de estado.
+    Soporta puntajes del Comité Técnico y avance condicional de estado. La resolución del CIE no se
+    emite por este endpoint: se registra con POST /propuestas/cie/{id_propuesta}, que valida el
+    estado «Dictaminada por Dirección» y guarda el acuerdo colegiado completo.
 
     Se utiliza en el endpoint POST /propuestas/{id_propuesta}/evaluaciones (Pantallas 23 a 27).
 
@@ -463,7 +465,8 @@ class EvaluacionIn(BaseModel):
         * int : id_rol_evaluador Rol bajo el cual se realiza la evaluación.
         * Optional[str] : observaciones Comentarios cualitativos o recomendaciones emitidas.
         * Optional[int] : puntaje_comite Calificación numérica (0–100) si evalúa el Comité Técnico.
-        * Optional[int] : id_resolucion_cie Resolución colegiada (1=Aprobada, 2=Rechazada, 3=Observada) si evalúa el CIE.
+        * Optional[int] : id_resolucion_cie Obsoleto: el endpoint rechaza con 409 cualquier evaluación
+          del CIE; se usa el catálogo «resoluciones_cie» desde el router del CIE.
         * Optional[int] : cambiar_a_estado Estado opcional al que se transita la propuesta automáticamente.
     """
     id_usuario_eval: int
@@ -1202,6 +1205,32 @@ def obtener_dossier_propuesta(
                 (id_propuesta,),
             )
 
+            # [Línea clave]: Recupera la resolución vigente del Comité de Ética en
+            # Investigación con los datos de su acuerdo colegiado para mostrarla en la
+            # pantalla 28 (historial de la propuesta).
+            cie_cur = stack.enter_context(conn.cursor())
+            cie_cur.execute(
+                """
+                SELECT ev.id_evaluacion, ev.id_propuesta, ev.id_usuario_eval,
+                       ev.fecha_evaluacion, ev.observaciones,
+                       TRIM(u.nombre || ' ' || COALESCE(u.lastname, '')) AS evaluador_nombre,
+                       cre.id_resolucion, res.nombre_resolucion,
+                       cre.numero_sesion, cre.articulo, cre.fecha_resolucion,
+                       cre.fundamentacion, cre.condiciones, cre.id_documento,
+                       cre.fecha_registro
+                FROM evaluations ev
+                JOIN usuarios u ON u.id_usuario = ev.id_usuario_eval
+                JOIN roles r ON r.id_rol = ev.id_rol_evaluador
+                     AND r.nombre_rol IN ('CIE', 'Evaluador Comité de Ética (CIE)')
+                JOIN cie_resolution_evaluations cre ON cre.id_evaluacion = ev.id_evaluacion
+                JOIN resoluciones_cie res ON res.id_resolucion = cre.id_resolucion
+                WHERE ev.id_propuesta = %s
+                ORDER BY ev.fecha_evaluacion DESC, ev.id_evaluacion DESC
+                LIMIT 1
+                """,
+                (id_propuesta,),
+            )
+
         prop = prop_cur.fetchone()
         if not prop:
             raise HTTPException(status_code=404, detail="Propuesta no encontrada")
@@ -1226,6 +1255,7 @@ def obtener_dossier_propuesta(
         avales_consejo = consejo_cur.fetchall()
         dictamen_direccion_fila = direccion_cur.fetchone()
         dictamen_direccion_verificaciones = direccion_verif_cur.fetchall()
+        resolucion_cie_fila = cie_cur.fetchone()
 
     # [Línea clave]: El dictamen de Dirección se guarda serializado dentro de
     # 'evaluations.observaciones'; se muestra su texto legible en lugar del JSON interno.
@@ -1267,6 +1297,19 @@ def obtener_dossier_propuesta(
             ],
         }
 
+    # [Línea clave]: La resolución del CIE viaja como bloque propio del expediente: reúne el
+    # acuerdo colegiado (tipo, sesión, artículo, fecha, fundamentación y condiciones) con
+    # el evaluador responsable del registro.
+    resolucion_cie = None
+    if resolucion_cie_fila:
+        resolucion_cie = {
+            **dict(resolucion_cie_fila),
+            "numero_sesion": resolucion_cie_fila.get("numero_sesion") or "",
+            "articulo": resolucion_cie_fila.get("articulo") or "",
+            "fundamentacion": resolucion_cie_fila.get("fundamentacion") or "",
+            "condiciones": resolucion_cie_fila.get("condiciones") or None,
+        }
+
     return {
         **prop,
         "equipo": equipo,
@@ -1285,6 +1328,7 @@ def obtener_dossier_propuesta(
         "comite_evaluacion": comite_evaluacion,
         "avales_consejo": avales_consejo,
         "dictamen_direccion": dictamen_direccion,
+        "resolucion_cie": resolucion_cie,
         "evaluacion_ia": evaluacion_ia,
     }
 
@@ -1904,8 +1948,10 @@ def registrar_evaluacion(
     Registrar el dictamen, calificación o resolución emitida por un rol evaluador institucional.
 
     Inserta el registro base en la tabla 'evaluations'. Si el evaluador es el Comité Técnico y envía
-    puntaje, inserta en 'technical_committee_evaluations'. Si es el CIE, inserta en 'cie_resolution_evaluations'.
-    Si se suministra 'cambiar_a_estado', transiciona la propuesta en la misma transacción atómica.
+    puntaje, inserta en 'technical_committee_evaluations'. El CIE queda excluido de este endpoint
+    genérico: su resolución se emite por 'POST /propuestas/cie/{id_propuesta}', que valida el estado
+    «Dictaminada por Dirección» y exige los datos del acuerdo colegiado. Si se suministra
+    'cambiar_a_estado', transiciona la propuesta en la misma transacción atómica.
 
     parametros:
         - int : id_propuesta Identificador de la propuesta evaluada.
@@ -1921,6 +1967,22 @@ def registrar_evaluacion(
         prop = cur.fetchone()
         if not prop:
             raise HTTPException(status_code=404, detail="Propuesta no encontrada")
+
+        # [Línea clave]: El CIE tiene un flujo propio que exige el estado «Dictaminada por Dirección»
+        # y el acuerdo colegiado completo. Este endpoint genérico no puede emitir resoluciones del
+        # comité porque permitiría saltarse esas garantías y dejar filas sin datos de sesión.
+        cur.execute("SELECT nombre_rol FROM roles WHERE id_rol = %s", (payload.id_rol_evaluador,))
+        rol_evaluador = cur.fetchone()
+        if (rol_evaluador and rol_evaluador["nombre_rol"] in ("CIE", "Evaluador Comité de Ética (CIE)")) or (
+            payload.id_resolucion_cie is not None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "La resolución del Comité de Ética en Investigación se registra con "
+                    "POST /propuestas/cie/{id_propuesta}."
+                ),
+            )
 
         # [Línea clave]: Inserta la evaluación base en evaluations retornando su id_evaluacion generado.
         cur.execute(

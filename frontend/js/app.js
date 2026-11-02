@@ -69,6 +69,9 @@ const ROLE_KEYS = {
   "Consejo de Escuela": "consejo",
   "Dirección de Investigación": "direccion",
   CIE: "cie",
+  // [Línea clave]: El comité colegiado («CIE») y su evaluador individual son la misma
+  // instancia institucional; ambos entran a la misma bandeja y registran resoluciones.
+  "Evaluador Comité de Ética (CIE)": "cie",
   // [Línea clave]: Los roles administrativos administran las pantallas 31 y 32 junto a Dirección.
   "Funcionario VIE": "vie",
   "Administrador del Sistema": "administracion",
@@ -238,6 +241,11 @@ const SCREEN_LOADERS = {
         await Promise.all([cargarBandejaDireccion(), cargarDashboardDireccion()]);
         return null;
       }
+      if (state.role === "cie") {
+        // El CIE tiene su propio tablero de pendientes y resueltas del comité.
+        await Promise.all([cargarBandejaCie(), cargarDashboardCie()]);
+        return null;
+      }
       return null;
     } catch (e) {
       console.warn("SCREEN_LOADERS 02 error:", e);
@@ -256,6 +264,7 @@ const SCREEN_LOADERS = {
     if (state.role === "comite") return cargarBandejaComite();
     if (state.role === "consejo") return cargarBandejaConsejo();
     if (state.role === "direccion") return cargarBandejaDireccion();
+    if (state.role === "cie") return cargarBandejaCie();
     return cargarBandejaVinculacion();
   },
   "22": () => cargarDossier(),
@@ -293,7 +302,16 @@ const SCREEN_LOADERS = {
     }
     return obtenerEvaluacionPreliminarIA(propuestaActivaId());
   },
-  "27": () => obtenerEvaluacionPreliminarIA(propuestaActivaId()),
+  "27": async () => {
+    // [Línea clave]: El formulario de resolución del CIE consume el expediente real: el
+    // dictamen de Dirección, el catálogo institucional de acuerdos y los documentos.
+    if (state.role === "cie") {
+      if (!bandejaCie?.length) await cargarBandejaCie();
+      await Promise.all([cargarDossier(), cargarResolucionCie()]);
+      return null;
+    }
+    return obtenerEvaluacionPreliminarIA(propuestaActivaId());
+  },
   "28": () => cargarDossier(),
   "30": () => buscarPropuestas(),
   // [Línea clave]: Las pantallas 31 y 32 consumen el CRUD administrativo real del backend.
@@ -871,6 +889,11 @@ let bandejaDireccion = [];
 let dictamenDireccion = null;
 let direccionCargadoId = null;
 let dashboardDireccion = null;
+// [Línea clave]: Estado en memoria del Comité de Ética en Investigación (pantallas 02, 21, 27 y 28).
+let bandejaCie = [];
+let resolucionCie = null;
+let cieCargadoId = null;
+let dashboardCie = null;
 // [Línea clave]: Estado en memoria de la administración institucional (pantallas 31 y 32).
 let adminConvocatorias = [];
 let adminEtapas = [];
@@ -961,10 +984,12 @@ function mapearPropuestaBackend(p = {}) {
     fechaIngreso: p.fecha_ingreso_comite || null,
     fechaIngresoConsejo: p.fecha_ingreso_consejo || null,
     fechaIngresoVie: p.fecha_ingreso_vie || null,
+    fechaIngresoCie: p.fecha_ingreso_cie || null,
     fechaCreacion: p.fecha_creacion || null,
     miAval: !!p.mi_aval,
     avalesRegistrados: Number(p.avales_registrados || 0),
     escuelasInvolucradas: Number(p.escuelas_involucradas || 0),
+    resolucionCie: p.resolucion_cie || null,
   };
 }
 
@@ -1423,6 +1448,17 @@ const esPendienteConsejo = (p) =>
 const esPendienteDireccion = (p) => /sometida ante vie/i.test((p && p.status) || "");
 
 /**
+ * Determinar si una propuesta de la bandeja del CIE sigue pendiente de resolución.
+ * Solo las propuestas «Dictaminada por Dirección» y sin acuerdo registrado esperan al comité.
+ * parametros:
+ *     - Object : p Propuesta normalizada con las propiedades 'status' y 'resolucionCie'.
+ * return:
+ *     + boolean : pendiente Verdadero si espera la resolución del Comité de Ética.
+ */
+const esPendienteCie = (p) =>
+  /dictaminada por direcci/i.test((p && p.status) || "") && !(p && p.resolucionCie);
+
+/**
  * Descargar la bandeja del Consejo de Escuela desde PostgreSQL y conservar la propuesta activa.
  * parametros:
  *     (ninguno)
@@ -1657,6 +1693,167 @@ async function cargarDictamenDireccion(idPropuesta = propuestaActivaId()) {
  */
 async function guardarDictamenDireccion(idPropuesta, payload) {
   const res = await fetch(`${API_URL}/propuestas/direccion/${idPropuesta}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await errorDesdeRespuesta(res));
+  return res.json();
+}
+
+// =====================================================================
+// COMITÉ DE ÉTICA EN INVESTIGACIÓN (CIE)
+// =====================================================================
+
+/**
+ * Descargar la bandeja del Comité de Ética en Investigación desde PostgreSQL.
+ * parametro:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>> : bandejaCie Propuestas dictaminadas por Dirección.
+ */
+async function cargarBandejaCie() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) return null;
+  try {
+    const res = await fetch(
+      `${API_URL}/propuestas/cie/bandeja?rol=${encodeURIComponent("CIE")}&id_usuario=${idUsuario}`,
+    );
+    if (res.ok) {
+      bandejaCie = (await res.json()).map(mapearPropuestaBackend);
+      if (!state.viewProposalId && bandejaCie.length) {
+        const objetivo = bandejaCie[0];
+        state.viewProposalId = objetivo.id;
+        state.viewProposal = objetivo.code;
+      }
+    } else {
+      console.warn("cargarBandejaCie:", await errorDesdeRespuesta(res));
+      bandejaCie = [];
+    }
+  } catch (err) {
+    console.warn("cargarBandejaCie error:", err);
+    bandejaCie = [];
+  }
+  return bandejaCie;
+}
+
+/**
+ * Cargar el dashboard del Comité de Ética en Investigación.
+ * parametro:
+ *     (ninguno)
+ * return:
+ *     + Promise<Object|null> : dashboardCie Métricas y propuesta destacada.
+ */
+async function cargarDashboardCie() {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idUsuario) {
+    dashboardCie = null;
+    return null;
+  }
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeout = setTimeout(() => {
+    if (controller) controller.abort();
+  }, 8000);
+  try {
+    const res = await fetch(
+      `${API_URL}/propuestas/cie/dashboard?rol=${encodeURIComponent("CIE")}&id_usuario=${idUsuario}`,
+      controller ? { signal: controller.signal } : undefined,
+    );
+    clearTimeout(timeout);
+    if (res.ok) {
+      try {
+        const data = await res.json();
+        dashboardCie = data || null;
+        if (!state.viewProposalId && dashboardCie?.propuesta_destacada?.id_propuesta) {
+          state.viewProposalId = dashboardCie.propuesta_destacada.id_propuesta;
+          state.viewProposal = dashboardCie.propuesta_destacada.codigo;
+        }
+      } catch (err) {
+        console.warn("cargarDashboardCie json error:", err);
+        dashboardCie = null;
+      }
+    } else {
+      try {
+        console.warn("cargarDashboardCie:", await errorDesdeRespuesta(res));
+      } catch (_) {
+        console.warn("cargarDashboardCie: respuesta no OK");
+      }
+      dashboardCie = null;
+    }
+  } catch (err) {
+    clearTimeout(timeout);
+    console.warn("cargarDashboardCie error:", err);
+    dashboardCie = null;
+  }
+  if ((location.hash.replace("#", "") || "01") === "02" && state.role === "cie") {
+    try {
+      render();
+    } catch (_) {}
+  }
+  return dashboardCie;
+}
+
+/**
+ * Descargar el expediente para resolver ante el Comité de Ética en Investigación.
+ * parametro:
+ *     - number : idPropuesta Identificador de la propuesta.
+ * return:
+ *     + Promise<Object|null> : resolucionCie Expediente con el catálogo de resoluciones.
+ */
+async function cargarResolucionCie(idPropuesta = propuestaActivaId()) {
+  const idUsuario = session?.user?.id_usuario;
+  if (!idPropuesta || !idUsuario) return null;
+  if (cieCargadoId !== Number(idPropuesta)) {
+    Object.keys(state.saved)
+      .filter((clave) => clave.startsWith("cie:"))
+      .forEach((clave) => delete state.saved[clave]);
+    cieCargadoId = Number(idPropuesta);
+  }
+  try {
+    const res = await fetch(
+      `${API_URL}/propuestas/cie/${idPropuesta}?id_usuario=${idUsuario}`,
+    );
+    if (res.ok) {
+      resolucionCie = await res.json();
+    } else {
+      console.warn("cargarResolucionCie:", await errorDesdeRespuesta(res));
+      resolucionCie = null;
+    }
+  } catch (err) {
+    console.warn("cargarResolucionCie error:", err);
+    resolucionCie = null;
+  }
+  return resolucionCie;
+}
+
+/**
+ * Registrar la resolución del Comité de Ética en Investigación.
+ * parametro:
+ *     - number : idPropuesta Identificador de la propuesta.
+ *     - Object : payload Datos del acuerdo colegiado.
+ * return:
+ *     + Promise<Object> : Resultado de registro.
+ */
+async function guardarResolucionCie(idPropuesta, payload) {
+  const res = await fetch(`${API_URL}/propuestas/cie/${idPropuesta}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await errorDesdeRespuesta(res));
+  return res.json();
+}
+
+/**
+ * Registrar condiciones de aceptación posteriores a la resolución del CIE.
+ * parametro:
+ *     - number : idPropuesta Identificador de la propuesta.
+ *     - Object : payload Condiciones de aceptación.
+ * return:
+ *     + Promise<Object> : Resultado de registro.
+ */
+async function guardarCondicionesCie(idPropuesta, payload) {
+  const res = await fetch(`${API_URL}/propuestas/cie/${idPropuesta}/condiciones`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -2500,7 +2697,7 @@ function applyRole(key) {
   state.role = key;
   // [Línea clave]: Las bandejas institucionales no deben reutilizar el expediente seleccionado
   // por otro rol; se limpia el puntero al cambiar a un rol evaluador.
-  if (["vinculacion", "comite", "consejo", "direccion"].includes(key) && rolAnterior !== key)
+  if (["vinculacion", "comite", "consejo", "direccion", "cie"].includes(key) && rolAnterior !== key)
     state.viewProposalId = null;
   state.viewProposal = state.created?.code || "SI-2027-014";
   state.stage = {
@@ -2986,6 +3183,89 @@ function dashboard() {
     const esComite = state.role === "comite";
     const esConsejo = state.role === "consejo";
     const esDireccion = state.role === "direccion";
+    const esCie = state.role === "cie";
+    if (esCie) {
+      // [Línea clave]: El CIE tiene su propio tablero: pendientes de resolución, resueltas
+      // por el comité y total revisadas, todo leído del backend.
+      try {
+        const dash = dashboardCie || {};
+        const pendienteCount = Number(dash.pendientes || 0);
+        const resueltasCount = Number(dash.resueltas || 0);
+        const revisadasCount = Number(dash.totales_revisadas || 0);
+        const destacada = dash.propuesta_destacada || null;
+        const metricasCie = [
+          ["Pendientes de resolución", String(pendienteCount)],
+          ["Resueltas por el CIE", String(resueltasCount)],
+          ["Totales revisadas", String(revisadasCount)],
+        ];
+        const fechaLegible = (valor) => {
+          if (!valor) return "";
+          try {
+            return new Date(valor).toLocaleString("es-CR", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+          } catch {
+            return String(valor);
+          }
+        };
+        const filaCie = destacada
+          ? [
+              `<span class="project-code">${esc(destacada.codigo || "")}</span><strong>${esc(destacada.titulo || "")}</strong><br><span class="small muted">${esc(destacada.escuela_siglas || destacada.escuela || "")} · ${esc(destacada.modalidad || "")}</span>`,
+              esc(destacada.nombre_estado || ""),
+              destacada.fecha_ingreso_cie
+                ? badge(`Ingresó al CIE ${fechaLegible(destacada.fecha_ingreso_cie).replace(", ", " · ")}`)
+                : badge("Dictaminada por Dirección"),
+              btn(
+                "Resolver",
+                "27",
+                "text",
+                "arrow",
+                `data-proposal="${esc(destacada.codigo || "")}" data-proposal-id="${destacada.id_propuesta || ""}"`,
+              ),
+            ]
+          : [`<span class="muted">No hay propuestas pendientes de resolución del CIE.</span>`, "", "", ""];
+        const heroTituloCie =
+          pendienteCount === 0
+            ? "No hay propuestas pendientes de resolución"
+            : pendienteCount === 1
+              ? "Una propuesta espera la resolución del comité"
+              : `${pendienteCount} propuestas esperan la resolución del comité`;
+        const heroTextoCie = destacada
+          ? `Más reciente dictaminada por Dirección: ${esc(destacada.codigo || "")} · ${esc(destacada.titulo || "")}${destacada.fecha_ingreso_cie ? ` · Ingresó el ${fechaLegible(destacada.fecha_ingreso_cie)}.` : "."}`
+          : "Consulta la bandeja para revisar los expedientes remitidos al comité.";
+        let nombreHolaCie = "CIE";
+        try {
+          const p = person();
+          if (p && p.name) nombreHolaCie = String(p.name).split(" ")[0];
+        } catch {}
+        return shell(
+          `<div class="hero"><div><h2>${heroTituloCie}</h2><p>${heroTextoCie}</p></div>${btn("Abrir bandeja", "21", "", "arrow")}</div><div class="grid three mt">${metricasCie
+            .map(
+              ([a, b]) =>
+                `<div class="card metric"><span class="label">${a}</span><span class="value">${b}</span></div>`,
+            )
+            .join("")}</div><div class="mt card">${table(["Expediente", "Etapa", "Ingreso al CIE", ""], [filaCie])}</div>`,
+          `Hola, ${nombreHolaCie}`,
+          "",
+          "",
+        );
+      } catch (e) {
+        console.warn("dashboard cie render error:", e);
+        try {
+          cargarDashboardCie().catch(() => null);
+        } catch (_) {}
+        return shell(
+          `<div class="hero"><div><h2>Comité de Ética en Investigación</h2><p>Consulta la bandeja para revisar los expedientes remitidos al comité.</p></div>${btn("Abrir bandeja", "21", "", "arrow")}</div><div class="grid three mt"><div class="card metric"><span class="label">Pendientes de resolución</span><span class="value">0</span></div><div class="card metric"><span class="label">Resueltas por el CIE</span><span class="value">0</span></div><div class="card metric"><span class="label">Totales revisadas</span><span class="value">0</span></div></div>`,
+          "Hola, CIE",
+          "",
+          "",
+        );
+      }
+    }
     if (esDireccion) {
       try {
         const dash = dashboardDireccion || {};
@@ -4438,7 +4718,7 @@ function tracking() {
 function inbox() {
   // [Línea clave]: Cada instancia colegiada consume su propia bandeja real de PostgreSQL.
   // El Comité Técnico usa bandejaComite; Vinculación mantiene bandejaPropuestas;
-  // Dirección de Investigación usa bandejaDireccion.
+  // Dirección de Investigación usa bandejaDireccion; el CIE usa bandejaCie.
   const list =
     state.role === "vinculacion"
       ? bandejaPropuestas || []
@@ -4448,7 +4728,9 @@ function inbox() {
           ? bandejaConsejo || []
           : state.role === "direccion"
             ? bandejaDireccion || []
-            : top3propuestasmasrecientes || [];
+            : state.role === "cie"
+              ? bandejaCie || []
+              : top3propuestasmasrecientes || [];
   const closedStatuses =
     state.role === "vinculacion"
       ? ["En evaluación del Comité Técnico", "Con observaciones", "Rechazada", "Aprobada por CIE", "Cerrada", "Resuelta"]
@@ -4458,19 +4740,25 @@ function inbox() {
           ? ["Avalada", "Sometida ante VIE", "Dictaminada por Dirección", "Con observaciones", "Rechazada", "Aprobada por CIE", "En ejecución", "Cerrada"]
           : state.role === "direccion"
             ? ["Dictaminada por Dirección", "Con observaciones", "Rechazada", "Aprobada por CIE", "En ejecución", "Cerrada"]
-            : ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"];
+            : state.role === "cie"
+              ? ["Aprobada por CIE", "Con observaciones", "Rechazada", "En ejecución", "Cerrada"]
+              : ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"];
   const pending =
     state.role === "consejo"
       ? list.filter(esPendienteConsejo)
       : state.role === "direccion"
         ? list.filter(esPendienteDireccion)
-        : list.filter((p) => !closedStatuses.includes(p.status));
+        : state.role === "cie"
+          ? list.filter(esPendienteCie)
+          : list.filter((p) => !closedStatuses.includes(p.status));
   const closed =
     state.role === "consejo"
       ? list.filter((p) => !esPendienteConsejo(p))
       : state.role === "direccion"
         ? list.filter((p) => !esPendienteDireccion(p))
-        : list.filter((p) => closedStatuses.includes(p.status));
+        : state.role === "cie"
+          ? list.filter((p) => !esPendienteCie(p))
+          : list.filter((p) => closedStatuses.includes(p.status));
 
   let filtered = activeFilter === "Finalizadas" ? closed : pending;
   if (activeFilter === "En revisión") filtered = pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación"));
@@ -4478,6 +4766,8 @@ function inbox() {
   if (activeFilter === "Avalados") filtered = list.filter((p) => p.miAval);
   // [Línea clave]: Dirección separa los expedientes que ya dictaminó de los que aún espera.
   if (activeFilter === "Determinadas") filtered = closed;
+  // [Línea clave]: El CIE separa los expedientes ya resueltos por el comité de los pendientes.
+  if (activeFilter === "Resueltas") filtered = closed;
 
   const rows = filtered.map((p) => {
     const puedeEvaluar = state.role === "comite" && !closedStatuses.includes(p.status);
@@ -4486,14 +4776,27 @@ function inbox() {
     const puedeAvalar = state.role === "consejo" && esPendienteConsejo(p);
     // [Línea clave]: Dirección dictamina las propuestas pendientes y abre el expediente de las demás.
     const puedeDictaminar = state.role === "direccion" && esPendienteDireccion(p);
+    // [Línea clave]: El CIE abre el formulario de resolución solo en los expedientes que
+    // Dirección ya dictaminó y que el comité todavía no ha resuelto.
+    const puedeResolver = state.role === "cie" && esPendienteCie(p);
     const etiquetaBoton = puedeEvaluar
       ? "Evaluar propuesta"
       : puedeAvalar
         ? "Registrar aval"
         : puedeDictaminar
           ? "Dictaminar"
-          : "Abrir expediente";
-    const destino = puedeEvaluar ? "24" : puedeAvalar ? "25" : puedeDictaminar ? "26" : "22";
+          : puedeResolver
+            ? "Resolver"
+            : "Abrir expediente";
+    const destino = puedeEvaluar
+      ? "24"
+      : puedeAvalar
+        ? "25"
+        : puedeDictaminar
+          ? "26"
+          : puedeResolver
+            ? "27"
+            : "22";
     return [
       `<span class="project-code">${esc(p.code)}</span><strong>${esc(p.title)}</strong><br><span class="micro muted">${esc(p.leader || "Investigador")} · ${esc(p.school || "TEC")}${p.fechaIngresoVie ? ` · Ingresó a VIE ${esc(String(p.fechaIngresoVie).slice(0, 10))}` : ""}</span>`,
       esc(p.type),
@@ -4521,18 +4824,26 @@ function inbox() {
             ["Determinadas", String(closed.length)],
             ["Total en tu bandeja", String(list.length)],
           ]
-        : [
-            ["Pendientes de revisión", String(pending.length)],
-            ["En evaluación / revisión", String(pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación")).length)],
-            ["Finalizadas en la convocatoria", String(closed.length)],
-          ];
+        : state.role === "cie"
+          ? [
+              ["Pendientes de resolución", String(pending.length)],
+              ["Resueltas por el CIE", String(closed.length)],
+              ["Total revisadas", String(list.length)],
+            ]
+          : [
+              ["Pendientes de revisión", String(pending.length)],
+              ["En evaluación / revisión", String(pending.filter((p) => p.status.includes("revisión") || p.status.includes("evaluación")).length)],
+              ["Finalizadas en la convocatoria", String(closed.length)],
+            ];
 
   const pestanasBandeja =
     state.role === "consejo"
       ? ["Pendientes", "Avalados", "Finalizadas"]
       : state.role === "direccion"
         ? ["Pendientes", "Determinadas"]
-        : ["Pendientes", "En revisión", "Finalizadas"];
+        : state.role === "cie"
+          ? ["Pendientes", "Resueltas"]
+          : ["Pendientes", "En revisión", "Finalizadas"];
 
   return shell(
     `<div class="grid three mb">${metricas
@@ -5022,8 +5333,106 @@ function evaluation(id) {
     const docs = yaDictaminadoDir ? (detalleDir.dictamen_direccion.verificacion_documentos !== false) : (state.saved["direccion:docs"] !== false);
     inner = `${aviso}<div class="mt"><strong>Verificación por criterios VIE</strong>${checklist}</div><div class="mt"><strong>Verificación institucional</strong><label class="checkline"><input type="checkbox" data-direccion-check="resp" ${resp ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Personal investigador al día con informes y compromisos</label><label class="checkline"><input type="checkbox" data-direccion-check="riesgos" ${riesgos ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Riesgos identificados y medidas de mitigación coherentes</label><label class="checkline"><input type="checkbox" data-direccion-check="beca" ${beca ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Beca obligatoria para estudiante asistente especial (cuando aplica)</label><label class="checkline"><input type="checkbox" data-direccion-check="decl" ${decl ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Declaraciones éticas completas y justificadas</label><label class="checkline"><input type="checkbox" data-direccion-check="docs" ${docs ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Avales, evaluación y documentos completos</label></div>${field("Dictamen", yaDictaminadoDir ? [detalleDir.dictamen_direccion.dictamen] : ["Favorable", "Con observaciones", "No favorable"], yaDictaminadoDir ? "select" : "select", "", true, "direccion:dictamen")}${field("Fundamentación", yaDictaminadoDir ? detalleDir.dictamen_direccion.fundamentacion : "El expediente incorpora la evaluación del Comité, los avales del Consejo y la documentación requerida. Se verifica el cumplimiento de los criterios VIE.", "textarea", "", true, "direccion:fundamentacion")}${yaDictaminadoDir ? "" : (detalleDir.documentos?.length ? `<div class="mt">${detalleDir.documentos.map(docPropuesta).join("")}</div>` : notice("Documentos del expediente", "Los documentos de la propuesta están disponibles en el expediente."))}`;
   }
-  if (id === "27")
-    inner = `${notice("Expediente con dictamen de Dirección", "Valora cumplimiento del proceso, responsabilidades, interés estratégico y disponibilidad de recursos.")}<div class="mt">${field("Resolución", ["Aprobada", "Rechazada", "Con observaciones"], "select", "", true, "resolution")}</div><div class="field-row">${field("Sesión y artículo", "23-2026 · Artículo 5", "text", "", true)}${field("Fecha de resolución", "2026-10-23", "date", "", true)}</div>${field("Fundamentación y condiciones", "La iniciativa es pertinente y cuenta con respaldo en el proceso previo. Se aprueba conforme al plan y presupuesto; debe presentarse carta de aceptación.", "textarea", "La decisión debe quedar motivada, incluidas las resoluciones negativas.", true)}${docPendiente("Acuerdo del CIE", "Pendiente de emitir")}`;
+  if (id === "27") {
+    // [Línea clave]: La resolución del CIE se registra con los datos reales del expediente:
+    // el catálogo institucional de acuerdos, el dictamen de Dirección que la habilitó y los
+    // documentos del expediente. El backend valida el estado y guarda la trazabilidad.
+    const detalleCie = resolucionCie || {};
+    const yaResuelto = !!detalleCie.resolucion_cie;
+    const puedeResolver = detalleCie.puede_resolver === true && !yaResuelto;
+    const tipos = detalleCie.tipos_resolucion || [];
+    const dictamenPrevio = detalleCie.dictamen_direccion || null;
+    const hoy = new Date().toISOString().slice(0, 10);
+    const opcionesResolucion = tipos.length
+      ? tipos.map((t) => ({ value: String(t.id_resolucion), label: t.nombre_resolucion }))
+      : [{ value: "1", label: "Aprobado sin observaciones" }];
+    const bloqueDictamen = dictamenPrevio
+      ? `<div class="mt">${definition([
+          ["Dictamen de Dirección", dictamenPrevio.dictamen || "Favorable"],
+          ["Fundamentación", dictamenPrevio.fundamentacion || "Sin detalle"],
+          ["Fecha del dictamen", String(dictamenPrevio.fecha_evaluacion || "").slice(0, 10)],
+          ["Responsable", dictamenPrevio.evaluador_nombre || "Dirección de Investigación"],
+        ])}</div>`
+      : notice(
+          "Dictamen de Dirección no visible",
+          "El expediente no registra un dictamen de Dirección legible; el backend volverá a validarlo al guardar la resolución.",
+        );
+    const documentosCie = (detalleCie.documentos || []).length
+      ? `<div class="mt">${detalleCie.documentos.map(docPropuesta).join("")}</div>`
+      : "";
+    const resumenResolucion = yaResuelto
+      ? notice(
+          "Resolución ya registrada por el CIE",
+          `${detalleCie.resolucion_cie.nombre_resolucion} · Sesión ${detalleCie.resolucion_cie.numero_sesion || "s/n"}, artículo ${detalleCie.resolucion_cie.articulo || "s/n"} · ${String(detalleCie.resolucion_cie.fecha_resolucion || "").slice(0, 10)} · ${detalleCie.resolucion_cie.evaluador_nombre || "Comité de Ética"}. El formulario queda en modo consulta.`,
+        )
+      : "";
+    const bloqueCondiciones = yaResuelto
+      ? `<div class="mt">${field(
+          "Condiciones de aceptación adicionales",
+          detalleCie.resolucion_cie.condiciones || "",
+          "textarea",
+          "Se acumulan al acuerdo vigente sin cambiar el estado de la propuesta.",
+          false,
+          "cie:condiciones_posteriores",
+        )}<div class="action-row mt">${act("Registrar condiciones", "conditions", "secondary", "check", `data-step="27-condiciones"`)}</div></div>`
+      : "";
+    const formularioCie = puedeResolver
+      ? `<div class="mt">${field(
+          "Tipo de resolución",
+          opcionesResolucion,
+          "select",
+          "Acuerdo del catálogo institucional del comité.",
+          true,
+          "cie:id_resolucion",
+        )}</div><div class="field-row">${field(
+          "Número de sesión",
+          "",
+          "text",
+          "Sesión del comité en la que se aprobó el acuerdo.",
+          true,
+          "cie:numero_sesion",
+        )}${field("Artículo", "", "text", "Artículo del acuerdo que sustenta la resolución.", true, "cie:articulo")}</div><div class="field-row">${field(
+          "Fecha de resolución",
+          hoy,
+          "date",
+          "",
+          true,
+          "cie:fecha_resolucion",
+        )}</div>${field(
+          "Fundamentación",
+          "",
+          "textarea",
+          "La decisión debe quedar motivada, incluidas las resoluciones negativas.",
+          true,
+          "cie:fundamentacion",
+        )}${field(
+          "Condiciones de aceptación",
+          "",
+          "textarea",
+          "Requerimientos que el investigador debe cumplir (opcional).",
+          false,
+          "cie:condiciones",
+        )}${field(
+          "Observaciones del acuerdo",
+          "",
+          "textarea",
+          "Detalles adicionales de la sesión (opcional).",
+          false,
+          "cie:observaciones",
+        )}<div class="field"><label for="cie-doc">Acuerdo firmado (PDF, DOCX)</label><input id="cie-doc" type="file" accept=".pdf,.docx"><span class="help">Máximo 20 MB. Se almacena en el expediente de la propuesta.</span></div>`
+      : "";
+    const avisoBloqueo = !yaResuelto && !puedeResolver
+      ? notice(
+          "Resolución no disponible",
+          detalleCie.motivo_bloqueo ||
+            "La propuesta no está dictaminada por Dirección de Investigación; el CIE solo resuelve expedientes con dictamen favorable.",
+        )
+      : "";
+    inner = `${notice(
+      "Acuerdo colegiado del Comité de Ética",
+      "El CIE solo resuelve propuestas en estado «Dictaminada por Dirección». El acuerdo queda registrado con sesión, artículo, fecha y fundamentación.",
+    )}${resumenResolucion}${avisoBloqueo}${bloqueDictamen}${formularioCie}${bloqueCondiciones}${documentosCie}`;
+  }
   const propActiva =
     dossierActual && Number(dossierActual.id_propuesta) === Number(propuestaActivaId())
       ? dossierActual
@@ -5049,11 +5458,16 @@ function evaluation(id) {
     // [Línea clave]: El Consejo de Escuela solo registra aval una vez por escuela; después
     // el expediente queda en modo consulta.
     (id === "25" && (!!avalConsejo?.mi_aval || (!!avalConsejo && !avalConsejo.puede_aval))) ||
-    (id === "26" && !!dictamenDireccion?.dictamen_direccion);
+    (id === "26" && !!dictamenDireccion?.dictamen_direccion) ||
+    // [Línea clave]: El CIE resuelve una sola vez por propuesta; después el expediente queda
+    // en modo consulta y solo admite condiciones de aceptación posteriores.
+    (id === "27" && !!resolucionCie?.resolucion_cie);
   const puedeDictaminarDireccion = id === "26" ? (dictamenDireccion?.puede_dictaminar === true && !dictamenDireccion?.dictamen_direccion) : true;
-  const accionesEvaluacion = dictamenExistente || (id === "26" && !puedeDictaminarDireccion)
-    ? btn("Volver a la bandeja", "21", "secondary", "back")
-    : `${act("Devolver con observaciones", "return", "secondary")}${act(actionLabel, "decision", "", "check", `data-step="${id}"`)}`;
+  const puedeResolverCie = id === "27" ? (resolucionCie?.puede_resolver === true && !resolucionCie?.resolucion_cie) : true;
+  const accionesEvaluacion =
+    dictamenExistente || (id === "26" && !puedeDictaminarDireccion) || (id === "27" && !puedeResolverCie)
+      ? btn("Volver a la bandeja", "21", "secondary", "back")
+      : `${act("Devolver con observaciones", "return", "secondary")}${act(actionLabel, "decision", "", "check", `data-step="${id}"`)}`;
   return shell(
     `<div class="two-col"><form class="card form-card" id="evaluation-form"><div class="form-title"><h2>${names[id]}</h2>${badge(dictamenExistente ? "Registrado" : "Pendiente")}</div>${inner}<div class="form-footer">${accionesEvaluacion}</div></form><div class="stack">${renderizarPanelReferenciaIA(id)}${card(
       "Expediente en revisión",
@@ -5261,6 +5675,37 @@ function dictamenDireccionResumen(d = null) {
 }
 
 /**
+ * Construir la tarjeta con la resolución del Comité de Ética en Investigación.
+ * Lee el acuerdo persistido en PostgreSQL (cie_resolution_evaluations + resoluciones_cie).
+ * parametros:
+ *     - Object|null : d Expediente consolidado.
+ * return:
+ *     + string : resolucionHtml Tarjeta con el acuerdo colegiado y sus condiciones.
+ */
+function resolucionCieResumen(d = null) {
+  const res = d?.resolucion_cie;
+  if (!res)
+    return notice(
+      "Resolución del CIE pendiente",
+      "La propuesta aún no tiene una resolución del Comité de Ética en Investigación registrada.",
+    );
+  const condiciones = res.condiciones
+    ? `<h3 style="margin:18px 0 8px">Condiciones de aceptación</h3><p class="small muted" style="white-space:pre-line">${esc(res.condiciones)}</p>`
+    : "";
+  const documento = (d?.documentos || []).find(
+    (doc) => Number(doc.id_documento) === Number(res.id_documento),
+  );
+  return `${definition([
+    ["Acuerdo", esc(res.nombre_resolucion || "Resolución registrada")],
+    ["Sesión", esc(res.numero_sesion || "sin sesión")],
+    ["Artículo", esc(res.articulo || "sin artículo")],
+    ["Fecha del acuerdo", esc(String(res.fecha_resolucion || "").slice(0, 10))],
+    ["Registrado por", esc(res.evaluador_nombre || "Comité de Ética en Investigación")],
+    ["Fundamentación", esc(res.fundamentacion || "Sin fundamentación registrada")],
+  ])}${condiciones}${documento ? `<div class="mt">${docPropuesta(documento)}</div>` : ""}`;
+}
+
+/**
  * Renderizar la pantalla completa de historial y auditoría del expediente (Pantalla 28).
  * Encapsula historyContent() dentro del shell institucional con botón para retornar al expediente.
  * parametros:
@@ -5273,7 +5718,7 @@ function history() {
   const d = dossierActual && Number(dossierActual.id_propuesta) === Number(idActivo) ? dossierActual : null;
   const code = d?.codigo || state.viewProposal || "SI-2027-014";
   return shell(
-    `${card(`${esc(code)} · Historial de actuaciones`, historyContent(d))}${card("Dictamen de Vinculación", dictamenVinculacion(d))}${card("Avales del Consejo de Escuela", dictamenConsejo(d))}${card("Dictamen de Dirección de Investigación", dictamenDireccionResumen(d))}`,
+    `${card(`${esc(code)} · Historial de actuaciones`, historyContent(d))}${card("Dictamen de Vinculación", dictamenVinculacion(d))}${card("Avales del Consejo de Escuela", dictamenConsejo(d))}${card("Dictamen de Dirección de Investigación", dictamenDireccionResumen(d))}${card("Resolución del Comité de Ética en Investigación", resolucionCieResumen(d))}`,
     "Historial del expediente",
     "Cada cambio conserva su responsable, fecha, versión y evidencia.",
     btn("Volver al expediente", "22", "secondary", "back"),
@@ -6569,6 +7014,13 @@ async function handleAction(action, el) {
         closeModal();
         break;
       }
+      if (el.dataset.step === "27" || current === "27") {
+        // [Línea clave]: El CIE no devuelve expedientes: su decisión es un acuerdo colegiado
+        // que se registra como «Con observaciones» cuando el tipo de resolución lo indica.
+        toast("El CIE registra su decisión como acuerdo colegiado: elige «Aprobado condicionado a enmiendas menores» para dejar observaciones.");
+        closeModal();
+        break;
+      }
       if (el.dataset.step === "23" || current === "23") {
         const idPropuesta = propuestaActivaId();
         try {
@@ -6653,6 +7105,33 @@ async function handleAction(action, el) {
       );
       break;
     }
+    case "conditions": {
+      // [Línea clave]: Las condiciones posteriores se acumulan al acuerdo vigente del CIE sin
+      // cambiar el estado de la propuesta, pero quedan trazadas como evaluación adicional.
+      const idPropuesta = propuestaActivaId();
+      const condiciones = String(state.saved["cie:condiciones_posteriores"] || "").trim();
+      if (!condiciones) {
+        toast("Escribe el texto de las condiciones antes de registrarlas.");
+        break;
+      }
+      try {
+        const resultado = await guardarCondicionesCie(idPropuesta, {
+          id_usuario_eval: session?.user?.id_usuario,
+          condiciones,
+          observaciones: "",
+        });
+        state.viewProposalId = idPropuesta;
+        save();
+        await Promise.all([
+          cargarDossier(idPropuesta, true),
+          cargarResolucionCie(idPropuesta),
+        ]);
+        toast(resultado.mensaje || "Condiciones de aceptación registradas.");
+      } catch (err) {
+        toast(err.message || "No se pudieron registrar las condiciones del CIE.");
+      }
+      break;
+    }
     case "decision":
       // [Línea clave]: ¿Por qué soy importante? Registro de dictamen de evaluadores colegiados. ¿Para qué? Avanzar el expediente en el flujo institucional guardando la evidencia. ¿Dónde me usan? En handleAction bajo la acción 'decision'.
       if (!validate("#evaluation-form")) break;
@@ -6662,7 +7141,21 @@ async function handleAction(action, el) {
           negative = id === "24" && !sc.recommended;
         modal(
           "Confirmar decisión",
-          `<p>${negative ? "La evaluación no recomienda la propuesta por la nota o los requisitos obligatorios." : "Se conservarán los datos y el documento asociados a esta revisión."}</p>${id === "27" ? notice("Resolución seleccionada", state.saved.resolution || "Aprobada") : ""}${
+          `<p>${negative ? "La evaluación no recomienda la propuesta por la nota o los requisitos obligatorios." : "Se conservarán los datos y el documento asociados a esta revisión."}</p>${
+            id === "27"
+              ? notice(
+                  "Resolución seleccionada",
+                  (() => {
+                    const elc = document.querySelector('[data-field="cie:id_resolucion"]');
+                    const valor = elc ? String(elc.value || "") : String(state.saved["cie:id_resolucion"] || "");
+                    const opcion = (resolucionCie?.tipos_resolucion || []).find(
+                      (t) => String(t.id_resolucion) === valor,
+                    );
+                    return opcion ? opcion.nombre_resolucion : "Acuerdo del catálogo institucional";
+                  })(),
+                )
+              : ""
+          }${
             id === "23"
               ? notice("Registro en PostgreSQL", "El dictamen cambiará el estado de la propuesta y notificará al Comité Técnico.")
               : id === "24"
@@ -6675,7 +7168,12 @@ async function handleAction(action, el) {
                       "Registro en PostgreSQL",
                       "El acuerdo se guardará en «council_endorsements» con la escuela, el tipo de instancia, la sesión, el artículo, la fecha y el oficio. La propuesta solo pasará a «Avalada» cuando todas las escuelas relacionadas con ella registren su aval.",
                     )
-                  : "<p>Esta acción es una simulación y no emite un acuerdo institucional real.</p>"
+                  : id === "27"
+                    ? notice(
+                        "Registro en PostgreSQL",
+                        "El acuerdo se guardará en «cie_resolution_evaluations» con la sesión, el artículo, la fecha, la fundamentación y las condiciones. La propuesta pasará a «Aprobada por CIE», «Con observaciones» o «Rechazada» según el tipo de acuerdo.",
+                      )
+                    : "<p>Esta acción es una simulación y no emite un acuerdo institucional real.</p>"
           }`,
           act("Revisar", "close", "secondary") +
             confirmBtn(
@@ -6859,6 +7357,70 @@ async function handleAction(action, el) {
           );
         } catch (err) {
           toast(err.message || "No se pudo registrar el dictamen de Dirección.");
+        }
+        break;
+      }
+      if (id === "27") {
+        // [Línea clave]: El acuerdo del CIE se guarda en PostgreSQL con la evaluación, la
+        // tabla «cie_resolution_evaluations» y el documento firmado; el backend ejecuta la
+        // transición de estado y notifica al investigador.
+        const idPropuesta = propuestaActivaId();
+        try {
+          const getVal = (k) => {
+            const elc = document.querySelector(`[data-field="${k}"]`);
+            if (elc) return elc.type === "checkbox" ? elc.checked : String(elc.value || "").trim();
+            return state.saved[k] ?? "";
+          };
+          const payload = {
+            id_usuario_eval: session?.user?.id_usuario,
+            id_resolucion: Number(getVal("cie:id_resolucion")) || 1,
+            numero_sesion: getVal("cie:numero_sesion") || "",
+            articulo: getVal("cie:articulo") || "",
+            fecha_resolucion: getVal("cie:fecha_resolucion") || "",
+            fundamentacion: getVal("cie:fundamentacion") || "",
+            condiciones: getVal("cie:condiciones") || "",
+            observaciones: getVal("cie:observaciones") || "",
+            id_documento: null,
+          };
+          if (!payload.numero_sesion || !payload.articulo) {
+            throw new Error("Debes registrar la sesión y el artículo del acuerdo.");
+          }
+          if (!payload.fundamentacion) {
+            throw new Error("Debes registrar la fundamentación de la resolución.");
+          }
+          const fileInput = $("#cie-doc");
+          if (fileInput?.files?.length) {
+            const subido = await subirDocumentoPropuesta(
+              idPropuesta,
+              fileInput.files[0],
+              "Acuerdo del CIE",
+            );
+            payload.id_documento = subido.id_documento;
+          }
+          const resultado = await guardarResolucionCie(idPropuesta, payload);
+          state.stage = resultado.nombre_estado;
+          state.viewProposalId = idPropuesta;
+          save();
+          closeModal();
+          await Promise.all([
+            cargarBandejaCie(),
+            cargarDashboardCie(),
+            cargarDossier(idPropuesta, true),
+            cargarResolucionCie(idPropuesta),
+          ]);
+          modal(
+            "Resolución registrada",
+            notice(
+              "Registro guardado y sincronizado con PostgreSQL",
+              `Acuerdo: ${resultado.resolucion}. Nuevo estado: ${resultado.nombre_estado}. Se notificó al investigador y el acuerdo quedó en el historial del expediente.`,
+            ),
+            btn("Volver a la bandeja", "21", "secondary") +
+              btn("Ver expediente", "22", "", "arrow"),
+            false,
+            "decision-saved",
+          );
+        } catch (err) {
+          toast(err.message || "No se pudo registrar la resolución del CIE.");
         }
         break;
       }
