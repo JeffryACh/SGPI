@@ -10,6 +10,19 @@
   <link rel="stylesheet" href="../css/branding.css">
   <link rel="stylesheet" href="../css/notifications.css">
   <link rel="stylesheet" href="../css/dark-mode.css">
+  <!-- API URL configuration - set via environment variable in Vercel/Render -->
+  <meta name="sgpi-api-url" content="https://sgpi-backend-api.onrender.com">
+  <script>
+    // Set API URL from meta tag or environment variable
+    (function() {
+      var meta = document.querySelector('meta[name="sgpi-api-url"]');
+      window.SGPI_API_URL = meta ? meta.content : 'https://sgpi-backend-api.onrender.com';
+      // Also check for environment variable injected at build time
+      if (typeof __SGPI_API_URL__ !== 'undefined') {
+        window.SGPI_API_URL = __SGPI_API_URL__;
+      }
+    })();
+  </script>
 </head>
 
 <body>
