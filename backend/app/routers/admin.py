@@ -400,6 +400,109 @@ CATALOGOS_EDITABLES: dict[str, dict[str, Any]] = {
             ("risks", "id_nivel_impacto", "riesgos de propuestas"),
         ],
     },
+    "tipo_instrumento": {
+        "tabla": "tipo_instrumento",
+        "id": "id_tipo_instrumento",
+        "orden_sql": "orden ASC, id_tipo_instrumento ASC",
+        "etiqueta": "tipos de instrumento",
+        "campos": {
+            "nombre_tipo_instrumento": {"tipo": "texto", "obligatorio": True},
+            "descripcion": {"tipo": "texto", "obligatorio": False},
+            "activo": {"tipo": "booleano", "obligatorio": False},
+            "orden": {"tipo": "entero", "obligatorio": False},
+        },
+        "referencias": [
+            ("convocatoria_documentos", "tipo_instrumento", "documentos de convocatoria"),
+        ],
+    },
+    "estado_convocatoria": {
+        "tabla": "estado_convocatoria",
+        "id": "id_estado_convocatoria",
+        "orden_sql": "orden ASC, id_estado_convocatoria ASC",
+        "etiqueta": "estados de convocatoria",
+        "campos": {
+            "nombre_estado": {"tipo": "texto", "obligatorio": True},
+            "descripcion": {"tipo": "texto", "obligatorio": False},
+            "activo": {"tipo": "booleano", "obligatorio": False},
+            "orden": {"tipo": "entero", "obligatorio": False},
+        },
+        "referencias": [],
+    },
+    "tipo_documento_propuesta": {
+        "tabla": "tipo_documento_propuesta",
+        "id": "id_tipo_documento",
+        "orden_sql": "orden ASC, id_tipo_documento ASC",
+        "etiqueta": "tipos de documento de propuesta",
+        "campos": {
+            "nombre_tipo": {"tipo": "texto", "obligatorio": True},
+            "descripcion": {"tipo": "texto", "obligatorio": False},
+            "obligatorio": {"tipo": "booleano", "obligatorio": False},
+            "activo": {"tipo": "booleano", "obligatorio": False},
+            "orden": {"tipo": "entero", "obligatorio": False},
+        },
+        "referencias": [
+            ("proposal_documents", "tipo_documento", "documentos de propuesta"),
+        ],
+    },
+    "tipo_informe": {
+        "tabla": "tipo_informe",
+        "id": "id_tipo_informe",
+        "orden_sql": "orden ASC, id_tipo_informe ASC",
+        "etiqueta": "tipos de informe",
+        "campos": {
+            "nombre_tipo": {"tipo": "texto", "obligatorio": True},
+            "descripcion": {"tipo": "texto", "obligatorio": False},
+            "activo": {"tipo": "booleano", "obligatorio": False},
+            "orden": {"tipo": "entero", "obligatorio": False},
+        },
+        "referencias": [],
+    },
+    "tipo_actividad_riesgo": {
+        "tabla": "tipo_actividad_riesgo",
+        "id": "id_tipo_actividad_riesgo",
+        "orden_sql": "orden ASC, id_tipo_actividad_riesgo ASC",
+        "etiqueta": "tipos de actividad de riesgo",
+        "campos": {
+            "nombre_tipo": {"tipo": "texto", "obligatorio": True},
+            "descripcion": {"tipo": "texto", "obligatorio": False},
+            "activo": {"tipo": "booleano", "obligatorio": False},
+            "orden": {"tipo": "entero", "obligatorio": False},
+        },
+        "referencias": [
+            ("risks", "id_tipo_actividad_riesgo", "actividades de riesgo"),
+        ],
+    },
+    "nivel_trl": {
+        "tabla": "nivel_trl",
+        "id": "id_nivel_trl",
+        "orden_sql": "nivel ASC",
+        "etiqueta": "niveles TRL",
+        "campos": {
+            "nivel": {"tipo": "entero", "obligatorio": True},
+            "nombre": {"tipo": "texto", "obligatorio": True},
+            "descripcion": {"tipo": "texto", "obligatorio": False},
+            "activo": {"tipo": "booleano", "obligatorio": False},
+        },
+        "referencias": [
+            ("propuestas", "trl_inicial", "propuestas TRL inicial"),
+            ("propuestas", "trl_esperado", "propuestas TRL esperado"),
+        ],
+    },
+    "rol_colaborador": {
+        "tabla": "rol_colaborador",
+        "id": "id_rol_colaborador",
+        "orden_sql": "orden ASC, id_rol_colaborador ASC",
+        "etiqueta": "roles de colaborador externo",
+        "campos": {
+            "nombre_rol": {"tipo": "texto", "obligatorio": True},
+            "descripcion": {"tipo": "texto", "obligatorio": False},
+            "activo": {"tipo": "booleano", "obligatorio": False},
+            "orden": {"tipo": "entero", "obligatorio": False},
+        },
+        "referencias": [
+            ("external_collaborators", "rol", "colaboradores externos"),
+        ],
+    },
 }
 
 

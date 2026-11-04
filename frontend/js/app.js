@@ -3756,38 +3756,13 @@ function myProposals() {
 
 const PROPOSAL_SCREENS = ["08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18"];
 const PROPOSAL_DEFAULTS = {
-  "08:Título de la propuesta": "Agua Inteligente: monitoreo de cuencas",
-  "08:Resumen": "Desarrollo y validación de un sistema de monitoreo que integra mediciones de calidad del agua para apoyar decisiones en dos microcuencas piloto.",
-  "08:Palabras clave": "Calidad del agua; monitoreo; cuencas; sensores",
-  "08:Resumen en inglés": "Development and validation of a water-quality monitoring system in two pilot watersheds.",
-  "08:Palabras clave en inglés": "Water quality; monitoring; watersheds; sensors",
-  "08:Prioridad nacional y ODS": "Gestión del recurso hídrico · ODS 6",
-  "08:Continuidad y financiamiento previo": "No corresponde a una continuación; no tiene financiamiento externo.",
-  "08:Instrumento jurídico / convenio": "No aplica.",
-  "08:Vinculación con posgrado": "No aplica.",
-  "08:Información sensible": "Documentación técnica del software, sujeta a valoración de Vinculación.",
-  "10:Problema e importancia": "La información sobre calidad del agua en las microcuencas piloto se obtiene mediante mediciones aisladas. Esta discontinuidad limita la identificación oportuna de variaciones y dificulta comparar condiciones entre sitios.",
-  "10:Justificación": "Un sistema de monitoreo continuo y validado permitirá reconocer variaciones en la calidad del agua y brindar evidencia útil a las personas responsables de su gestión.",
-  "10:Estado del arte y vacío identificado": "Revisión previa documentada: los sistemas comparados presentan limitaciones de continuidad de mediciones e integración de datos en las microcuencas del caso. El prototipo aborda ese vacío mediante calibración comparativa y registro continuo.",
-  "10:Antecedentes": "El equipo dispone de una prueba de concepto en laboratorio. La propuesta integra medición, registro y visualización para avanzar hacia su validación en condiciones relevantes.",
-  "12:Enfoque y diseño metodológico": "Desarrollo experimental en tres fases: definición de requerimientos, integración del prototipo y validación comparativa en campo.",
-  "12:Procedimientos y técnicas": "Se definirán puntos de medición en dos microcuencas; se calibrarán los instrumentos; se compararán registros del prototipo con mediciones de referencia; y se documentarán desempeño y limitaciones.",
-  "12:Usuarios y validación": "Personas responsables de la gestión de dos microcuencas piloto. La validación compara mediciones de pH, temperatura y conductividad con instrumentos de referencia; se documentan concordancia, cobertura temporal y limitaciones.",
-  "12:Análisis de resultados": "Se evaluarán integridad de registros, concordancia de las mediciones y disponibilidad del sistema durante el período piloto.",
   "16:TRL actual": "4",
   "16:TRL esperado": "6",
   "16:Potencial de propiedad intelectual": "Sí",
-  "16:Activo previsto": "Software de integración y registro de mediciones ambientales.",
-  "16:Difusión y socialización": "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.",
-  "16:Hoja de ruta": "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.",
   "ethics:0:applies": "No",
-  "ethics:0:reason": "No se recopilan datos de personas ni se realizan intervenciones con participantes humanos.",
   "ethics:1:applies": "No",
-  "ethics:1:reason": "No se recolectan especímenes ni material genético; solo se registran parámetros físico-químicos del agua.",
   "ethics:2:applies": "No",
-  "ethics:2:reason": "No se utilizan animales ni se realizan procedimientos sobre fauna.",
   "ethics:3:applies": "No",
-  "ethics:3:reason": "Los sitios piloto no se ubican en territorios indígenas; cualquier cambio requerirá consulta y autorización previa.",
 };
 function currentProposalId() {
   return Number(state.created?.id) || 1;
@@ -3977,7 +3952,7 @@ function buildProposalPayload() {
     },
   ];
 
-  const todasLasActividades = activities.concat(state.extraActivities || []);
+  const todasLasActividades = state.extraActivities || [];
   const plan = todasLasActividades.map((actividad, index) => {
     const [mesInicio, mesFin] = rangoMeses(actividad[4]);
     const responsable = responsableDeActividad(actividad[3]);
@@ -3994,7 +3969,7 @@ function buildProposalPayload() {
     };
   });
 
-  const todosLosRiesgos = risks.concat(state.extraRisks || []);
+  const todosLosRiesgos = state.extraRisks || [];
   const riesgos = todosLosRiesgos.map((riesgo) => {
     const responsable = responsableDeActividad(riesgo[3]);
     return {
@@ -4405,36 +4380,7 @@ function methodologyForm() {
  *     * string : 3 Rol del responsable; el nombre se resuelve desde la sesión.
  *     * string : 4 Rango de meses de ejecución.
  */
-const activities = [
-  [
-    "OE1",
-    "Definir requerimientos y sitios",
-    "Especificación de requerimientos",
-    "Ejecuta",
-    "1–6",
-  ],
-  [
-    "OE2",
-    "Integrar y calibrar el prototipo",
-    "Prototipo integrado",
-    "Ejecuta",
-    "7–12",
-  ],
-  [
-    "OE2",
-    "Validar en dos microcuencas",
-    "Datos de validación",
-    "Ejecuta",
-    "13–20",
-  ],
-  [
-    "OE3",
-    "Evaluar desempeño y documentar",
-    "Informe y manual técnico",
-    "Supervisa",
-    "21–24",
-  ],
-];
+const activities = [];
 
 /**
  * Renderizar la sección del plan de acción y cronograma de actividades (Pantalla 13).
@@ -4446,17 +4392,16 @@ const activities = [
  *     + string : planFormHtml Marcado HTML del plan de acción.
  */
 function planForm() {
-  return `${notice("Cada actividad conserva su trazabilidad", "Asocia objetivo, resultado, participante, responsabilidad, riesgo y plazo en meses correlativos.")}<div class="mt">${table(
+  const actividades = state.extraActivities || [];
+  return `${notice(actividades.length ? `${actividades.length} actividades registradas` : "Sin actividades registradas", "Asocia objetivo, resultado, participante, responsabilidad, riesgo y plazo en meses correlativos.")}<div class="mt">${table(
     ["Objetivo / actividad", "Resultado", "Responsable", "Meses"],
-    activities
-      .concat(state.extraActivities || [])
-      .map((r) => [
-        `<span class="project-code">${r[0]}</span><strong>${r[1]}</strong>`,
-        r[2],
-        `<strong>${esc(nombreResponsableActual())}</strong><br><span class="micro muted">${esc(responsableDeActividad(r[3]).rol)}</span>`,
-        r[4],
-      ]),
-  )}</div><div class="action-row mt mb">${act("Agregar actividad", "activity", "secondary", "plus")}${btn("Revisar riesgos", "14", "text", "arrow")}</div><h3 class="mb">Cronograma · 24 meses</h3><div class="gantt"><div>Actividad</div>${["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8"].map((x) => `<div>${x}</div>`).join("")}${activities.map((r, i) => `<div>${r[1]}</div>${Array.from({ length: 8 }, (_, j) => `<div ${j >= i * 2 && j < i * 2 + 2 ? 'class="bar"' : ""}></div>`).join("")}`).join("")}</div><details class="accordion"><summary>Giras e informes de seguimiento</summary><p>Se planifican giras de campo durante meses 13–20, informes semestrales en meses 6, 12, 18 y 24 e informes anuales en meses 12 y 24. La coordinación supervisa su entrega.</p></details>`;
+    actividades.map((r) => [
+      `<span class="project-code">${r[0]}</span><strong>${r[1]}</strong>`,
+      r[2],
+      `<strong>${esc(nombreResponsableActual())}</strong><br><span class="micro muted">${esc(responsableDeActividad(r[3]).rol)}</span>`,
+      r[4],
+    ]),
+  )}</div><div class="action-row mt mb">${act("Agregar actividad", "activity", "secondary", "plus")}${btn("Revisar riesgos", "14", "text", "arrow")}</div><h3 class="mb">Cronograma · 24 meses</h3><div class="gantt"><div>Actividad</div>${["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8"].map((x) => `<div>${x}</div>`).join("")}${(state.extraActivities || []).map((r, i) => `<div>${r[1]}</div>${Array.from({ length: 8 }, (_, j) => `<div ${j >= i * 2 && j < i * 2 + 2 ? 'class="bar"' : ""}></div>`).join("")}`).join("")}</div><details class="accordion"><summary>Giras e informes de seguimiento</summary><p>Se planifican giras de campo durante meses 13–20, informes semestrales en meses 6, 12, 18 y 24 e informes anuales en meses 12 y 24. La coordinación supervisa su entrega.</p></details>`;
 }
 
 /**
@@ -4469,32 +4414,6 @@ function planForm() {
  *     * string : 2 Medida de mitigación aplicable.
  *     * string : 3 Nombre del responsable del monitoreo.
  */
-const risks = [
-  [
-    "Definir requerimientos",
-    "Acceso limitado a sitios",
-    "Acordar accesos y sitios alternos antes de las visitas.",
-    "Coordinador/a",
-  ],
-  [
-    "Integrar y calibrar",
-    "Retraso de componentes",
-    "Verificar disponibilidad y opciones compatibles en el primer semestre.",
-    "Coordinador/a",
-  ],
-  [
-    "Validar en campo",
-    "Crecidas en microcuencas",
-    "Programar ventanas alternas y puntos seguros de medición.",
-    "Coordinador/a",
-  ],
-  [
-    "Evaluar y documentar",
-    "Pérdida de registros",
-    "Respaldar y verificar integridad semanalmente.",
-    "Coordinador/a",
-  ],
-];
 
 /**
  * Renderizar la matriz de gestión de riesgos y mitigación (Pantalla 14).
@@ -4506,15 +4425,14 @@ const risks = [
  *     + string : riskFormHtml Marcado HTML de la matriz de riesgos.
  */
 function riskForm() {
-  return `${notice("4 actividades · 4 riesgos asociados", "La plantilla exige identificar riesgos, mitigación y responsable para cada actividad.")}<div class="mt">${table(
+  const riesgos = state.extraRisks || [];
+  return `${notice(riesgos.length ? `${riesgos.length} riesgos registrados` : "Sin riesgos registrados", "La plantilla exige identificar riesgos, mitigación y responsable para cada actividad.")}<div class="mt">${table(
     ["Actividad / riesgo", "Medida de mitigación", "Responsable"],
-    risks
-      .concat(state.extraRisks || [])
-      .map((r) => [
-        `<span class="project-code">${r[0]}</span><strong>${r[1]}</strong>`,
-        r[2],
-        `<strong>${esc(nombreResponsableActual())}</strong>`,
-      ]),
+    riesgos.map((r) => [
+      `<span class="project-code">${r[0]}</span><strong>${r[1]}</strong>`,
+      r[2],
+      `<strong>${esc(nombreResponsableActual())}</strong>`,
+    ]),
   )}</div><div class="mt">${act("Agregar riesgo", "risk", "secondary", "plus")}</div><details class="accordion"><summary>Revisar consistencia con el plan</summary><p>Las medidas son realizables con los recursos y plazos de la propuesta. Los riesgos se revisarán durante cada informe de seguimiento.</p></details>`;
 }
 
@@ -4584,7 +4502,11 @@ function complementaryForm() {
       "Los sitios piloto no se ubican en territorios indígenas; cualquier cambio requerirá consulta y autorización previa.",
     ],
   ];
-  return `<h3 class="mb">Madurez tecnológica y propiedad intelectual</h3><div class="field-row">${field("TRL actual", ["4", "1", "2", "3", "5", "6", "7", "8", "9"], "select", "Rango de referencia DT: 4–7.", true, "", "", "4")}${field("TRL esperado", ["6", "1", "2", "3", "4", "5", "7", "8", "9"], "select", "Coherente con objetivos y validación.", true, "", "", "6")}</div>${field("Potencial de propiedad intelectual", ["Sí", "No"], "select", "En desarrollo tecnológico el dictamen de Vinculación es obligatorio.", true, "", "", "Sí")}${field("Activo previsto", "", "textarea", "Evitar divulgación previa a la valoración institucional.", true, "", "Software de integración y registro de mediciones ambientales.")}<details class="accordion" open><summary>Declaraciones éticas individuales</summary><p class="small muted" style="margin-top:14px">Cada aspecto se declara y justifica por separado; no se admite una respuesta general.</p><div class="ethics-grid">${ethics.map(([label, reason], i) => `<section class="ethics-item"><h3>${label}</h3>${field("¿Aplica?", ["No", "Sí"], "select", "Selecciona Sí si la actividad requiere revisión o permisos.", true, `ethics:${i}:applies`, "", "No")}${field(`Justificación específica`, "", "textarea", "Indica entidad, estado, mitigación y plazo si corresponde.", true, `ethics:${i}:reason`, reason)}</section>`).join("")}</div></details><details class="accordion"><summary>Producción, difusión y hoja de ruta</summary><p><strong>${totalHoras} h/semana:</strong> software + artículo sometido WoS/Scopus + manual técnico. Se asocian a OE2 y OE3.</p>${field("Difusión y socialización", "", "textarea", "Plan de difusión de resultados (seminarios, publicaciones, transferencia).", false, "", "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.")}${field("Hoja de ruta", "", "textarea", "Hitos para avanzar del TRL actual al esperado.", false, "", "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.")}</details>`;
+  const trlOpts = (catalogos?.nivel_trl ?? []).map((t) => ({
+    value: String(t.nivel),
+    label: t.nombre,
+  }));
+  return `<h3 class="mb">Madurez tecnológica y propiedad intelectual</h3><div class="field-row">${field("TRL actual", trlOpts, "select", "Rango de referencia DT: 4–7.", true, "", "", "4")}${field("TRL esperado", trlOpts, "select", "Coherente con objetivos y validación.", true, "", "", "6")}</div>${field("Potencial de propiedad intelectual", ["Sí", "No"], "select", "En desarrollo tecnológico el dictamen de Vinculación es obligatorio.", true, "", "", "Sí")}${field("Activo previsto", "", "textarea", "Evitar divulgación previa a la valoración institucional.", true, "", "Software de integración y registro de mediciones ambientales.")}<details class="accordion" open><summary>Declaraciones éticas individuales</summary><p class="small muted" style="margin-top:14px">Cada aspecto se declara y justifica por separado; no se admite una respuesta general.</p><div class="ethics-grid">${ethics.map(([label, reason], i) => `<section class="ethics-item"><h3>${label}</h3>${field("¿Aplica?", ["No", "Sí"], "select", "Selecciona Sí si la actividad requiere revisión o permisos.", true, `ethics:${i}:applies`, "", "No")}${field(`Justificación específica`, "", "textarea", "Indica entidad, estado, mitigación y plazo si corresponde.", true, `ethics:${i}:reason`, reason)}</section>`).join("")}</div></details><details class="accordion"><summary>Producción, difusión y hoja de ruta</summary><p><strong>${totalHoras} h/semana:</strong> software + artículo sometido WoS/Scopus + manual técnico. Se asocian a OE2 y OE3.</p>${field("Difusión y socialización", "", "textarea", "Plan de difusión de resultados (seminarios, publicaciones, transferencia).", false, "", "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.")}${field("Hoja de ruta", "", "textarea", "Hitos para avanzar del TRL actual al esperado.", false, "", "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.")}</details>`;
 }
 
 /**

@@ -72,6 +72,13 @@ class CatalogosResponse(BaseModel):
         * list[dict[str, Any]] : rubros_presupuesto Lista de rubros de gasto para formulación presupuestaria.
         * list[dict[str, Any]] : niveles_riesgo Lista de niveles de riesgo (probabilidad e impacto).
         * list[dict[str, Any]] : estados Lista de los 12 estados oficiales de tramitación de propuestas.
+        * list[dict[str, Any]] : tipo_instrumento Tipos de instrumento oficial para documentos de convocatoria.
+        * list[dict[str, Any]] : estado_convocatoria Estados posibles de una convocatoria para filtrado.
+        * list[dict[str, Any]] : tipo_documento_propuesta Tipos de documento adjunto a propuestas.
+        * list[dict[str, Any]] : tipo_informe Tipos de informe de seguimiento (semestral, anual, final).
+        * list[dict[str, Any]] : tipo_actividad_riesgo Tipos de actividad para matriz de riesgos.
+        * list[dict[str, Any]] : nivel_trl Niveles TRL 1-9 (Technology Readiness Level).
+        * list[dict[str, Any]] : rol_colaborador Roles posibles para colaboradores externos.
     """
     escuelas: list[dict[str, Any]]
     modalidades: list[dict[str, Any]]
@@ -80,6 +87,13 @@ class CatalogosResponse(BaseModel):
     rubros_presupuesto: list[dict[str, Any]]
     niveles_riesgo: list[dict[str, Any]]
     estados: list[dict[str, Any]]
+    tipo_instrumento: list[dict[str, Any]]
+    estado_convocatoria: list[dict[str, Any]]
+    tipo_documento_propuesta: list[dict[str, Any]]
+    tipo_informe: list[dict[str, Any]]
+    tipo_actividad_riesgo: list[dict[str, Any]]
+    nivel_trl: list[dict[str, Any]]
+    rol_colaborador: list[dict[str, Any]]
 
 
 @router.get("", response_model=CatalogosResponse)
@@ -113,8 +127,15 @@ def obtener_todos_catalogos(
         rubros_cur = stack.enter_context(conn.cursor())
         niveles_cur = stack.enter_context(conn.cursor())
         estados_cur = stack.enter_context(conn.cursor())
+        tipo_instrumento_cur = stack.enter_context(conn.cursor())
+        estado_convocatoria_cur = stack.enter_context(conn.cursor())
+        tipo_documento_propuesta_cur = stack.enter_context(conn.cursor())
+        tipo_informe_cur = stack.enter_context(conn.cursor())
+        tipo_actividad_riesgo_cur = stack.enter_context(conn.cursor())
+        nivel_trl_cur = stack.enter_context(conn.cursor())
+        rol_colaborador_cur = stack.enter_context(conn.cursor())
 
-        # [Línea clave]: Envía las 7 consultas en un solo pipeline para pagar un único round-trip.
+        # [Línea clave]: Envía las 14 consultas en un solo pipeline para pagar un único round-trip.
         with conn.pipeline():
             # [Línea clave]: Consulta las escuelas ordenadas alfabéticamente para desplegables y filtros.
             escuelas_cur.execute("SELECT id_escuela, nombre, siglas FROM escuelas ORDER BY nombre ASC")
@@ -145,6 +166,27 @@ def obtener_todos_catalogos(
             # [Línea clave]: Consulta el catálogo de los 12 estados oficiales de la Convocatoria Fondos VIE 2027.
             estados_cur.execute("SELECT id_estado, nombre_estado FROM estados ORDER BY id_estado ASC")
 
+            # [Línea clave]: Tipo de instrumento para documentos de convocatoria (admin pantalla 31).
+            tipo_instrumento_cur.execute("SELECT id_tipo_instrumento, nombre_tipo_instrumento, descripcion, activo, orden FROM tipo_instrumento WHERE activo ORDER BY orden ASC")
+
+            # [Línea clave]: Estado de convocatoria para filtrado en pantalla 04/05.
+            estado_convocatoria_cur.execute("SELECT id_estado_convocatoria, nombre_estado, descripcion, activo, orden FROM estado_convocatoria WHERE activo ORDER BY orden ASC")
+
+            # [Línea clave]: Tipo de documento adjunto a propuestas (pantalla 17).
+            tipo_documento_propuesta_cur.execute("SELECT id_tipo_documento, nombre_tipo, descripcion, obligatorio, activo, orden FROM tipo_documento_propuesta WHERE activo ORDER BY orden ASC")
+
+            # [Línea clave]: Tipo de informe de seguimiento (pantalla 20).
+            tipo_informe_cur.execute("SELECT id_tipo_informe, nombre_tipo, descripcion, activo, orden FROM tipo_informe WHERE activo ORDER BY orden ASC")
+
+            # [Línea clave]: Tipo de actividad para matriz de riesgos (pantalla 14).
+            tipo_actividad_riesgo_cur.execute("SELECT id_tipo_actividad_riesgo, nombre_tipo, descripcion, activo, orden FROM tipo_actividad_riesgo WHERE activo ORDER BY orden ASC")
+
+            # [Línea clave]: Nivel TRL 1-9 (Technology Readiness Level) para pantalla 16.
+            nivel_trl_cur.execute("SELECT id_nivel_trl, nivel, nombre, descripcion, activo FROM nivel_trl WHERE activo ORDER BY nivel ASC")
+
+            # [Línea clave]: Rol de colaborador externo para equipo investigador (pantalla 09).
+            rol_colaborador_cur.execute("SELECT id_rol_colaborador, nombre_rol, descripcion, activo, orden FROM rol_colaborador WHERE activo ORDER BY orden ASC")
+
         data = {
             "escuelas": escuelas_cur.fetchall(),
             "modalidades": modalidades_cur.fetchall(),
@@ -153,6 +195,13 @@ def obtener_todos_catalogos(
             "rubros_presupuesto": rubros_cur.fetchall(),
             "niveles_riesgo": niveles_cur.fetchall(),
             "estados": estados_cur.fetchall(),
+            "tipo_instrumento": tipo_instrumento_cur.fetchall(),
+            "estado_convocatoria": estado_convocatoria_cur.fetchall(),
+            "tipo_documento_propuesta": tipo_documento_propuesta_cur.fetchall(),
+            "tipo_informe": tipo_informe_cur.fetchall(),
+            "tipo_actividad_riesgo": tipo_actividad_riesgo_cur.fetchall(),
+            "nivel_trl": nivel_trl_cur.fetchall(),
+            "rol_colaborador": rol_colaborador_cur.fetchall(),
         }
 
     _catalogos_cache = (ahora, data)
