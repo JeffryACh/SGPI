@@ -30,7 +30,11 @@ INSERT INTO public.escuelas (nombre, siglas) VALUES
   ('Escuela de Administración de Empresas', 'ADE');
 
 -- 2. Estados de la convocatoria Fondos VIE
--- [Línea clave]: ¿Por qué soy importante? Define los 12 estados del flujo oficial de propuestas. ¿Para qué? Controlar la máquina de estados y las transiciones del ciclo de vida. ¿Dónde me usan? En propuestas.py, vinculacion.py, comite.py y en frontend/js/app.js.
+-- [Línea clave]: ¿Por qué soy importante? Define los 12 estados del flujo oficial de propuestas. ¿Para qué? Controlar la máquina de estados y las transiciones del ciclo de vida. ¿Dónde me usan? En backend/app/estados.py, en los routers (propuestas.py, vinculacion.py, comite.py, consejo.py, direccion.py, cie.py, tramite.py) y en frontend/js/app.js.
+-- [Línea clave]: El IDENTIFICADOR de cada estado no es parte del contrato. El orden de esta
+-- semilla puede diferir del de otros ambientes, por lo que todo el código resuelve el
+-- estado por su NOMBRE oficial (backend/app/estados.py y frontend/js/app.js). La siembra
+-- es idempotente: si el catálogo ya existe, no se duplica ni se altera.
 INSERT INTO public.estados (nombre_estado) VALUES
   ('En formulación'),
   ('En revisión de Vinculación'),
@@ -43,7 +47,8 @@ INSERT INTO public.estados (nombre_estado) VALUES
   ('Con observaciones'),
   ('Rechazada'),
   ('En ejecución'),
-  ('Cerrada');
+  ('Cerrada')
+ON CONFLICT (nombre_estado) DO NOTHING;
 
 -- 3. Modalidades oficiales
 INSERT INTO public.modalidades (nombre_modalidad) VALUES

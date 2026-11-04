@@ -77,6 +77,83 @@ function Test-Endpoint {
 }
 
 # -------------------------------------------------------------
+# Get-IdEstado: resolver el identificador de un estado por su NOMBRE
+# -------------------------------------------------------------
+# [Línea clave]: El identificador de la tabla «estados» no es parte del contrato: su
+# orden difiere entre ambientes. El script nunca escribe números de estado a mano;
+# siempre los obtiene del catálogo oficial que publica GET /catalogos.
+function Get-IdEstado {
+    param([string]$Nombre)
+
+    if (-not $script:CatalogoEstados) {
+        Write-Host "  [AVISO] El catálogo de estados no está cargado; no se puede resolver «$Nombre»." -ForegroundColor Yellow
+        return $null
+    }
+    $fila = $script:CatalogoEstados | Where-Object { $_.nombre_estado -eq $Nombre } | Select-Object -First 1
+    if (-not $fila) {
+        Write-Host "  [AVISO] El estado «$Nombre» no existe en el catálogo institucional." -ForegroundColor Yellow
+        return $null
+    }
+    return [int]$fila.id_estado
+}
+
+# -------------------------------------------------------------
+# Get-IdRol: resolver el identificador de un rol por su NOMBRE
+# -------------------------------------------------------------
+# [Línea clave]: El catálogo «roles» también se resuelve por nombre, porque su orden
+# depende del ambiente y de las migraciones aplicadas.
+function Get-IdRol {
+    param([string]$Nombre)
+
+    if (-not $script:CatalogoRoles) {
+        Write-Host "  [AVISO] El catálogo de roles no está cargado; no se puede resolver «$Nombre»." -ForegroundColor Yellow
+        return $null
+    }
+    $fila = $script:CatalogoRoles | Where-Object { $_.nombre_rol -eq $Nombre } | Select-Object -First 1
+    if (-not $fila) {
+        Write-Host "  [AVISO] El rol «$Nombre» no existe en el catálogo institucional." -ForegroundColor Yellow
+        return $null
+    }
+    return [int]$fila.id_rol
+}
+
+# -------------------------------------------------------------
+# Test-UploadDocumento: cargar un archivo real en el expediente
+# -------------------------------------------------------------
+# [Línea clave]: El cierre administrativo exige el informe final como soporte
+# documental, así que la prueba necesita un archivo subido de verdad a Supabase
+# Storage (multipart) en lugar de una referencia simulada.
+function Test-UploadDocumento {
+    param(
+        [string]$Name,
+        [int]$IdPropuesta,
+        [int]$IdUsuario,
+        [string]$TipoDocumento = "Informe final del proyecto",
+        [string]$ArchivoLocal
+    )
+
+    $archivoRespuesta = [System.IO.Path]::GetTempFileName()
+    Write-Host "`nProbando: [POST] /propuestas/$IdPropuesta/documentos ($Name)..." -NoNewline
+    try {
+        $codigo = & curl.exe -s -o $archivoRespuesta -w "%{http_code}" -X POST `
+            -F "archivo=@$ArchivoLocal;type=application/pdf" `
+            -F "id_usuario=$IdUsuario" `
+            -F "tipo_documento=$TipoDocumento" `
+            "$BaseUrl/propuestas/$IdPropuesta/documentos"
+        $cuerpo = Get-Content $archivoRespuesta -Raw -ErrorAction SilentlyContinue
+        if ($codigo -eq "201") {
+            Write-Host " [OK 201]" -ForegroundColor Green
+            return ($cuerpo | ConvertFrom-Json)
+        }
+        Write-Host " [ERROR: recibido $codigo]" -ForegroundColor Red
+        Write-Host "Detalle: $cuerpo" -ForegroundColor Yellow
+        return $null
+    } finally {
+        Remove-Item $archivoRespuesta -ErrorAction SilentlyContinue
+    }
+}
+
+# -------------------------------------------------------------
 # FASE 1: SALUD, CONEXION BD Y AUTENTICACION INSTITUCIONAL
 # -------------------------------------------------------------
 
@@ -101,14 +178,35 @@ if ($auth) {
     Write-Host "  -> Usuario: $($auth.nombre) | Roles: $($auth.roles -join ', ')" -ForegroundColor Gray
 }
 
+# 2b. Sesión administrativa para resolver el catálogo de roles por nombre
+$script:CatalogoRoles = @()
+$loginDireccionInicial = Test-Endpoint -Name "Autenticación Dirección de Investigación" -Method "POST" -Endpoint "/auth/login" -Body @{
+    correo = "elena.chacon@example.com"
+    password = "demostracion"
+}
+$idUsuarioDireccion = if ($loginDireccionInicial) { $loginDireccionInicial.id_usuario } else { 7 }
+if ($loginDireccionInicial) {
+    Write-Host "  -> Dirección: $($loginDireccionInicial.nombre) | ID: $idUsuarioDireccion | Roles: $($loginDireccionInicial.roles -join ', ')" -ForegroundColor Gray
+}
+$rolesCatalogo = Test-Endpoint -Name "Catálogo de roles institucionales" -Endpoint "/admin/catalogos/roles?id_usuario=$idUsuarioDireccion"
+if ($rolesCatalogo) {
+    $script:CatalogoRoles = @($rolesCatalogo)
+    Write-Host "  -> Roles del catálogo: $(@($script:CatalogoRoles).Count) ($((@($script:CatalogoRoles) | ForEach-Object { $_.nombre_rol }) -join ', '))" -ForegroundColor Gray
+}
+
 # -------------------------------------------------------------
 # FASE 2: CATALOGOS UNIFICADOS Y REGLAS NORMATIVAS VIE 2027
 # -------------------------------------------------------------
 
 # 3. Catálogos unificados
 $catalogos = Test-Endpoint -Name "Catálogos Unificados" -Endpoint "/catalogos"
+$script:CatalogoEstados = @()
 if ($catalogos) {
     Write-Host "  -> Escuelas: $(@($catalogos.escuelas).Count), Modalidades: $(@($catalogos.modalidades).Count), Tipos de Hora: $(@($catalogos.tipos_hora).Count)" -ForegroundColor Gray
+    # [Línea clave]: El catálogo de estados se carga una sola vez para resolver los
+    # identificadores por nombre en todas las fases siguientes.
+    $script:CatalogoEstados = @($catalogos.estados)
+    Write-Host "  -> Estados del catálogo: $(@($script:CatalogoEstados).Count) ($((@($script:CatalogoEstados) | ForEach-Object { $_.nombre_estado }) -join ', '))" -ForegroundColor Gray
 }
 
 # 4. Tipos de Hora oficiales
@@ -144,6 +242,12 @@ $lista = Test-Endpoint -Name "Listado General de Propuestas" -Endpoint "/propues
 
 # 10. Crear Propuesta de prueba (Inserción Atómica Multitabla)
 $marcaHora = Get-Date -Format 'HH:mm:ss'
+# [Línea clave]: Marca sin separadores, apta para nombres de archivo en Windows.
+$marcaArchivo = Get-Date -Format 'HHmmss'
+# Informe final mínimo en PDF: el cierre administrativo exige un archivo real.
+$rutaInformePdf = Join-Path $env:TEMP "sgpi-informe-final-$marcaArchivo.pdf"
+$contenidoInformePdf = "%PDF-1.4`n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj`n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj`n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj`ntrailer<</Root 1 0 R>>`n%%EOF"
+[System.IO.File]::WriteAllText($rutaInformePdf, $contenidoInformePdf, [System.Text.Encoding]::ASCII)
 $nuevaPropuesta = @{
     id_usuario_lider = 1
     id_escuela = 1
@@ -154,7 +258,8 @@ $nuevaPropuesta = @{
     id_convocatoria = 1
     fecha_inicio = "2027-01-01"
     fecha_fin = "2028-12-31"
-    estado_inicial = 1
+    # [Línea clave]: La etapa inicial viaja por su nombre oficial, nunca por un número.
+    estado_inicial_nombre = "En formulación"
     equipo = @(
         @{ id_usuario = 1; id_tipo_hora = 1; horas_asignadas = 12 },
         @{ id_usuario = 2; id_tipo_hora = 2; horas_asignadas = 4 }
@@ -194,8 +299,10 @@ if ($creacion -and $creacion.propuesta) {
     $dossier = Test-Endpoint -Name "Expediente Completo de la Propuesta (Dossier + IA)" -Endpoint "/propuestas/$nuevoId"
 
     # 12. Transición de Estado (Envío a Revisión -> Disparo automático de IA)
+    # [Línea clave]: El estado destino se resuelve por su nombre oficial en el catálogo.
+    $estadoRevisionVinculacion = Get-IdEstado -Nombre "En revisión de Vinculación"
     $cambioEstado = @{
-        id_nuevo_estado = 2
+        id_nuevo_estado = $estadoRevisionVinculacion
         id_usuario_responsable = 1
         observaciones = "Envío automático de prueba a revisión técnica"
     }
@@ -203,14 +310,52 @@ if ($creacion -and $creacion.propuesta) {
     if ($resEstado -and $resEstado.evaluacion_preliminar_ia) {
         Write-Host "  -> IA activada automáticamente. Puntaje: $($resEstado.evaluacion_preliminar_ia.puntaje_preliminar)/100" -ForegroundColor Gray
     }
+    if ($resEstado) {
+        Write-Host "  -> Nuevo estado: $($resEstado.nombre_estado)" -ForegroundColor Gray
+    }
+
+    # 12b. Transición no permitida por la máquina de estados (409 esperado)
+    $estadoCerrada = Get-IdEstado -Nombre "Cerrada"
+    $saltoInvalido = @{
+        id_nuevo_estado = $estadoCerrada
+        id_usuario_responsable = 1
+        observaciones = "Prueba negativa: salto de etapa no admitido por el flujo institucional."
+    }
+    $resSaltoInvalido = Test-Endpoint -Name "Salto de etapa no permitido (409 esperado)" -Method "PATCH" -Endpoint "/propuestas/$nuevoId/estado" -Body $saltoInvalido -ExpectedStatus 409
+    if ($resSaltoInvalido) {
+        Write-Host "  [AVISO] El backend permitió un salto de etapa no contemplado en el flujo." -ForegroundColor Yellow
+    } else {
+        Write-Host "  -> Rechazo correcto: la máquina de estados no admite ese salto." -ForegroundColor Gray
+    }
+
+    # 12c. Transición permitida pero ejecutada por un rol sin facultad (409 esperado)
+    $estadoComiteTecnico = Get-IdEstado -Nombre "En evaluación del Comité Técnico"
+    $saltoSinFacultad = @{
+        id_nuevo_estado = $estadoComiteTecnico
+        id_usuario_responsable = 1
+        observaciones = "Prueba negativa: el investigador líder no dictamina la etapa de Vinculación."
+    }
+    $resSinFacultad = Test-Endpoint -Name "Transición por un rol sin facultad (409 esperado)" -Method "PATCH" -Endpoint "/propuestas/$nuevoId/estado" -Body $saltoSinFacultad -ExpectedStatus 409
+    if ($resSinFacultad) {
+        Write-Host "  [AVISO] El backend permitió a un investigador avanzar una etapa que no le corresponde." -ForegroundColor Yellow
+    } else {
+        Write-Host "  -> Rechazo correcto: solo Vinculación puede dictaminar esa etapa." -ForegroundColor Gray
+    }
 
     # 13. Registro de Dictamen / Calificación Oficial por Evaluador
+    # [Línea clave]: El dictamen lo emite el Centro de Vinculación, que es el rol dueño
+    # de la etapa «En revisión de Vinculación».
+    $loginVinculacionFase3 = Test-Endpoint -Name "Login del Centro de Vinculación" -Method "POST" -Endpoint "/auth/login" -Body @{
+        correo = "mariana.solis@example.com"
+        password = "demostracion"
+    }
+    $idUsuarioVinculacion = if ($loginVinculacionFase3) { $loginVinculacionFase3.id_usuario } else { 4 }
     $evalOficial = @{
-        id_usuario_eval = 1
-        id_rol_evaluador = 3
+        id_usuario_eval = $idUsuarioVinculacion
+        id_rol_evaluador = (Get-IdRol -Nombre "Vinculación")
         observaciones = "Evaluación técnica de prueba conforme a rúbrica oficial."
         puntaje_comite = 88
-        cambiar_a_estado = 3
+        cambiar_a_estado = $estadoComiteTecnico
     }
     $resEval = Test-Endpoint -Name "Registro de Calificación del Comité Técnico" -Method "POST" -Endpoint "/propuestas/$nuevoId/evaluaciones" -Body $evalOficial
     if ($resEval) {
@@ -307,8 +452,9 @@ if ($loginComite) {
 $bandejaComite = Test-Endpoint -Name "Bandeja del Comité Técnico" -Endpoint "/propuestas/comite/bandeja?rol=Comit%C3%A9%20T%C3%A9cnico&id_usuario=$idUsuarioComite"
 if ($bandejaComite) {
     Write-Host "  -> Expedientes en la bandeja: $(@($bandejaComite).Count)" -ForegroundColor Gray
-    # C3b. La bandeja ordena por fecha de ingreso al estado 3 (proposal_state_history)
-    $pendientesComite = @($bandejaComite | Where-Object { $_.id_estado -eq 3 })
+    # C3b. La bandeja ordena por fecha de ingreso a «En evaluación del Comité Técnico» (proposal_state_history)
+    # [Línea clave]: El filtro se hace por el NOMBRE del estado, nunca por su identificador.
+    $pendientesComite = @($bandejaComite | Where-Object { $_.estado -eq "En evaluación del Comité Técnico" })
     if ($pendientesComite.Count -gt 0) {
         $masReciente = @($pendientesComite | Sort-Object { if ($_.fecha_ingreso_comite) { $_.fecha_ingreso_comite } else { $_.fecha_creacion } } -Descending)[0]
         Write-Host "  -> Pendientes: $($pendientesComite.Count) | Más reciente: $($masReciente.codigo) (ingreso $($masReciente.fecha_ingreso_comite))" -ForegroundColor Gray
@@ -326,10 +472,11 @@ if ($bandejaProhibida) {
     Write-Host "  -> Rechazo correcto: el usuario 1 no tiene rol Comité Técnico." -ForegroundColor Gray
 }
 
-# C4. Propuesta de prueba creada directamente en estado 3 (En evaluación del Comité Técnico)
+# C4. Propuesta de prueba creada directamente en «En evaluación del Comité Técnico»
 $propuestaComite = $nuevaPropuesta.Clone()
 $propuestaComite.titulo = "Test Comité Técnico - Rúbrica ponderada $marcaHora"
-$propuestaComite.estado_inicial = 3
+$propuestaComite.estado_inicial_nombre = "En evaluación del Comité Técnico"
+$propuestaComite.Remove("estado_inicial")
 $creacionComite = Test-Endpoint -Name "Creación de propuesta para el Comité Técnico" -Method "POST" -Endpoint "/propuestas" -Body $propuestaComite
 $idPropuestaComite = if ($creacionComite -and $creacionComite.propuesta) { $creacionComite.propuesta.id_propuesta } else { $null }
 if ($idPropuestaComite) {
@@ -412,7 +559,7 @@ if ($idPropuestaComite) {
 
 # D1. Login como Dirección de Investigación
 $loginDireccion = Test-Endpoint -Name "Autenticación Dirección de Investigación" -Method "POST" -Endpoint "/auth/login" -Body @{ correo = "elena.chacon@example.com"; password = "demostracion" }
-$idUsuarioDireccion = if ($loginDireccion) { $loginDireccion.id_usuario } else { 16 }
+$idUsuarioDireccion = if ($loginDireccion) { $loginDireccion.id_usuario } else { 7 }
 if ($loginDireccion) {
     Write-Host "  -> Usuario: $($loginDireccion.nombre) | ID: $idUsuarioDireccion | Roles: $($loginDireccion.roles -join ', ')" -ForegroundColor Gray
 }
@@ -433,14 +580,14 @@ if ($dashboardDireccion) {
 }
 
 # D3. Propuesta sometida ante VIE para dictamen.
-# [Línea clave]: Se crea siempre una propuesta nueva en estado 6 en lugar de reutilizar una
+# [Línea clave]: Se crea siempre una propuesta nueva en «Sometida ante VIE» en lugar de reutilizar una
 # pendiente de la bandeja. Si se reutilizara, cada corrida del smoke test consumiría el
 # dictamen pendiente y el tablero de Dirección quedaría con 0 pendientes para la validación visual.
 $idPropuestaDireccion = $null
 $propuestaDir = $nuevaPropuesta.Clone()
 $propuestaDir.titulo = "Test Dirección de Investigación - Dictamen $marcaHora"
-$propuestaDir.estado_inicial = 6
-$creacionDir = Test-Endpoint -Name "Creación de propuesta para Dirección (estado 6)" -Method "POST" -Endpoint "/propuestas" -Body $propuestaDir
+$propuestaDir.estado_inicial_nombre = "Sometida ante VIE"
+$creacionDir = Test-Endpoint -Name "Creación de propuesta para Dirección (Sometida ante VIE)" -Method "POST" -Endpoint "/propuestas" -Body $propuestaDir
 if ($creacionDir -and $creacionDir.propuesta) {
     $idPropuestaDireccion = $creacionDir.propuesta.id_propuesta
     Write-Host "  -> Propuesta sometida ante VIE: ID $idPropuestaDireccion" -ForegroundColor Cyan
@@ -503,10 +650,17 @@ if (-not $adminNegado) {
 }
 
 # E2. Los tres roles facultados listan las convocatorias
+# [Línea clave]: El usuario con rol «Administrador del Sistema» se resuelve por su
+# correo institucional, no por un identificador fijo.
+$loginAdmin = Test-Endpoint -Name "Autenticación Administrador del Sistema" -Method "POST" -Endpoint "/auth/login" -Body @{
+    correo = "administrador@example.com"
+    password = "demostracion"
+}
+$idUsuarioAdmin = if ($loginAdmin) { $loginAdmin.id_usuario } else { 9 }
 foreach ($rolAdmin in @(
     @{ etiqueta = "Dirección de Investigación"; id = $idUsuarioDireccion },
     @{ etiqueta = "Funcionario VIE"; id = 7 },
-    @{ etiqueta = "Administrador del Sistema"; id = 20 }
+    @{ etiqueta = "Administrador del Sistema"; id = $idUsuarioAdmin }
 )) {
     $convocatoriasAdmin = Test-Endpoint -Name "Convocatorias como $($rolAdmin.etiqueta)" -Endpoint "/admin/convocatorias?id_usuario=$($rolAdmin.id)"
     if ($convocatoriasAdmin) {
@@ -579,8 +733,12 @@ if ($lineaAdmin -and $lineaAdmin.id_linea_investigacion) {
 Test-Endpoint -Name "Eliminación de escuela en uso (409 esperado)" -Method "DELETE" -Endpoint "/admin/catalogos/escuelas/1?id_usuario=$idUsuarioDireccion" -ExpectedStatus 409 | Out-Null
 
 # E9. Orden de los roles institucionales
-Test-Endpoint -Name "Reordenamiento de roles institucionales" -Method "PATCH" -Endpoint "/admin/catalogos/roles/2/mover?id_usuario=$idUsuarioDireccion" -Body @{ direccion = "arriba" } | Out-Null
-Test-Endpoint -Name "Restauración del orden de roles" -Method "PATCH" -Endpoint "/admin/catalogos/roles/2/mover?id_usuario=$idUsuarioDireccion" -Body @{ direccion = "abajo" } | Out-Null
+# [Línea clave]: El rol que se reordena se resuelve por su nombre oficial.
+$idRolOrden = Get-IdRol -Nombre "Vinculación"
+if ($idRolOrden) {
+    Test-Endpoint -Name "Reordenamiento de roles institucionales" -Method "PATCH" -Endpoint "/admin/catalogos/roles/$idRolOrden/mover?id_usuario=$idUsuarioDireccion" -Body @{ direccion = "arriba" } | Out-Null
+    Test-Endpoint -Name "Restauración del orden de roles" -Method "PATCH" -Endpoint "/admin/catalogos/roles/$idRolOrden/mover?id_usuario=$idUsuarioDireccion" -Body @{ direccion = "abajo" } | Out-Null
+}
 
 # E10. Rúbrica versionada: consulta, secciones, criterios y versiones
 $rubricaAdmin = Test-Endpoint -Name "Rúbrica institucional versionada" -Endpoint "/admin/rubrica?id_usuario=$idUsuarioDireccion"
@@ -632,16 +790,24 @@ if ($frontendCheck) {
 Write-Host "`n--- FASE 10: COMITE DE ETICA EN INVESTIGACION (CIE) ---" -ForegroundColor Cyan
 
 # C1. Autenticación de los dos roles institucionales del CIE
-$loginCie = Test-Endpoint -Name "Autenticación Comité de Ética (CIE)" -Method "POST" -Endpoint "/auth/login" -Body @{ correo = "ricardo.mora@example.com"; password = "demostracion" }
-$idUsuarioCie = if ($loginCie) { $loginCie.id_usuario } else { 17 }
+# [Línea clave]: El comité tiene dos roles («CIE» y «Evaluador Comité de Ética (CIE)»).
+# Se prueban los correos sembrados y, si el segundo rol no existe en el ambiente,
+# la comprobación se omite con aviso en lugar de falsear el resultado.
+$loginCie = Test-Endpoint -Name "Autenticación Comité de Ética (CIE)" -Method "POST" -Endpoint "/auth/login" -Body @{ correo = "carlos.morales@example.com"; password = "demostracion" }
+if (-not $loginCie) {
+    $loginCie = Test-Endpoint -Name "Autenticación Comité de Ética (CIE) - correo alterno" -Method "POST" -Endpoint "/auth/login" -Body @{ correo = "ricardo.mora@example.com"; password = "demostracion" }
+}
+$idUsuarioCie = if ($loginCie) { $loginCie.id_usuario } else { 8 }
 if ($loginCie) {
     Write-Host "  -> Usuario: $($loginCie.nombre) | ID: $idUsuarioCie | Roles: $($loginCie.roles -join ', ')" -ForegroundColor Gray
 }
 
 $loginCieEvaluador = Test-Endpoint -Name "Autenticación Evaluador Comité de Ética" -Method "POST" -Endpoint "/auth/login" -Body @{ correo = "patricia.solano@universidad.edu"; password = "demostracion" }
-$idUsuarioCieEvaluador = if ($loginCieEvaluador) { $loginCieEvaluador.id_usuario } else { 6 }
+$idUsuarioCieEvaluador = if ($loginCieEvaluador) { $loginCieEvaluador.id_usuario } else { $null }
 if ($loginCieEvaluador) {
     Write-Host "  -> Evaluadora: $($loginCieEvaluador.nombre) | ID: $idUsuarioCieEvaluador | Roles: $($loginCieEvaluador.roles -join ', ')" -ForegroundColor Gray
+} else {
+    Write-Host "  [AVISO] El rol «Evaluador Comité de Ética (CIE)» no existe en este ambiente: se omiten las pruebas exclusivas de ese rol." -ForegroundColor Yellow
 }
 
 # C2. Un investigador no tiene rol de CIE
@@ -654,9 +820,11 @@ if ($bandejaCie) {
 }
 
 # C3b. El evaluador individual del CIE ve la misma bandeja
-$bandejaCieEvaluador = Test-Endpoint -Name "Bandeja del CIE (rol Evaluador Comité de Ética)" -Endpoint "/propuestas/cie/bandeja?rol=CIE&id_usuario=$idUsuarioCieEvaluador"
-if ($bandejaCieEvaluador) {
-    Write-Host "  -> Expedientes visibles para el evaluador: $(@($bandejaCieEvaluador).Count)" -ForegroundColor Gray
+if ($idUsuarioCieEvaluador) {
+    $bandejaCieEvaluador = Test-Endpoint -Name "Bandeja del CIE (rol Evaluador Comité de Ética)" -Endpoint "/propuestas/cie/bandeja?rol=CIE&id_usuario=$idUsuarioCieEvaluador"
+    if ($bandejaCieEvaluador) {
+        Write-Host "  -> Expedientes visibles para el evaluador: $(@($bandejaCieEvaluador).Count)" -ForegroundColor Gray
+    }
 }
 
 # C4. Dashboard del CIE con los contadores reales
@@ -669,14 +837,14 @@ if ($dashboardCie) {
 }
 
 # C5. Propuesta dictaminada por Dirección para resolver ante el CIE.
-# [Línea clave]: Se crea siempre una propuesta nueva en estado 7 para que cada corrida del
-# smoke test deje un expediente pendiente en la bandeja del comité (validación visual).
+# [Línea clave]: Se crea siempre una propuesta nueva en «Dictaminada por Dirección» para que cada
+# corrida del smoke test deje un expediente pendiente en la bandeja del comité (validación visual).
 $idPropuestaCie = $null
 $propuestaCie = $nuevaPropuesta.Clone()
 $propuestaCie.titulo = "Test Comité de Ética en Investigación - Resolución $marcaHora"
 $propuestaCie.resumen = "Propuesta automatizada para validar la resolución colegiado del Comité de Ética en Investigación."
-$propuestaCie.estado_inicial = 7
-$creacionCie = Test-Endpoint -Name "Creación de propuesta dictaminada para el CIE (estado 7)" -Method "POST" -Endpoint "/propuestas" -Body $propuestaCie
+$propuestaCie.estado_inicial_nombre = "Dictaminada por Dirección"
+$creacionCie = Test-Endpoint -Name "Creación de propuesta dictaminada para el CIE (Dictaminada por Dirección)" -Method "POST" -Endpoint "/propuestas" -Body $propuestaCie
 if ($creacionCie -and $creacionCie.propuesta) {
     $idPropuestaCie = $creacionCie.propuesta.id_propuesta
     Write-Host "  -> Propuesta dictaminada por Dirección: ID $idPropuestaCie" -ForegroundColor Cyan
@@ -715,14 +883,18 @@ if ($idPropuestaCie) {
     Test-Endpoint -Name "Segunda resolución sobre expediente cerrado (409 esperado)" -Method "POST" -Endpoint "/propuestas/cie/$($idPropuestaCie)" -Body $bodyCie -ExpectedStatus 409 | Out-Null
 
     # C10. Condiciones de aceptación posteriores (no cambian el estado)
-    $bodyCondiciones = @{
-        id_usuario_eval = $idUsuarioCieEvaluador
-        condiciones = "Presentar el consentimiento informado actualizado antes de la segunda collecting."
-        observaciones = "Recordatorio de la sesion 23-2026."
-    }
-    $resCondiciones = Test-Endpoint -Name "Condiciones posteriores del CIE" -Method "POST" -Endpoint "/propuestas/cie/$($idPropuestaCie)/condiciones" -Body $bodyCondiciones
-    if ($resCondiciones) {
-        Write-Host "  -> Condiciones registradas | Estado conservado: $($resCondiciones.nombre_estado)" -ForegroundColor Cyan
+    if ($idUsuarioCieEvaluador) {
+        $bodyCondiciones = @{
+            id_usuario_eval = $idUsuarioCieEvaluador
+            condiciones = "Presentar el consentimiento informado actualizado antes de la segunda collecting."
+            observaciones = "Recordatorio de la sesion 23-2026."
+        }
+        $resCondiciones = Test-Endpoint -Name "Condiciones posteriores del CIE" -Method "POST" -Endpoint "/propuestas/cie/$($idPropuestaCie)/condiciones" -Body $bodyCondiciones
+        if ($resCondiciones) {
+            Write-Host "  -> Condiciones registradas | Estado conservado: $($resCondiciones.nombre_estado)" -ForegroundColor Cyan
+        }
+    } else {
+        Write-Host "  [AVISO] Sin evaluador del CIE en este ambiente: se omite la prueba de condiciones posteriores." -ForegroundColor Yellow
     }
 
     # C11. El expediente general expone la resolucion y la notificacion al lider
@@ -736,6 +908,187 @@ if ($idPropuestaCie) {
         $ultimoHito = @($dossierCie.historial)[-1]
         Write-Host "  -> Último hito del historial: $($ultimoHito.estado_nuevo)" -ForegroundColor Gray
     }
+}
+
+# -------------------------------------------------------------
+# FASE 11: MÁQUINA DE ESTADOS, RECHAZO TERMINAL Y CIERRE DEL PROYECTO
+# -------------------------------------------------------------
+
+Write-Host "`n--- FASE 11: MAQUINA DE ESTADOS, RECHAZO TERMINAL Y CIERRE DEL PROYECTO ---" -ForegroundColor Cyan
+
+# M1. El Centro de Vinculación es el dueño de la etapa «En revisión de Vinculación».
+$loginVinculacion = Test-Endpoint -Name "Login del Centro de Vinculación" -Method "POST" -Endpoint "/auth/login" -Body @{
+    correo = "mariana.solis@example.com"
+    password = "demostracion"
+}
+$idUsuarioVinculacion = if ($loginVinculacion) { $loginVinculacion.id_usuario } else { 4 }
+if ($loginVinculacion) {
+    Write-Host "  -> Vinculación: $($loginVinculacion.nombre) | ID: $idUsuarioVinculacion | Roles: $($loginVinculacion.roles -join ', ')" -ForegroundColor Gray
+}
+
+# M2. Expediente en revisión de Vinculación para la devolución con observaciones
+$propuestaDevolucion = $nuevaPropuesta.Clone()
+$propuestaDevolucion.titulo = "Test Maquina de Estados - Devolucion $marcaHora"
+$propuestaDevolucion.estado_inicial_nombre = "En revisión de Vinculación"
+$creacionDevolucion = Test-Endpoint -Name "Creación de expediente para la devolución" -Method "POST" -Endpoint "/propuestas" -Body $propuestaDevolucion
+$idPropuestaDevolucion = if ($creacionDevolucion -and $creacionDevolucion.propuesta) { $creacionDevolucion.propuesta.id_propuesta } else { $null }
+
+if ($idPropuestaDevolucion) {
+    Write-Host "  -> Expediente en revisión de Vinculación: ID $idPropuestaDevolucion" -ForegroundColor Cyan
+
+    # M3. Devolución con observaciones -> «Con observaciones» (y no «En ejecución»)
+    $bodyDevolucion = @{
+        id_usuario_eval = $idUsuarioVinculacion
+        numero_oficio_dictamen = "CV-TEST-$marcaArchivo"
+        potencial_pi_identificado = $true
+        tipo_innovacion = "Software"
+        activo_previsto = "Software"
+        valoracion_tecnica = "Valoración técnica registrada por la prueba automatizada."
+        requiere_reserva = $false
+        observaciones = "Prueba de la devolución: se requieren ajustes en la justificación técnica."
+        decision = "observaciones"
+    }
+    $resDevolucion = Test-Endpoint -Name "Devolución con observaciones de Vinculación" -Method "POST" -Endpoint "/propuestas/$idPropuestaDevolucion/vinculacion" -Body $bodyDevolucion
+    if ($resDevolucion) {
+        Write-Host "  -> Estado resultante: $($resDevolucion.nombre_estado) | Decisión: $($resDevolucion.decision)" -ForegroundColor Cyan
+        if ($resDevolucion.nombre_estado -ne "Con observaciones") {
+            Write-Host "  [AVISO] La devolución no quedó en «Con observaciones»." -ForegroundColor Red
+        }
+    }
+
+    # M4. Solo el líder puede reenviar el expediente (403 esperado)
+    Test-Endpoint -Name "Reenvío por un usuario que no es el líder (403 esperado)" -Method "POST" -Endpoint "/propuestas/$idPropuestaDevolucion/observaciones/reenvio" -Body @{
+        id_usuario = $idUsuarioVinculacion
+        observaciones = "Prueba negativa: Vinculación no reenvía su propia devolución."
+    } -ExpectedStatus 403 | Out-Null
+
+    # M5. El líder atiende las observaciones y reenvía a la etapa que devolvió el expediente
+    $resReenvio = Test-Endpoint -Name "Reenvío del expediente tras atender las observaciones" -Method "POST" -Endpoint "/propuestas/$idPropuestaDevolucion/observaciones/reenvio" -Body @{
+        id_usuario = 1
+        observaciones = "Justificación técnica ampliada según las observaciones recibidas."
+    }
+    if ($resReenvio) {
+        Write-Host "  -> Etapa a la que reingresó: $($resReenvio.nombre_estado)" -ForegroundColor Cyan
+    }
+}
+
+# M6. Rechazo terminal: «Rechazada» no admite ninguna transición posterior
+$propuestaRechazo = $nuevaPropuesta.Clone()
+$propuestaRechazo.titulo = "Test Maquina de Estados - Rechazo $marcaHora"
+$propuestaRechazo.estado_inicial_nombre = "En revisión de Vinculación"
+$creacionRechazo = Test-Endpoint -Name "Creación de expediente para el rechazo terminal" -Method "POST" -Endpoint "/propuestas" -Body $propuestaRechazo
+$idPropuestaRechazo = if ($creacionRechazo -and $creacionRechazo.propuesta) { $creacionRechazo.propuesta.id_propuesta } else { $null }
+
+if ($idPropuestaRechazo) {
+    $bodyRechazo = @{
+        id_usuario_eval = $idUsuarioVinculacion
+        numero_oficio_dictamen = "CV-REJ-$marcaArchivo"
+        potencial_pi_identificado = $false
+        valoracion_tecnica = "Valoración técnica registrada por la prueba automatizada."
+        requiere_reserva = $false
+        observaciones = "Prueba del rechazo: la propuesta no cumple los requisitos de Vinculación."
+        decision = "rechazo"
+    }
+    $resRechazo = Test-Endpoint -Name "Rechazo terminal de Vinculación" -Method "POST" -Endpoint "/propuestas/$idPropuestaRechazo/vinculacion" -Body $bodyRechazo
+    if ($resRechazo) {
+        Write-Host "  -> Estado resultante: $($resRechazo.nombre_estado) | Decisión: $($resRechazo.decision)" -ForegroundColor Cyan
+        if ($resRechazo.nombre_estado -ne "Rechazada") {
+            Write-Host "  [AVISO] El rechazo no quedó en «Rechazada»." -ForegroundColor Red
+        }
+    }
+
+    # M7. Un expediente rechazado es terminal (409 esperado)
+    $estadoRevisionParaRechazo = Get-IdEstado -Nombre "En revisión de Vinculación"
+    $resReabrirRechazo = Test-Endpoint -Name "Reapertura de un expediente rechazado (409 esperado)" -Method "PATCH" -Endpoint "/propuestas/$idPropuestaRechazo/estado" -Body @{
+        id_nuevo_estado = $estadoRevisionParaRechazo
+        id_usuario_responsable = $idUsuarioVinculacion
+        observaciones = "Prueba negativa: «Rechazada» es terminal."
+    } -ExpectedStatus 409
+    if ($resReabrirRechazo) {
+        Write-Host "  [AVISO] El backend permitió reabrir un expediente rechazado." -ForegroundColor Yellow
+    } else {
+        Write-Host "  -> Rechazo correcto: «Rechazada» es un estado terminal." -ForegroundColor Gray
+    }
+}
+
+# M8. Aceptación de la carta: «Aprobada por CIE» -> «En ejecución»
+$propuestaAceptacion = $nuevaPropuesta.Clone()
+$propuestaAceptacion.titulo = "Test Maquina de Estados - Aceptacion $marcaHora"
+$propuestaAceptacion.estado_inicial_nombre = "Aprobada por CIE"
+$creacionAceptacion = Test-Endpoint -Name "Creación de expediente aprobado por el CIE" -Method "POST" -Endpoint "/propuestas" -Body $propuestaAceptacion
+$idPropuestaAceptacion = if ($creacionAceptacion -and $creacionAceptacion.propuesta) { $creacionAceptacion.propuesta.id_propuesta } else { $null }
+
+if ($idPropuestaAceptacion) {
+    $resAceptacion = Test-Endpoint -Name "Aceptación de la carta del CIE" -Method "POST" -Endpoint "/propuestas/$idPropuestaAceptacion/aceptacion" -Body @{
+        id_usuario = 1
+        observaciones = "Carta de aceptación presentada por el investigador líder."
+    }
+    if ($resAceptacion) {
+        Write-Host "  -> Estado resultante: $($resAceptacion.nombre_estado)" -ForegroundColor Cyan
+    }
+
+    # M9. El informe de seguimiento no cambia la etapa del proyecto
+    $resInforme = Test-Endpoint -Name "Informe de seguimiento del proyecto" -Method "POST" -Endpoint "/propuestas/$idPropuestaAceptacion/informe" -Body @{
+        id_usuario = 1
+        observaciones = "Informe semestral: se ejecutaron las actividades del primer periodo."
+    }
+    if ($resInforme) {
+        Write-Host "  -> Estado conservado: $($resInforme.nombre_estado)" -ForegroundColor Cyan
+    }
+
+    # M10. El cierre exige el informe final (400 esperado)
+    $resCierreSinInforme = Test-Endpoint -Name "Cierre sin informe final (400 esperado)" -Method "POST" -Endpoint "/propuestas/$idPropuestaAceptacion/cierre" -Body @{
+        id_usuario = $idUsuarioDireccion
+        observaciones = "Prueba negativa: el cierre exige el informe final."
+    } -ExpectedStatus 400
+    if ($resCierreSinInforme) {
+        Write-Host "  [AVISO] El backend permitió cerrar el expediente sin informe final." -ForegroundColor Yellow
+    } else {
+        Write-Host "  -> Rechazo correcto: el cierre exige el informe final." -ForegroundColor Gray
+    }
+
+    # M11. El cierre no le corresponde al investigador (403 esperado)
+    Test-Endpoint -Name "Cierre por un investigador (403 esperado)" -Method "POST" -Endpoint "/propuestas/$idPropuestaAceptacion/cierre" -Body @{
+        id_usuario = 1
+        observaciones = "Prueba negativa: el cierre es una facultad de Dirección de Investigación."
+    } -ExpectedStatus 403 | Out-Null
+
+    # M12. Cierre administrativo: «En ejecución» -> «Cerrada»
+    $documentoFinal = Test-UploadDocumento -Name "Informe final del proyecto" -IdPropuesta $idPropuestaAceptacion -IdUsuario 1 -TipoDocumento "Informe final del proyecto" -ArchivoLocal $rutaInformePdf
+    if ($documentoFinal -and $documentoFinal.id_documento) {
+        Write-Host "  -> Documento registrado: $($documentoFinal.id_documento) | $($documentoFinal.nombre_archivo)" -ForegroundColor Gray
+        $resCierre = Test-Endpoint -Name "Cierre administrativo del proyecto" -Method "POST" -Endpoint "/propuestas/$idPropuestaAceptacion/cierre" -Body @{
+            id_usuario = $idUsuarioDireccion
+            observaciones = "Cierre administrativo: se cumplen los productos comprometidos y se entrega el informe final."
+            id_documento = $documentoFinal.id_documento
+        }
+        if ($resCierre) {
+            Write-Host "  -> Estado resultante: $($resCierre.nombre_estado)" -ForegroundColor Cyan
+        }
+
+        # M13. Un expediente cerrado es terminal (409 esperado)
+        $estadoEjecucion = Get-IdEstado -Nombre "En ejecución"
+        $resReabrirCerrada = Test-Endpoint -Name "Reapertura de un expediente cerrado (409 esperado)" -Method "PATCH" -Endpoint "/propuestas/$idPropuestaAceptacion/estado" -Body @{
+            id_nuevo_estado = $estadoEjecucion
+            id_usuario_responsable = $idUsuarioDireccion
+            observaciones = "Prueba negativa: «Cerrada» es un estado terminal."
+        } -ExpectedStatus 409
+        if ($resReabrirCerrada) {
+            Write-Host "  [AVISO] El backend permitió reabrir un expediente cerrado." -ForegroundColor Yellow
+        } else {
+            Write-Host "  -> Rechazo correcto: «Cerrada» es un estado terminal." -ForegroundColor Gray
+        }
+
+        # M14. El historial del expediente refleja el ciclo completo
+        $dossierCierre = Test-Endpoint -Name "Expediente con el ciclo completo" -Endpoint "/propuestas/$idPropuestaAceptacion"
+        if ($dossierCierre) {
+            Write-Host "  -> Estado final: $($dossierCierre.nombre_estado) | Hitos de bitácora: $(@($dossierCierre.historial).Count)" -ForegroundColor Gray
+        }
+    }
+}
+
+if (Test-Path $rutaInformePdf) {
+    Remove-Item $rutaInformePdf -ErrorAction SilentlyContinue
 }
 
 Write-Host "`n==========================================================" -ForegroundColor Cyan

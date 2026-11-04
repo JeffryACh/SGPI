@@ -18,9 +18,9 @@ ARCHIVO: backend/app/routers/consejo.py
            - Retorna la bandeja del Consejo, el expediente de aval y los acuerdos a las
              pantallas 21, 22, 25 y 28.
            - Persiste el aval en 'council_endorsements', cambia el estado de la propuesta
-             (4 -> 5 · Avalada, «Con observaciones» o «Rechazada», resueltos por nombre
-             desde 'estados') y notifica al investigador para el sometimiento formal
-             ante VIE.
+             («Pendiente de aval del Consejo» → «Avalada», «Con observaciones» o
+             «Rechazada», resueltos por nombre desde 'estados') y notifica al
+             investigador para el sometimiento formal ante VIE.
 
 2.3. ¿QUÉ HACE EL ARCHIVO A GROSOMODO?:
     Expone GET /propuestas/consejo/bandeja, GET /propuestas/consejo/{id_propuesta} y
@@ -39,6 +39,13 @@ from psycopg import Connection
 from pydantic import BaseModel
 
 from ..db import get_conn
+from ..estados import (
+    ESTADO_AVALADA,
+    ESTADO_OBSERVACIONES,
+    ESTADO_PENDIENTE_AVAL,
+    ESTADO_RECHAZADA,
+    resolver_estado,
+)
 
 # [Línea clave]: Se registra antes que propuestas.router en main.py para que las rutas
 # literales /propuestas/consejo/... no sean capturadas por /propuestas/{id_propuesta}.
@@ -46,15 +53,12 @@ router = APIRouter(prefix="/propuestas", tags=["consejo"])
 
 ROL_CONSEJO = "Consejo de Escuela"
 ROL_COMITE_TECNICO = "Comité Técnico"
-# [Línea clave]: Los estados se resuelven por nombre porque el orden de los identificadores
-# en la tabla «estados» no coincide con el seed V3 en la base de datos desplegada.
-NOMBRE_ESTADO_PENDIENTE_AVAL = "Pendiente de aval del Consejo"
-NOMBRE_ESTADO_AVALADA = "Avalada"
-NOMBRE_ESTADO_OBSERVACIONES = "Con observaciones"
-NOMBRE_ESTADO_RECHAZADA = "Rechazada"
+# [Línea clave]: Los estados se resuelven por nombre desde 'app.estados' porque el orden de los
+# identificadores en la tabla «estados» no coincide con el seed V3 en la base de datos desplegada.
+# El destino de cada decisión vive en la máquina de estados institucional.
 ESTADO_POR_DECISION = {
-    "observaciones": NOMBRE_ESTADO_OBSERVACIONES,
-    "rechazo": NOMBRE_ESTADO_RECHAZADA,
+    "observaciones": ESTADO_OBSERVACIONES,
+    "rechazo": ESTADO_RECHAZADA,
 }
 BUCKET = "convocatorias"
 
@@ -197,22 +201,6 @@ def _documentos_propuesta(cur, id_propuesta: int) -> list[DocumentoPropuestaOut]
         DocumentoPropuestaOut(**{**fila, "file_url": _url_documento(fila["file_path"])})
         for fila in cur.fetchall()
     ]
-
-
-def _id_estado(cur, nombre_estado: str) -> int:
-    """Resolver el identificador de un estado por su nombre oficial."""
-
-    cur.execute(
-        "SELECT id_estado FROM estados WHERE nombre_estado = %s",
-        (nombre_estado,),
-    )
-    fila = cur.fetchone()
-    if not fila:
-        raise HTTPException(
-            500,
-            f"El estado «{nombre_estado}» no está configurado en la base de datos.",
-        )
-    return fila["id_estado"]
 
 
 def _obtener_rol_consejo(cur, id_usuario: int) -> dict:
@@ -411,8 +399,8 @@ def obtener_bandeja_consejo(
             (
                 ROL_COMITE_TECNICO,
                 id_escuela,
-                NOMBRE_ESTADO_PENDIENTE_AVAL,
-                NOMBRE_ESTADO_PENDIENTE_AVAL,
+                ESTADO_PENDIENTE_AVAL,
+                ESTADO_PENDIENTE_AVAL,
                 id_escuela,
                 id_escuela,
                 id_escuela,
@@ -432,7 +420,7 @@ def obtener_aval_consejo(
     with conn.cursor() as cur:
         consejo = _obtener_rol_consejo(cur, id_usuario)
         id_escuela = consejo["id_escuela"]
-        estado_pendiente = _id_estado(cur, NOMBRE_ESTADO_PENDIENTE_AVAL)
+        estado_pendiente = resolver_estado(cur, ESTADO_PENDIENTE_AVAL)
 
         cur.execute(
             """
@@ -541,7 +529,7 @@ def registrar_aval_consejo(
     with conn.cursor() as cur:
         consejo = _obtener_rol_consejo(cur, payload.id_usuario_aval)
         id_escuela = consejo["id_escuela"]
-        estado_pendiente = _id_estado(cur, NOMBRE_ESTADO_PENDIENTE_AVAL)
+        estado_pendiente = resolver_estado(cur, ESTADO_PENDIENTE_AVAL)
 
         # [Línea clave]: Bloquea la fila de la propuesta para que dos consejos de la misma
         # escuela no registren avales duplicados de forma concurrente.
@@ -672,12 +660,12 @@ def registrar_aval_consejo(
 
         if payload.decision == "favorable":
             estado_nuevo = (
-                _id_estado(cur, NOMBRE_ESTADO_AVALADA)
+                resolver_estado(cur, ESTADO_AVALADA)
                 if not pendientes
                 else estado_pendiente
             )
         else:
-            estado_nuevo = _id_estado(cur, ESTADO_POR_DECISION[payload.decision])
+            estado_nuevo = resolver_estado(cur, ESTADO_POR_DECISION[payload.decision])
 
         aval_completo = payload.decision == "favorable" and not pendientes
         estado_actual = propuesta["estado_actual"]

@@ -155,6 +155,23 @@ Este documento registra la evolución del modelo de base de datos relacional par
 - **Uso desde el backend:**
   - `GET /propuestas/comite/rubrica` entrega secciones, criterios y reglas (umbral 70, obligatorios ≥ 8).
   - `POST /propuestas/comite/{id_propuesta}` valida los 23 criterios, calcula `Σ peso × nivel / 10`, rechaza un dictamen favorable si hay bloqueo o si la nota es menor a 70, inserta en `evaluations`, `technical_committee_evaluations` y `technical_committee_scores`, cambia el estado y registra el historial.
-  - Transiciones: `favorable → 4 (Pendiente de aval del Consejo)`, `observaciones → 9 (Con observaciones)` y `rechazo → 10 (Rechazada)`.
+  - Transiciones (resueltas por **nombre** desde `estados`, nunca por identificador): `favorable → «Pendiente de aval del Consejo»`, `observaciones → «Con observaciones»` y `rechazo → «Rechazada»` (estado terminal).
   - Si el dictamen es favorable, notifica a los usuarios activos con rol `Consejo de Escuela`.
 - **Compatibilidad:** el router responde `503` con un mensaje explícito mientras la migración no esté aplicada, y el expediente general tolera la ausencia de las columnas nuevas.
+
+---
+
+## 8. Migración V16 - Saneamiento y garantía del catálogo de estados
+
+### Script: `Base de datos/Scripts/V16__saneamiento_estados.sql`
+- **Propósito:** dejar el catálogo institucional de estados completo y coherente, y reparar los expedientes cuya etapa actual contradice la última decisión registrada en la bitácora.
+- **Naturaleza:** script idempotente, sin identificadores fijos y sin borrar filas de auditoría; puede reejecutarse en el SQL Editor de Supabase.
+- **Causa raíz que corrige:** durante el desarrollo, algunos routers resolvían el estado destino por identificador numérico fijo (tomado del orden del seed V3) en vez de por su nombre oficial. Como el orden de la tabla `estados` puede diferir entre ambientes, una devolución con observaciones terminaba en «En ejecución» y un rechazo en «Con observaciones».
+- **Garantía del catálogo:** inserta los doce estados canónicos con `ON CONFLICT (nombre_estado) DO NOTHING`. El identificador **no** es parte del contrato: el backend (`backend/app/estados.py`) y el frontend (`idEstadoPorNombre`) resuelven siempre por nombre.
+- **Detección de inconsistencias:** toma la última fila de `proposal_state_history` de cada expediente y compara su estado de destino con la decisión que esa misma fila registra (`Decisión: observaciones|rechazo`, `Resolución: Con observaciones|No favorable` y los acuerdos del CIE).
+- **Reparación (sin eliminar auditoría):**
+  - Corrige `proposal_state_history.id_estado_nuevo` de las filas erróneas y añade a `observaciones` la nota `[Saneamiento V16: ...]`.
+  - Alinea `propuestas.estado_actual` con la decisión registrada; el trigger `trg_log_proposal_state_change` genera la transición y `trg_notify_proposal_state_change` avisa al investigador líder.
+  - Completa esa fila con la explicación del saneamiento y con el responsable institucional de la decisión original.
+- **Verificación:** el script termina con cuatro consultas de control: catálogo vigente, expedientes reparados, incoherencias restantes (esperado: cero filas) y bitácora completa de los expedientes reparados.
+- **Aplicación:** lo ejecuta el administrador en el SQL Editor de Supabase. En una base de datos coherente no modifica nada y solo muestra los resultados de verificación.

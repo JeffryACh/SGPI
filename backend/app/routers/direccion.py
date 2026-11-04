@@ -19,8 +19,9 @@ ARCHIVO: backend/app/routers/direccion.py
            - Retorna la bandeja de Dirección, el expediente para dictamen y el resultado
              a las pantallas 21, 22, 26 y 28.
            - Crea 'evaluations' con rol Dirección, persiste verificaciones en
-             'vie_dictamen_verifications', cambia estado de 6 -> 7 (Dictaminada por
-             Dirección), actualiza historial y notifica al investigador.
+             'vie_dictamen_verifications', cambia el estado de la propuesta («Sometida
+             ante VIE» → «Dictaminada por Dirección», «Con observaciones» o «Rechazada»),
+             actualiza historial y notifica al investigador.
 
 2.3. ¿QUÉ HACE EL ARCHIVO A GROSOMODO?:
     Expone GET /propuestas/direccion/bandeja, GET /propuestas/direccion/{id_propuesta}
@@ -39,6 +40,13 @@ from psycopg import Connection
 from pydantic import BaseModel, Field
 
 from ..db import get_conn
+from ..estados import (
+    ESTADO_DICTAMINADA,
+    ESTADO_OBSERVACIONES,
+    ESTADO_RECHAZADA,
+    ESTADO_SOMETIDA_VIE,
+    resolver_estado,
+)
 from .dictamen_vie import parsear_dictamen, serializar_dictamen
 
 # [Línea clave]: Se registra antes que propuestas.router en main.py para que las rutas
@@ -50,10 +58,13 @@ ROL_COMITE_TECNICO = "Comité Técnico"
 ROL_VINCULACION = "Vinculación"
 ROL_CONSEJO = "Consejo de Escuela"
 
-# [Línea clave]: Los estados se resuelven por nombre porque el orden de los identificadores
-# en la tabla «estados» no coincide con el seed V3 en la base de datos desplegada.
-NOMBRE_ESTADO_SOMETIDA_VIE = "Sometida ante VIE"
-NOMBRE_ESTADO_DICTAMINADA = "Dictaminada por Dirección"
+# [Línea clave]: Los estados se resuelven por nombre desde 'app.estados' porque el orden de los
+# identificadores en la tabla «estados» no coincide con el seed V3 en la base de datos desplegada.
+ESTADO_POR_DICTAMEN = {
+    "Favorable": ESTADO_DICTAMINADA,
+    "Con observaciones": ESTADO_OBSERVACIONES,
+    "No favorable": ESTADO_RECHAZADA,
+}
 
 BUCKET = "convocatorias"
 
@@ -239,22 +250,6 @@ def _documentos_propuesta(cur, id_propuesta: int) -> list[DocumentoPropuestaOut]
     ]
 
 
-def _id_estado(cur, nombre_estado: str) -> int:
-    """Resolver el identificador de un estado por su nombre oficial."""
-
-    cur.execute(
-        "SELECT id_estado FROM estados WHERE nombre_estado = %s",
-        (nombre_estado,),
-    )
-    fila = cur.fetchone()
-    if not fila:
-        raise HTTPException(
-            500,
-            f"El estado «{nombre_estado}» no está configurado en la base de datos.",
-        )
-    return fila["id_estado"]
-
-
 def _obtener_rol_direccion(cur, id_usuario: int) -> dict:
     """Validar que el usuario exista, esté activo y tenga el rol Dirección de Investigación."""
 
@@ -317,7 +312,7 @@ def obtener_bandeja_direccion(
 
     with conn.cursor() as cur:
         _obtener_rol_direccion(cur, id_usuario)
-        estado_sometida = _id_estado(cur, NOMBRE_ESTADO_SOMETIDA_VIE)
+        estado_sometida = resolver_estado(cur, ESTADO_SOMETIDA_VIE)
         cur.execute(
             """
             SELECT
@@ -405,8 +400,8 @@ def obtener_dashboard_direccion(
 
     with conn.cursor() as cur:
         _obtener_rol_direccion(cur, id_usuario)
-        estado_sometida = _id_estado(cur, NOMBRE_ESTADO_SOMETIDA_VIE)
-        estado_dictaminada = _id_estado(cur, NOMBRE_ESTADO_DICTAMINADA)
+        estado_sometida = resolver_estado(cur, ESTADO_SOMETIDA_VIE)
+        estado_dictaminada = resolver_estado(cur, ESTADO_DICTAMINADA)
 
         cur.execute(
             """
@@ -504,7 +499,7 @@ def obtener_dictamen_direccion(
 
     with conn.cursor() as cur:
         _obtener_rol_direccion(cur, id_usuario)
-        estado_sometida = _id_estado(cur, NOMBRE_ESTADO_SOMETIDA_VIE)
+        estado_sometida = resolver_estado(cur, ESTADO_SOMETIDA_VIE)
 
         cur.execute(
             """
@@ -691,8 +686,11 @@ def registrar_dictamen_direccion(
     with conn.cursor() as cur:
         direccion = _obtener_rol_direccion(cur, payload.id_usuario_eval)
         id_rol_direccion = direccion["id_rol"]
-        estado_sometida = _id_estado(cur, NOMBRE_ESTADO_SOMETIDA_VIE)
-        estado_dictaminada = _id_estado(cur, NOMBRE_ESTADO_DICTAMINADA)
+        estado_sometida = resolver_estado(cur, ESTADO_SOMETIDA_VIE)
+        # [Línea clave]: El destino del dictamen se decide por la máquina de estados: «Favorable»
+        # entrega el expediente al CIE, «Con observaciones» lo devuelve al investigador y
+        # «No favorable» es un rechazo terminal.
+        estado_destino = resolver_estado(cur, ESTADO_POR_DICTAMEN[payload.dictamen])
 
         cur.execute(
             """
@@ -779,7 +777,7 @@ def registrar_dictamen_direccion(
         # el estado; se reutiliza para dejar como responsable al Director(a) de Investigación.
         cur.execute(
             "UPDATE propuestas SET estado_actual = %s WHERE id_propuesta = %s RETURNING estado_actual",
-            (estado_dictaminada, id_propuesta),
+            (estado_destino, id_propuesta),
         )
         estado_actual = cur.fetchone()["estado_actual"]
 
@@ -798,7 +796,7 @@ def registrar_dictamen_direccion(
             ORDER BY fecha_cambio DESC, id_historial DESC
             LIMIT 1
             """,
-            (id_propuesta, estado_dictaminada),
+            (id_propuesta, estado_destino),
         )
         fila_historial = cur.fetchone()
         if fila_historial:
@@ -821,7 +819,7 @@ def registrar_dictamen_direccion(
                 (
                     id_propuesta,
                     propuesta["estado_actual"],
-                    estado_dictaminada,
+                    estado_destino,
                     payload.id_usuario_eval,
                     detalle_historial,
                 ),
@@ -830,10 +828,19 @@ def registrar_dictamen_direccion(
         cur.execute("SELECT nombre_estado FROM estados WHERE id_estado = %s", (estado_actual,))
         nombre_estado = cur.fetchone()["nombre_estado"]
 
-        titulo_notificacion = "Propuesta dictaminada por Dirección de Investigación"
+        # [Línea clave]: El aviso al investigador cambia según la resolución: el dictamen
+        # favorable remite el expediente al CIE, las observaciones exigen una corrección y
+        # el «No favorable» cierra el trámite como rechazo.
+        if payload.dictamen == "Favorable":
+            titulo_notificacion = "Propuesta dictaminada por Dirección de Investigación"
+        elif payload.dictamen == "Con observaciones":
+            titulo_notificacion = "Propuesta devuelta con observaciones por Dirección de Investigación"
+        else:
+            titulo_notificacion = "Propuesta rechazada por Dirección de Investigación"
         mensaje_notificacion = (
             f"La propuesta {propuesta['codigo']} «{propuesta['titulo']}» fue dictaminada por "
-            f"Dirección de Investigación con resolución: {payload.dictamen}."
+            f"Dirección de Investigación con resolución: {payload.dictamen}. "
+            f"{payload.fundamentacion.strip()}"
         )
         cur.execute(
             """

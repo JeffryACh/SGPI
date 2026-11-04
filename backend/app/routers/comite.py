@@ -26,7 +26,8 @@ ARCHIVO: backend/app/routers/comite.py
     GET /propuestas/comite/{id_propuesta} y POST /propuestas/comite/{id_propuesta}.
     El servidor calcula y valida el puntaje (Σ peso × nivel / 10), exige el umbral de 70 y
     que todo criterio obligatorio tenga nivel Bueno (8) o Excelente (10), y ejecuta la
-    transición controlada 3 -> 4 (aval del Consejo), 9 (observaciones) o 10 (rechazo).
+    transición controlada («En evaluación del Comité Técnico» → «Pendiente de aval del
+    Consejo», «Con observaciones» o «Rechazada»), con los estados resueltos por nombre.
 ========================================================================================
 """
 
@@ -39,22 +40,26 @@ from psycopg import Connection
 from pydantic import BaseModel, Field
 
 from ..db import get_conn
+from ..estados import (
+    ESTADO_COMITE,
+    ESTADO_OBSERVACIONES,
+    ESTADO_PENDIENTE_AVAL,
+    ESTADO_RECHAZADA,
+    resolver_estado,
+)
 
 # [Línea clave]: ¿Por qué soy importante? Declara el router antes de propuestas.py. ¿Para qué? Evitar que rutas literales /propuestas/comite/... sean capturadas por /propuestas/{id_propuesta}. ¿Dónde me usan? En backend/app/main.py al registrar los routers.
 router = APIRouter(prefix="/propuestas", tags=["comite"])
 
 ROL_COMITE = "Comité Técnico"
 ROL_CONSEJO = "Consejo de Escuela"
-# [Línea clave]: Los estados se resuelven por nombre porque el orden de los identificadores
-# en la tabla «estados» de la base desplegada no coincide con el seed V3.
-NOMBRE_ESTADO_COMITE = "En evaluación del Comité Técnico"
-NOMBRE_ESTADO_PENDIENTE_AVAL = "Pendiente de aval del Consejo"
-NOMBRE_ESTADO_OBSERVACIONES = "Con observaciones"
-NOMBRE_ESTADO_RECHAZADA = "Rechazada"
+# [Línea clave]: Los estados se resuelven por nombre desde 'app.estados' porque el orden de los
+# identificadores en la tabla «estados» de la base desplegada no coincide con el seed V3.
+# El destino de cada decisión vive en la máquina de estados institucional.
 ESTADOS_POR_DECISION = {
-    "favorable": NOMBRE_ESTADO_PENDIENTE_AVAL,
-    "observaciones": NOMBRE_ESTADO_OBSERVACIONES,
-    "rechazo": NOMBRE_ESTADO_RECHAZADA,
+    "favorable": ESTADO_PENDIENTE_AVAL,
+    "observaciones": ESTADO_OBSERVACIONES,
+    "rechazo": ESTADO_RECHAZADA,
 }
 NIVELES_VALIDOS = (0, 6, 8, 10)
 PUNTAJE_MINIMO = 70
@@ -326,7 +331,7 @@ class ComiteResultadoOut(BaseModel):
         * bool : ok Bandera de confirmación de registro exitoso.
         * int : id_evaluacion Identificador de la evaluación registrada en 'evaluations'.
         * int : id_propuesta Identificador de la propuesta calificada.
-        * int : estado_actual Nuevo identificador del estado tras la transición (4, 9 o 10).
+        * int : estado_actual Nuevo identificador del estado tras la transición.
         * str : nombre_estado Denominación del nuevo estado de tramitación.
         * str : decision Decisión colegiada adoptada ('favorable', 'observaciones' o 'rechazo').
         * float : puntaje Calificación ponderada final calculada por el backend.
@@ -400,22 +405,6 @@ def _exigir_migracion_v12(cur) -> set[str]:
             "en el SQL Editor de Supabase.",
         )
     return columnas
-
-
-def _id_estado(cur, nombre_estado: str) -> int:
-    """Resolver el identificador de un estado por su nombre oficial."""
-
-    cur.execute(
-        "SELECT id_estado FROM estados WHERE nombre_estado = %s",
-        (nombre_estado,),
-    )
-    fila = cur.fetchone()
-    if not fila:
-        raise HTTPException(
-            500,
-            f"El estado «{nombre_estado}» no está configurado en la base de datos.",
-        )
-    return fila["id_estado"]
 
 
 def _obtener_rol_comite(cur, id_usuario: int) -> int:
@@ -758,8 +747,8 @@ def obtener_bandeja_comite(
             (
                 ROL_COMITE,
                 ROL_COMITE,
-                NOMBRE_ESTADO_COMITE,
-                NOMBRE_ESTADO_COMITE,
+                ESTADO_COMITE,
+                ESTADO_COMITE,
                 ROL_COMITE,
             ),
         )
@@ -947,14 +936,14 @@ def registrar_evaluacion_comite(
     with conn.cursor() as cur:
         id_rol_comite = _obtener_rol_comite(cur, payload.id_usuario_eval)
         _exigir_migracion_v12(cur)
-        estado_comite = _id_estado(cur, NOMBRE_ESTADO_COMITE)
-        estado_nuevo = _id_estado(cur, ESTADOS_POR_DECISION[payload.decision])
+        estado_comite = resolver_estado(cur, ESTADO_COMITE)
+        estado_nuevo = resolver_estado(cur, ESTADOS_POR_DECISION[payload.decision])
 
         # [Línea clave]: Bloquea la fila para que dos evaluadores concurrentes no
         # registren dos dictámenes sobre la misma propuesta.
         cur.execute(
             """
-            SELECT id_propuesta, estado_actual, titulo,
+            SELECT id_propuesta, estado_actual, titulo, id_usuario_lider,
                    COALESCE(codigo, 'SI-' || id_propuesta) AS codigo
             FROM propuestas
             WHERE id_propuesta = %s
@@ -1138,6 +1127,36 @@ def registrar_evaluacion_comite(
                     """,
                     (destinatario["id_usuario"], id_propuesta, titulo_notificacion, mensaje_notificacion),
                 )
+        else:
+            # [Línea clave]: Una devolución o un rechazo del Comité Técnico no adelanta el
+            # expediente al Consejo: el destinatario del aviso es el investigador líder,
+            # responsable de atender las observaciones o de recibir la resolución negativa.
+            titulo_notificacion = (
+                "Propuesta devuelta con observaciones por el Comité Técnico"
+                if payload.decision == "observaciones"
+                else "Propuesta rechazada por el Comité Técnico"
+            )
+            mensaje_notificacion = (
+                f"La propuesta {propuesta['codigo']} «{propuesta['titulo']}» obtuvo "
+                f"{puntaje}/100 y fue devuelta con observaciones: "
+                f"{(payload.observaciones or '').strip()}"
+                if payload.decision == "observaciones"
+                else f"La propuesta {propuesta['codigo']} «{propuesta['titulo']}» fue rechazada "
+                f"por el Comité Técnico: {(payload.observaciones or '').strip()}"
+            )
+            cur.execute(
+                """
+                INSERT INTO notificaciones
+                    (id_usuario, id_propuesta, tipo, titulo, mensaje, fecha_creacion, leida)
+                VALUES (%s, %s, 'tramite', %s, %s, NOW(), false)
+                """,
+                (
+                    propuesta["id_usuario_lider"],
+                    id_propuesta,
+                    titulo_notificacion,
+                    mensaje_notificacion,
+                ),
+            )
 
     return ComiteResultadoOut(
         ok=True,

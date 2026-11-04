@@ -22,7 +22,9 @@ ARCHIVO: backend/app/routers/vinculacion.py
 
 2.3. ¿QUÉ HACE EL ARCHIVO A GROSOMODO?:
     Expone GET /propuestas/bandeja, GET/POST /propuestas/{id}/vinculacion y
-    GET/POST /propuestas/{id}/documentos. Mantiene la transición controlada 2 -> 3, 9 o 10.
+    GET/POST /propuestas/{id}/documentos. Mantiene la transición controlada («En revisión
+    de Vinculación» → «En evaluación del Comité Técnico», «Con observaciones» o
+    «Rechazada»), con los estados resueltos por nombre.
 ========================================================================================
 """
 
@@ -38,11 +40,19 @@ from psycopg import Connection
 from pydantic import BaseModel, Field
 
 from ..db import get_conn
+from ..estados import (
+    ESTADO_COMITE,
+    ESTADO_OBSERVACIONES,
+    ESTADO_RECHAZADA,
+    ESTADO_VINCULACION,
+    resolver_estado,
+)
 
 # [Línea clave]: ¿Por qué soy importante? Declara el router antes de propuestas.py. ¿Para qué? Evitar que /propuestas/bandeja sea interpretado como /propuestas/{id_propuesta}. ¿Dónde me usan? En backend/app/main.py al registrar los routers.
 router = APIRouter(prefix="/propuestas", tags=["vinculacion"])
 
 ROL_VINCULACION = "Vinculación"
+ROL_COMITE = "Comité Técnico"
 BUCKET = "convocatorias"
 MAX_BYTES = 20 * 1024 * 1024
 MIME_POR_EXTENSION = {
@@ -51,16 +61,13 @@ MIME_POR_EXTENSION = {
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
-# [Línea clave]: Los estados se resuelven por nombre porque el orden de los identificadores
-# en la tabla «estados» de la base desplegada no coincide con el seed V3.
-NOMBRE_ESTADO_VINCULACION = "En revisión de Vinculación"
-NOMBRE_ESTADO_COMITE = "En evaluación del Comité Técnico"
-NOMBRE_ESTADO_OBSERVACIONES = "Con observaciones"
-NOMBRE_ESTADO_RECHAZADA = "Rechazada"
+# [Línea clave]: Los estados se resuelven por nombre desde 'app.estados' porque el orden de los
+# identificadores en la tabla «estados» de la base desplegada no coincide con el seed V3.
+# El destino de cada decisión vive en la máquina de estados institucional.
 ESTADO_POR_DECISION = {
-    "favorable": NOMBRE_ESTADO_COMITE,
-    "observaciones": NOMBRE_ESTADO_OBSERVACIONES,
-    "rechazo": NOMBRE_ESTADO_RECHAZADA,
+    "favorable": ESTADO_COMITE,
+    "observaciones": ESTADO_OBSERVACIONES,
+    "rechazo": ESTADO_RECHAZADA,
 }
 
 
@@ -202,7 +209,7 @@ class VinculacionResultadoOut(BaseModel):
         * bool : ok Bandera de confirmación de registro exitoso.
         * int : id_evaluacion Identificador de la evaluación registrada en 'evaluations'.
         * int : id_propuesta Identificador de la propuesta calificada.
-        * int : estado_actual Nuevo identificador del estado tras la transición (3, 9 o 10).
+        * int : estado_actual Nuevo identificador del estado tras la transición.
         * str : nombre_estado Denominación legible del nuevo estado institucional.
         * str : decision Decisión adoptada ('favorable', 'observaciones' o 'rechazo').
         * Optional[int] : id_documento Identificador del oficio de respaldo adjunto en Storage.
@@ -294,22 +301,6 @@ def _url_documento(file_path: str) -> str:
     if not url:
         return file_path
     return f"{url}/storage/v1/object/public/{BUCKET}/{file_path.lstrip('/')}"
-
-
-def _id_estado(cur, nombre_estado: str) -> int:
-    """Resolver el identificador de un estado por su nombre oficial."""
-
-    cur.execute(
-        "SELECT id_estado FROM estados WHERE nombre_estado = %s",
-        (nombre_estado,),
-    )
-    fila = cur.fetchone()
-    if not fila:
-        raise HTTPException(
-            500,
-            f"El estado «{nombre_estado}» no está configurado en la base de datos.",
-        )
-    return fila["id_estado"]
 
 
 def _obtener_rol_vinculacion(cur, id_usuario: int) -> int:
@@ -445,7 +436,7 @@ def obtener_bandeja_vinculacion(
                      p.fecha_creacion
             ORDER BY p.fecha_creacion DESC, p.id_propuesta DESC
             """,
-            (NOMBRE_ESTADO_VINCULACION, ROL_VINCULACION),
+            (ESTADO_VINCULACION, ROL_VINCULACION),
         )
         filas = cur.fetchall()
 
@@ -531,8 +522,8 @@ def registrar_vinculacion(
 
     with conn.cursor() as cur:
         id_rol = _obtener_rol_vinculacion(cur, payload.id_usuario_eval)
-        estado_vinculacion = _id_estado(cur, NOMBRE_ESTADO_VINCULACION)
-        estado_nuevo = _id_estado(cur, ESTADO_POR_DECISION[payload.decision])
+        estado_vinculacion = resolver_estado(cur, ESTADO_VINCULACION)
+        estado_nuevo = resolver_estado(cur, ESTADO_POR_DECISION[payload.decision])
 
         cur.execute(
             """
@@ -649,24 +640,36 @@ def registrar_vinculacion(
             f"La propuesta {propuesta['codigo']} «{propuesta['titulo']}» recibió el dictamen "
             f"{payload.numero_oficio_dictamen} con decisión {payload.decision}."
         )
+        if payload.decision != "favorable" and payload.observaciones:
+            mensaje_notificacion += f" Observaciones: {payload.observaciones.strip()}"
 
-        cur.execute(
-            """
-            SELECT DISTINCT u.id_usuario
-            FROM usuarios u
-            JOIN user_roles ur ON ur.id_usuario = u.id_usuario
-            JOIN roles r ON r.id_rol = ur.id_rol
-            WHERE r.nombre_rol = 'Comité Técnico' AND u.estado_activo
-            """,
-        )
-        for comite in cur.fetchall():
+        # [Línea clave]: El destinatario del aviso depende de la decisión: solo un dictamen
+        # favorable remite el expediente al Comité Técnico. Una devolución o un rechazo
+        # notifican al investigador líder, que es quien debe actuar sobre el expediente.
+        if payload.decision == "favorable":
+            destinatarios_notificacion = []
+            cur.execute(
+                """
+                SELECT DISTINCT u.id_usuario
+                FROM usuarios u
+                JOIN user_roles ur ON ur.id_usuario = u.id_usuario
+                JOIN roles r ON r.id_rol = ur.id_rol
+                WHERE r.nombre_rol = %s AND u.estado_activo
+                """,
+                (ROL_COMITE,),
+            )
+            destinatarios_notificacion = [fila["id_usuario"] for fila in cur.fetchall()]
+        else:
+            destinatarios_notificacion = [propuesta["id_usuario_lider"]]
+
+        for destinatario in destinatarios_notificacion:
             cur.execute(
                 """
                 INSERT INTO notificaciones
                     (id_usuario, id_propuesta, tipo, titulo, mensaje, fecha_creacion, leida)
                 VALUES (%s, %s, 'tramite', %s, %s, NOW(), false)
                 """,
-                (comite["id_usuario"], id_propuesta, titulo_notificacion, mensaje_notificacion),
+                (destinatario, id_propuesta, titulo_notificacion, mensaje_notificacion),
             )
 
     return VinculacionResultadoOut(

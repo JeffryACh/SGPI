@@ -47,6 +47,14 @@ from psycopg import Connection
 from pydantic import BaseModel, Field
 
 from ..db import get_conn
+from ..estados import (
+    ESTADO_FORMULACION,
+    ESTADO_VINCULACION,
+    nombre_de_estado,
+    resolver_estado,
+    transicion_permitida,
+    usuario_puede_transicionar,
+)
 from .dictamen_vie import parsear_dictamen
 from .ia import generar_y_guardar_evaluacion_ia, obtener_evaluacion_ia_guardada
 
@@ -381,7 +389,8 @@ class PropuestaCrearIn(BaseModel):
         * Optional[int] : id_convocatoria Convocatoria a la que se postula (por defecto 1 = Fondos VIE 2027).
         * Optional[date] : fecha_inicio Fecha prevista de inicio de actividades.
         * Optional[date] : fecha_fin Fecha prevista de finalización.
-        * Optional[int] : estado_inicial Estado de registro (2 = En revisión de Vinculación, 3 = En evaluación del Comité Técnico).
+        * Optional[str] : estado_inicial_nombre Etapa inicial por su nombre oficial en «estados» (por ejemplo «En revisión de Vinculación»). Es la forma recomendada.
+        * Optional[int] : estado_inicial Identificador de la etapa inicial. Se conserva por compatibilidad con clientes antiguos, pero el identificador no es parte del contrato: el orden de «estados» difiere entre ambientes.
         * Optional[str] : client_uuid Identificador idempotente generado por el navegador.
         * Optional[str] : palabras_clave Palabras clave de la propuesta.
         * Optional[str] : resumen_en Resumen en inglés.
@@ -410,7 +419,8 @@ class PropuestaCrearIn(BaseModel):
     id_convocatoria: Optional[int] = 1
     fecha_inicio: Optional[date] = None
     fecha_fin: Optional[date] = None
-    estado_inicial: Optional[int] = 2
+    estado_inicial: Optional[int] = None
+    estado_inicial_nombre: Optional[str] = None
     client_uuid: Optional[UUID] = None
     palabras_clave: Optional[str] = None
     resumen_en: Optional[str] = None
@@ -1459,7 +1469,28 @@ def crear_propuesta(
         total_horas = sum(m.horas_asignadas for m in equipo_resuelto)
         min_productos_requeridos = max(1, math.ceil(total_horas / 10)) if total_horas > 0 else 1
 
-        if (payload.estado_inicial or 2) > 1:
+        # [Línea clave]: La etapa inicial se resuelve por su NOMBRE oficial en el catálogo
+        # 'estados'. El identificador numérico se acepta por compatibilidad con clientes
+        # antiguos, pero la fuente de verdad es siempre el nombre: el orden de la tabla
+        # 'estados' difiere entre ambientes.
+        if payload.estado_inicial_nombre:
+            estado_inicial = resolver_estado(cur, payload.estado_inicial_nombre)
+            nombre_estado_inicial = payload.estado_inicial_nombre
+        elif payload.estado_inicial is not None:
+            nombre_estado_inicial = nombre_de_estado(cur, payload.estado_inicial)
+            if not nombre_estado_inicial:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="El estado inicial indicado no existe en el catálogo institucional.",
+                )
+            estado_inicial = payload.estado_inicial
+        else:
+            estado_inicial = resolver_estado(cur, ESTADO_VINCULACION)
+            nombre_estado_inicial = ESTADO_VINCULACION
+
+        # [Línea clave]: Regla 2.4.1: la creación directa en una etapa avanzada exige el
+        # mínimo de productos académicos comprometidos, igual que en el flujo normal.
+        if nombre_estado_inicial != ESTADO_FORMULACION:
             if len(payload.productos_academicos) < min_productos_requeridos:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -1479,7 +1510,7 @@ def crear_propuesta(
 
         fecha_inicio = payload.fecha_inicio or date(2027, 1, 1)
         fecha_fin = payload.fecha_fin or date(2028, 12, 31)
-        estado_inicial = payload.estado_inicial or 2
+        # La etapa inicial ya quedó resuelta por nombre en el bloque de validaciones.
 
         cabecera: dict[str, Any] = {
             "id_usuario_lider": payload.id_usuario_lider,
@@ -1866,8 +1897,10 @@ def actualizar_estado_propuesta(
     """
     Avanzar o retroceder el estado de tramitación de una propuesta con auditoría y notificación.
 
-    Verifica la existencia de la propuesta, actualiza 'estado_actual' en 'propuestas' y dispara
-    automáticamente los triggers de base de datos 'trg_log_proposal_state_change' (auditoría en
+    Verifica la existencia de la propuesta, valida que la transición esté admitida por la
+    máquina de estados institucional y que el usuario responsable tenga facultad para
+    ejecutarla. Después actualiza 'estado_actual' en 'propuestas' y dispara automáticamente
+    los triggers de base de datos 'trg_log_proposal_state_change' (auditoría en
     'proposal_state_history') y 'trg_notify_proposal_state_change' (alerta al líder).
 
     parametros:
@@ -1886,6 +1919,40 @@ def actualizar_estado_propuesta(
             raise HTTPException(status_code=404, detail="Propuesta no encontrada")
 
         estado_anterior = actual["estado_actual"]
+
+        # [Línea clave]: La transición se valida por nombre de estado, nunca por su número:
+        # el orden de los identificadores de «estados» difiere entre ambientes.
+        nombre_origen = nombre_de_estado(cur, estado_anterior)
+        nombre_destino = nombre_de_estado(cur, payload.id_nuevo_estado)
+        if not nombre_destino:
+            raise HTTPException(
+                status_code=400,
+                detail="El estado indicado no existe en el catálogo institucional.",
+            )
+
+        if not transicion_permitida(nombre_origen, nombre_destino):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"La transición «{nombre_origen}» → «{nombre_destino}» no está permitida "
+                    "por el flujo institucional de la convocatoria."
+                ),
+            )
+
+        if not usuario_puede_transicionar(
+            cur,
+            payload.id_usuario_responsable,
+            actual["id_usuario_lider"],
+            nombre_origen,
+            nombre_destino,
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "El usuario indicado no tiene facultad para ejecutar esta transición "
+                    f"desde la etapa «{nombre_origen}»."
+                ),
+            )
 
         # [Línea clave]: Ejecuta la actualización de estado que activa los triggers automáticos de PostgreSQL.
         cur.execute(
@@ -1911,9 +1978,7 @@ def actualizar_estado_propuesta(
         except Exception:
             pass
 
-        # [Línea clave]: Obtiene el nombre textual del nuevo estado para informar al cliente web.
-        cur.execute("SELECT nombre_estado FROM estados WHERE id_estado = %s", (payload.id_nuevo_estado,))
-        estado_nombre = cur.fetchone()
+        estado_nombre = {"nombre_estado": nombre_destino}
 
     nombre_estado_str = estado_nombre["nombre_estado"] if estado_nombre else "Desconocido"
 
@@ -1963,7 +2028,7 @@ def registrar_evaluacion(
     """
     with conn.cursor() as cur:
         # [Línea clave]: Valida la existencia de la propuesta a evaluar.
-        cur.execute("SELECT id_propuesta, titulo, id_usuario_lider FROM propuestas WHERE id_propuesta = %s", (id_propuesta,))
+        cur.execute("SELECT id_propuesta, titulo, id_usuario_lider, estado_actual FROM propuestas WHERE id_propuesta = %s", (id_propuesta,))
         prop = cur.fetchone()
         if not prop:
             raise HTTPException(status_code=404, detail="Propuesta no encontrada")
@@ -2024,16 +2089,44 @@ def registrar_evaluacion(
                 pass
 
         # [Línea clave]: Si la evaluación concluye la fase, actualiza automáticamente el estado de la propuesta.
+        # La transición se valida contra la máquina de estados y el rol del evaluador: este endpoint
+        # genérico no puede ser una puerta trasera para mover el expediente a cualquier etapa.
         nuevo_estado_nombre = None
         if payload.cambiar_a_estado is not None:
+            nombre_origen = nombre_de_estado(cur, prop["estado_actual"])
+            nombre_destino = nombre_de_estado(cur, payload.cambiar_a_estado)
+            if not nombre_destino:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El estado indicado no existe en el catálogo institucional.",
+                )
+            if not transicion_permitida(nombre_origen, nombre_destino):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"La transición «{nombre_origen}» → «{nombre_destino}» no está permitida "
+                        "por el flujo institucional de la convocatoria."
+                    ),
+                )
+            if not usuario_puede_transicionar(
+                cur,
+                payload.id_usuario_eval,
+                prop["id_usuario_lider"],
+                nombre_origen,
+                nombre_destino,
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "El evaluador indicado no tiene facultad para ejecutar esta transición "
+                        f"desde la etapa «{nombre_origen}»."
+                    ),
+                )
             cur.execute(
                 "UPDATE propuestas SET estado_actual = %s WHERE id_propuesta = %s",
                 (payload.cambiar_a_estado, id_propuesta),
             )
-            cur.execute("SELECT nombre_estado FROM estados WHERE id_estado = %s", (payload.cambiar_a_estado,))
-            ne = cur.fetchone()
-            if ne:
-                nuevo_estado_nombre = ne["nombre_estado"]
+            nuevo_estado_nombre = nombre_destino
 
     return {
         "ok": True,

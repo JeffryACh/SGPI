@@ -1,6 +1,6 @@
 # Checklist de backend — SGPI
 
-**Fecha de inventario:** 2026-10-29 (actualizado 2026-11-02 con Dirección, administración institucional y CIE)  
+**Fecha de inventario:** 2026-10-29 (actualizado 2026-11-03 con la máquina de estados, el rechazo terminal y el cierre del proyecto)  
 **Alcance:** backend FastAPI, base de datos PostgreSQL/Supabase y conexión con las 33 pantallas del frontend.  
 **Objetivo:** marcar el avance real del backend por rol, pantalla, flujo y brecha transversal.
 
@@ -22,6 +22,10 @@
 - [x] Creación atómica de propuesta completa desde el formulario.
 - [x] Consulta de expediente completo.
 - [x] Cambio genérico de estado con historial y notificación.
+- [x] **Máquina de estados institucional por rol** (`backend/app/estados.py`): transiciones permitidas, estados terminales y validación del rol responsable.
+- [x] **Rechazo terminal en todas las etapas evaluadoras** (Vinculación, Comité Técnico, Consejo de Escuela, Dirección de Investigación y CIE).
+- [x] **Cierre administrativo del proyecto**: el ciclo institucional completo va de «En formulación» a «Cerrada» («Aprobada por CIE» → «En ejecución» → «Cerrada»).
+- [x] **Trámites del expediente**: reenvío tras observaciones, aceptación de la carta, informe de seguimiento y cierre (`backend/app/routers/tramite.py`).
 - [x] Registro genérico de evaluaciones para Comité Técnico y CIE.
 - [x] Flujo específico del Comité Técnico: bandeja, rúbrica ponderada y dictamen con transición de estado.
 - [x] Flujo específico del Consejo de Escuela: bandeja por escuela, aval institucional con persistencia y transición a «Avalada».
@@ -59,9 +63,11 @@
 - [x] Se exige un mínimo de productos académicos según horas del equipo.
 - [x] `client_uuid` evita duplicados por reenvío.
 - [x] Los estados de las transiciones por rol se resuelven por nombre (`estados.nombre_estado`), porque el orden de los identificadores en la base desplegada difiere del seed V3.
-- [x] La propuesta solo pasa a `5 · Avalada` cuando **todas** las escuelas relacionadas con ella (escuela líder + escuelas del equipo investigador) registraron su aval en `council_endorsements`.
-- [x] El CIE solo resuelve propuestas en `7 · Dictaminada por Dirección` y transiciona a `8 · Aprobada por CIE`, `10 · Con observaciones` o `11 · Rechazada` según el tipo de acuerdo del catálogo `resoluciones_cie`.
+- [x] La propuesta solo pasa a «Avalada» cuando **todas** las escuelas relacionadas con ella (escuela líder + escuelas del equipo investigador) registraron su aval en `council_endorsements`.
+- [x] El CIE solo resuelve propuestas en «Dictaminada por Dirección» y transiciona a «Aprobada por CIE», «Con observaciones» o «Rechazada» según el tipo de acuerdo del catálogo `resoluciones_cie`.
 - [x] Los estados del CIE también se resuelven por nombre (`estados.nombre_estado`), nunca por identificador fijo.
+- [x] **Rechazo terminal en todas las etapas:** «Rechazada» es estado terminal en la máquina de estados; no admite ninguna transición saliente.
+- [x] **Dictamen desfavorable de Dirección:** la resolución «No favorable» se traduce a «Rechazada», no a una devolución.
 - [ ] **Parcial:** la mayoría de reglas VIE del presupuesto se validan solo en el frontend.
 - [ ] Validar en servidor el tope anual de ₡5.000.000.
 - [ ] Validar en servidor duración máxima según modalidad.
@@ -69,8 +75,8 @@
 - [ ] Validar en servidor coherencia de fechas del plan y del proyecto.
 - [ ] Validar obligatorios de secciones, documentos y declaraciones éticas antes del envío.
 - [ ] Validar que el líder pueda crear propuestas y que el equipo no tenga conflictos.
-- [ ] Definir y validar una máquina de estados permitida por rol.
-- [ ] Evitar transiciones arbitrarias mediante `PATCH /propuestas/{id}/estado`.
+- [x] Máquina de estados permitida por rol definida y validada en servidor (`MAQUINA_ESTADOS` y `ROLES_POR_ETAPA` en `backend/app/estados.py`).
+- [x] Transiciones arbitrarias evitadas mediante `PATCH /propuestas/{id}/estado`: la transición no permitida responde `409` y el rol sin facultad también.
 
 ### 2.3 Notificaciones
 
@@ -84,7 +90,8 @@
 - [x] Alinear rutas o agregar aliases compatibles.
 - [x] Verificar que el contador de no leídas se actualice tras marcar.
 - [x] El CIE notifica al líder cuando registra la resolución y cuando añade condiciones de aceptación posteriores.
-- [ ] Definir destinatarios por rol/instancia, no solo al líder.
+- [x] Destinatarios por rol/instancia según la decisión: Vinculación avisa al Comité solo si el dictamen es favorable y al líder si hay devolución o rechazo; el Comité avisa al Consejo en el dictamen favorable y al líder en devoluciones o rechazos; Dirección avisa según su dictamen; el CIE avisa al líder y a los roles de la etapa a la que se reenvía.
+- [x] **Notificación de devolución y de rechazo:** el investigador líder recibe el detalle de las observaciones y el estado resultante («Con observaciones» o «Rechazada»).
 
 ### 2.4 Documentos y archivos
 
@@ -110,12 +117,13 @@
 - [ ] Pruebas de cada transición de estado.
 - [ ] Pruebas de cada dictamen por rol.
 - [x] Pruebas manuales del Comité Técnico en `test_endpoints.ps1` (FASE 5): rúbrica, bandeja, 403 sin rol, bloqueo por obligatorio, dictamen favorable, duplicado y expediente.
-- [x] Pruebas manuales del Consejo de Escuela en `test_endpoints.ps1` (FASE 6): bandeja por escuela, 403 sin rol, expediente de aval, aval favorable con transición a `Avalada`, aval duplicado, prohibición de avalar personal de otra escuela y **aval parcial con dos escuelas involucradas** (la propuesta sigue en `4 · Pendiente de aval del Consejo` hasta que avalen todas).
-- [x] Pruebas manuales de Dirección de Investigación en `test_endpoints.ps1` (FASE 7): bandeja, dashboard, detalle, 403 sin rol, dictamen con transición `6` a `7` y duplicado rechazado con 409.
+- [x] Pruebas manuales del Consejo de Escuela en `test_endpoints.ps1` (FASE 6): bandeja por escuela, 403 sin rol, expediente de aval, aval favorable con transición a `Avalada`, aval duplicado, prohibición de avalar personal de otra escuela y **aval parcial con dos escuelas involucradas** (la propuesta sigue en «Pendiente de aval del Consejo» hasta que avalen todas).
+- [x] Pruebas manuales de Dirección de Investigación en `test_endpoints.ps1` (FASE 7): bandeja, dashboard, detalle, 403 sin rol, dictamen con transición de «Sometida ante VIE» a «Dictaminada por Dirección» y duplicado rechazado con 409.
 - [x] Pruebas manuales de administración institucional en `test_endpoints.ps1` (FASE 8): 403 para rol no administrativo, listado de convocatorias con los tres roles facultados, CRUD de convocatoria y etapas, CRUD de catálogos, bloqueo 409 de registros en uso, orden de roles y CRUD de rúbrica.
-- [x] Pruebas manuales del Comité de Ética en Investigación en `test_endpoints.ps1` (FASE 10): login de los dos roles (`CIE` y `Evaluador Comité de Ética (CIE)`), 403 sin rol, bandeja y dashboard del CIE, expediente con el catálogo de acuerdos, resolución con transición `7` a `8`, duplicado y expediente cerrado rechazados con 409, condiciones de aceptación posteriores, condiciones sin acuerdo previo rechazadas con 409 y expediente con `resolucion_cie` persistida.
+- [x] Pruebas manuales del Comité de Ética en Investigación en `test_endpoints.ps1` (FASE 10): login de los dos roles (`CIE` y `Evaluador Comité de Ética (CIE)`), 403 sin rol, bandeja y dashboard del CIE, expediente con el catálogo de acuerdos, resolución con transición de «Dictaminada por Dirección» a «Aprobada por CIE», duplicado y expediente cerrado rechazados con 409, condiciones de aceptación posteriores, condiciones sin acuerdo previo rechazadas con 409 y expediente con `resolucion_cie` persistida.
+- [x] Pruebas manuales de la máquina de estados en `test_endpoints.ps1` (FASE 11): devolución con observaciones, rechazo terminal, reenvío a la etapa de origen, transición inválida rechazada con 409, aceptación («Aprobada por CIE» → «En ejecución»), informe de seguimiento y cierre administrativo («En ejecución» → «Cerrada»).
 - [ ] Pruebas de notificaciones y lectura.
-- [x] Pruebas de autorización: un rol no puede ejecutar acciones de otro (403 en `/admin`, Comité Técnico, Consejo de Escuela y Dirección).
+- [x] Pruebas de autorización: un rol no puede ejecutar acciones de otro (403 en `/admin`, Comité Técnico, Consejo de Escuela, Dirección y CIE).
 - [ ] Pruebas de idempotencia y concurrencia.
 - [x] Documentar variables de entorno necesarias (`.env.example`, `docker-compose.yml`, `render.yaml`, `AGENTS.md`).
 - [ ] Revisar CORS permisivo (`allow_origins=["*"]`) antes de producción.
@@ -144,7 +152,7 @@
 | OK | GET | `/propuestas` | Búsqueda/listado con filtros |
 | OK | GET | `/propuestas/{id_propuesta}` | Expediente completo |
 | OK | POST | `/propuestas` | Creación atómica |
-| OK | PATCH | `/propuestas/{id_propuesta}/estado` | Cambio genérico de estado |
+| OK | PATCH | `/propuestas/{id_propuesta}/estado` | Cambio genérico de estado validado contra la máquina de estados y el rol (409 si la transición no está permitida) |
 | OK | POST | `/propuestas/{id_propuesta}/evaluaciones` | Evaluación genérica |
 | OK | GET | `/propuestas/comite/bandeja` | Bandeja filtrada del Comité Técnico |
 | OK | GET | `/propuestas/comite/rubrica` | Rúbrica oficial ponderada de la versión activa |
@@ -156,12 +164,16 @@
 | OK | GET | `/propuestas/direccion/bandeja` | Bandeja de propuestas sometidas ante VIE (Dirección) |
 | OK | GET | `/propuestas/direccion/dashboard` | Contadores reales de Dirección (`pendientes`, `determinadas`, `totales_revisadas`) |
 | OK | GET | `/propuestas/direccion/{id_propuesta}` | Detalle del expediente para Dirección con verificaciones VIE |
-| OK | POST | `/propuestas/direccion/{id_propuesta}` | Registrar dictamen de Dirección y transición `6` a `7` |
+| OK | POST | `/propuestas/direccion/{id_propuesta}` | Registrar dictamen de Dirección y transición de «Sometida ante VIE» a «Dictaminada por Dirección», «Con observaciones» o «Rechazada» |
 | OK | GET | `/propuestas/cie/bandeja` | Bandeja del CIE (dictaminadas por Dirección y ya resueltas) |
 | OK | GET | `/propuestas/cie/dashboard` | Contadores reales del CIE (`pendientes`, `resueltas`, `totales_revisadas`) |
 | OK | GET | `/propuestas/cie/{id_propuesta}` | Expediente para resolver con dictamen de Dirección y catálogo de acuerdos |
-| OK | POST | `/propuestas/cie/{id_propuesta}` | Registrar resolución colegiada y transición `7` a `8`, `10` o `11` |
+| OK | POST | `/propuestas/cie/{id_propuesta}` | Registrar resolución colegiada y transición de «Dictaminada por Dirección» a «Aprobada por CIE», «Con observaciones» o «Rechazada» |
 | OK | POST | `/propuestas/cie/{id_propuesta}/condiciones` | Registrar condiciones de aceptación posteriores al acuerdo |
+| OK | POST | `/propuestas/{id_propuesta}/observaciones/reenvio` | Reenviar el expediente devuelto a la etapa institucional que lo devolvió |
+| OK | POST | `/propuestas/{id_propuesta}/aceptacion` | Registrar la aceptación de la carta y pasar a «En ejecución» |
+| OK | POST | `/propuestas/{id_propuesta}/informe` | Registrar el informe de seguimiento del proyecto |
+| OK | POST | `/propuestas/{id_propuesta}/cierre` | Cierre administrativo del proyecto (exige informe final) |
 | OK | GET | `/admin/catalogos` | Catálogos maestros editables (whitelist de tablas) |
 | OK | GET | `/admin/catalogos/{clave}` | Registros de un catálogo maestro editable |
 | OK | POST | `/admin/catalogos/{clave}` | Alta de registro en catálogo maestro |
@@ -218,6 +230,10 @@ Pantallas principales: `02`, `03`, `04`–`20`, `22`, `28`, `33`.
 - [x] **19 · Confirmación:** muestra el código devuelto por backend.
 - [x] **20 · Seguimiento:** recarga el expediente real por ID y usa el estado de PostgreSQL.
 - [x] **20 · Seguimiento:** consume `GET /propuestas/{id}` mediante `cargarDossier()` al entrar.
+- [x] **20 · Seguimiento:** las acciones pendientes se derivan del estado real: remisión a Vinculación, sometimiento ante VIE, reenvío tras observaciones, presentación de la carta de aceptación e informe de seguimiento.
+- [x] **20 · Seguimiento:** reenvío del expediente devuelto con observaciones a la etapa que lo devolvió (`POST /propuestas/{id}/observaciones/reenvio`).
+- [x] **20 · Seguimiento:** aceptación de la carta de aceptación (`POST /propuestas/{id}/aceptacion`), que abre la ejecución del proyecto.
+- [x] **20 · Seguimiento:** registro del informe de seguimiento (`POST /propuestas/{id}/informe`).
 - [x] **22 · Expediente:** la pantalla consume el dossier real del backend (`dossierActual`).
 - [x] **22 · Expediente:** pestañas Documentos, Evaluaciones, Resolución e Historial conectadas al dossier real.
 - [x] **28 · Historial:** conectado al arreglo `historial` y a `vinculacion_evaluaciones` del dossier.
@@ -238,7 +254,9 @@ Pantallas principales: `21`, `22`, `23`, `28`, `29`, `30`.
 - [x] **23 · Revisión de Vinculación:** persistir en `vinculacion_evaluations`.
 - [x] **23 · Revisión de Vinculación:** asociar dictamen a evaluación base en `evaluations`.
 - [x] **23 · Revisión de Vinculación:** adjuntar oficio/documento firmado.
-- [x] **23 · Revisión de Vinculación:** transición controlada de estado `2` a `3` o `10`.
+- [x] **23 · Revisión de Vinculación:** transición controlada de «En revisión de Vinculación» a «En evaluación del Comité Técnico», «Con observaciones» o «Rechazada».
+- [x] **23 · Revisión de Vinculación:** la decisión se elige de forma explícita (Favorable / Con observaciones / Rechazada) y las observaciones son obligatorias en las devoluciones y los rechazos.
+- [x] **23 · Revisión de Vinculación:** el rechazo es terminal; el expediente no admite nuevas revisiones.
 - [x] **23 · Revisión de Vinculación:** notificar al investigador y al Comité.
 - [x] **28 · Historial:** mostrar decisión de Vinculación con actor, fecha y documento.
 - [x] **29–30 · Consulta histórica:** usar `GET /propuestas` con filtros reales.
@@ -249,9 +267,9 @@ Pantallas principales: `21`, `22`, `23`, `28`, `29`, `30`.
 Pantallas principales: `02`, `21`, `22`, `24`, `28`.
 
 - [x] **02 · Inicio:** tarjetas de pendientes, dictaminadas y total calculadas desde la bandeja real del Comité.
-- [x] **02 · Inicio:** propuesta destacada = última propuesta que ingresó al estado 3, ordenada por `proposal_state_history`.
+- [x] **02 · Inicio:** propuesta destacada = última propuesta que ingresó a «En evaluación del Comité Técnico», ordenada por `proposal_state_history`.
 - [x] **21 · Bandeja:** filtrar propuestas en evaluación del Comité (`GET /propuestas/comite/bandeja`).
-- [x] **21 · Bandeja:** ordenar por fecha de ingreso al estado 3 (`fecha_ingreso_comite`), no por fecha de creación.
+- [x] **21 · Bandeja:** ordenar por fecha de ingreso a «En evaluación del Comité Técnico» (`fecha_ingreso_comite`), no por fecha de creación.
 - [ ] **21 · Bandeja:** asignación explícita de evaluadores.
 - [x] **22 · Expediente:** cargar dossier real.
 - [x] **24 · Evaluación:** endpoint para consultar la rúbrica oficial (`GET /propuestas/comite/rubrica`).
@@ -264,7 +282,8 @@ Pantallas principales: `02`, `21`, `22`, `24`, `28`.
 - [x] **24 · Evaluación:** validar productos académicos comprometidos (`produccion_conforme` obligatorio para recomendar).
 - [ ] **Parcial:** se consolidó un único dictamen por propuesta; falta soportar evaluación individual por evaluador y su consolidación.
 - [x] **24 · Evaluación:** consolidar resultado del comité (409 si ya existe dictamen).
-- [x] **24 · Evaluación:** transición controlada de estado `3` a `4`, `9` o `10`.
+- [x] **24 · Evaluación:** transición controlada de «En evaluación del Comité Técnico» a «Pendiente de aval del Consejo», «Con observaciones» o «Rechazada».
+- [x] **24 · Evaluación:** la decisión se elige de forma explícita (Favorable / Con observaciones / Rechazada) y el rechazo es terminal.
 - [x] **24 · Evaluación:** asociar acta/informe del Comité mediante `id_documento` validado contra el expediente.
 - [x] **24 · Evaluación:** notificar al Consejo de Escuela cuando el dictamen es favorable.
 - [x] **28 · Historial:** mostrar puntajes, criterios y observaciones.
@@ -274,7 +293,7 @@ Pantallas principales: `02`, `21`, `22`, `24`, `28`.
 Pantallas principales: `02`, `21`, `22`, `25`, `28`.
 
 - [x] **02 · Inicio:** tarjetas de pendientes, dictaminadas y total calculadas desde la bandeja real del Consejo.
-- [x] **02 · Inicio:** propuesta destacada = última propuesta que ingresó al estado 4, ordenada por `proposal_state_history`.
+- [x] **02 · Inicio:** propuesta destacada = última propuesta que ingresó a «Pendiente de aval del Consejo», ordenada por `proposal_state_history`.
 - [x] **21 · Bandeja:** filtrar propuestas pendientes de aval (`GET /propuestas/consejo/bandeja`).
 - [x] **21 · Bandeja:** filtrar por la escuela del usuario (escuela líder y escuelas del equipo investigador).
 - [x] **25 · Aval:** persistir en `council_endorsements`.
@@ -287,7 +306,8 @@ Pantallas principales: `02`, `21`, `22`, `25`, `28`.
 - [x] **25 · Aval:** soportar avales de varias escuelas para una misma propuesta (una fila por escuela).
 - [x] **25 · Aval:** validar que cada escuela avale a su propio personal.
 - [x] **25 · Aval:** adjuntar acuerdo firmado (documento validado contra el expediente).
-- [x] **25 · Aval:** transición controlada a `5 · Avalada` cuando todas las escuelas involucradas avalaron.
+- [x] **25 · Aval:** transición controlada a «Avalada» cuando todas las escuelas involucradas avalaron.
+- [x] **25 · Aval:** la decisión se elige de forma explícita (Favorable / Con observaciones / Rechazada); en la devolución y el rechazo el estado resultante es «Con observaciones» o «Rechazada», y el rechazo es terminal.
 - [x] **25 · Aval:** notificar al investigador para el sometimiento formal.
 - [x] **28 · Historial:** mostrar avales y acuerdos.
 
@@ -306,9 +326,13 @@ Pantallas principales: `02`, `21`, `22`, `26`, `28`, `29`, `30`, `31`, `32`.
 - [x] **26 · Dictamen:** guardar resultado favorable, con observaciones o desfavorable.
 - [x] **26 · Dictamen:** guardar fundamentación y fecha.
 - [x] **26 · Dictamen:** formulario con checklist de criterios VIE y verificaciones institucionales.
-- [x] **26 · Dictamen:** transición controlada de `6` a `7`.
+- [x] **26 · Dictamen:** transición controlada de «Sometida ante VIE» a «Dictaminada por Dirección», «Con observaciones» o «Rechazada».
+- [x] **26 · Dictamen:** la resolución «No favorable» de Dirección deja el expediente en «Rechazada» (terminal) y la «Con observaciones» devuelve el expediente al líder.
 - [x] **26 · Dictamen:** notificar al líder de la propuesta.
 - [x] **26 · Dictamen:** resolver los estados por nombre desde `estados` (nada de identificadores fixedos).
+- [x] **21 · Bandeja:** pestaña propia «En ejecución» con los proyectos en curso, que Dirección debe cerrar.
+- [x] **22 · Expediente:** botón «Cerrar proyecto» para Dirección cuando el expediente está «En ejecución».
+- [x] **Cierre del proyecto:** `POST /propuestas/{id}/cierre` exige el informe final y deja el expediente en «Cerrada», estado terminal.
 - [x] **28 · Historial:** mostrar verificaciones y dictamen de Dirección.
 - [x] **29–30 · Consulta histórica:** el buscador genérico `GET /propuestas` cubre los filtros y el detalle.
 - [x] **31 · Administración de convocatorias:** CRUD completo (`POST/PATCH/DELETE /admin/convocatorias`).
@@ -334,7 +358,8 @@ Pantallas principales: `02`, `21`, `22`, `27`, `28`, `29`, `30`.
 - [x] **27 · Resolución:** guardar sesión, artículo y fecha.
 - [x] **27 · Resolución:** guardar fundamentación y condiciones.
 - [x] **27 · Resolución:** adjuntar acuerdo firmado (`id_documento` en `proposal_documents`).
-- [x] **27 · Resolución:** transición controlada de `7` a `8`, `10` o `11`.
+- [x] **27 · Resolución:** transición controlada de «Dictaminada por Dirección» a «Aprobada por CIE», «Con observaciones» o «Rechazada».
+- [x] **27 · Resolución:** el rechazo por conflicto bioético no subsanable es terminal y el acuerdo condicionado a enmiendas menores devuelve el expediente al líder.
 - [x] **27 · Resolución:** notificar al investigador.
 - [x] **27 · Resolución:** registrar condiciones de aceptación posteriores.
 - [x] **27 · Resolución:** el tipo de acuerdo se toma del catálogo `resoluciones_cie` (cuatro tipos vigentes).
@@ -430,6 +455,10 @@ Pantallas principales: `02`, `21`, `22`, `27`, `28`, `29`, `30`.
 - [x] `GET /propuestas/cie/{id_propuesta}` (detalle con dictamen de Dirección y catálogo de acuerdos).
 - [x] `POST /propuestas/cie/{id_propuesta}/condiciones` (condiciones de aceptación posteriores).
 - [x] `GET /propuestas/cie/bandeja` y `GET /propuestas/cie/dashboard`.
+- [x] `POST /propuestas/{id}/observaciones/reenvio` (reenvío a la etapa que devolvió el expediente).
+- [x] `POST /propuestas/{id}/aceptacion` (aceptación de la carta y pase a ejecución).
+- [x] `POST /propuestas/{id}/informe` (informe de seguimiento del proyecto).
+- [x] `POST /propuestas/{id}/cierre` (cierre administrativo con informe final obligatorio).
 
 ### 6.5 Administración
 
@@ -456,8 +485,10 @@ Pantallas principales: `02`, `21`, `22`, `27`, `28`, `29`, `30`.
 - [ ] Crear propuesta completa y consultarla por ID.
 - [ ] Reenviar el mismo `client_uuid` no duplica.
 - [ ] Consultar expediente con todas sus tablas hijas.
-- [ ] Cada transición de estado deja historial y notificación.
-- [ ] Un estado no permitido devuelve error.
+- [x] Cada transición de estado deja historial y notificación.
+- [x] Un estado no permitido devuelve error (409 validado en `test_endpoints.ps1`, FASE 11).
+- [x] Un rol sin facultad sobre la etapa devuelve error (409 validado en `test_endpoints.ps1`, FASE 11).
+- [x] El rechazo es terminal en todas las etapas evaluadoras y no admite ninguna transición posterior.
 - [x] Cada dictamen queda asociado a usuario, rol, fecha y documento (Comité Técnico, Consejo de Escuela, Dirección y CIE).
 - [x] Las notificaciones se listan y se marcan como leídas.
 - [x] Los documentos se cargan, listan, descargan y eliminan (instrumentos oficiales de convocatoria, verificados de punta a punta contra Supabase Storage).
@@ -467,7 +498,7 @@ Pantallas principales: `02`, `21`, `22`, `27`, `28`, `29`, `30`.
 
 ## 8. Orden sugerido de cierre
 
-> Estado a 2026-11-02: los pasos 2 a 9 están implementados y verificados; falta el paso 1 (autenticación con token), el 10 (versionado de documentos) y el 11 (pruebas automatizadas y limpieza de datos demo).
+> Estado a 2026-11-03: los pasos 2 a 9 y el 12 están implementados y verificados; falta el paso 1 (autenticación con token), el 10 (versionado de documentos) y el 11 (pruebas automatizadas y limpieza de datos demo).
 
 1. Autenticación con token y autorización por rol.
 2. Corrección de notificaciones. **Hecho.**
@@ -480,6 +511,7 @@ Pantallas principales: `02`, `21`, `22`, `27`, `28`, `29`, `30`.
 9. Administración de convocatorias, catálogos y rúbricas. **Hecho.**
 10. Carga real de documentos y versionado.
 11. Pruebas automatizadas y limpieza de datos demo.
+12. Máquina de estados, rechazo terminal y cierre del proyecto. **Hecho.**
 
 ## 9. Notas de alcance
 
@@ -489,5 +521,8 @@ Pantallas principales: `02`, `21`, `22`, `27`, `28`, `29`, `30`.
 - Antes de marcar un elemento como terminado, verificar también que el frontend consuma el endpoint correcto.
 - Migraciones aplicadas a la base desplegada el 2026-11-01: `V13__administracion_rubricas_roles.sql` (`roles.orden`, `version` en rúbrica, tabla `rubric_versions`) y `V14__usuario_administrador_sistema.sql` (cuenta de demostración con rol «Administrador del Sistema», `administrador@example.com` / `demostracion`).
 - Migración aplicada a la base desplegada el 2026-11-02: `V15__cie_resoluciones.sql` (columnas del acuerdo en `cie_resolution_evaluations`, índice por propuesta y siembra idempotente de `resoluciones_cie`).
+- Migración **pendiente de aplicación** por el administrador: `V16__saneamiento_estados.sql` (garantía idempotente del catálogo de estados por nombre y reparación de los expedientes cuya etapa contradecía la última decisión de la bitácora). El script es idempotente y no elimina filas de auditoría. Detalle en `Base de datos/Cambios.md`, sección 8.
+- **Causa raíz del bug de transiciones:** dos numeraciones del catálogo `estados` (el seed V3 y el orden de la base desplegada). Por eso el identificador del estado **no** es parte del contrato: todo el código resuelve el estado por su nombre oficial (`backend/app/estados.py` en el servidor, `idEstadoPorNombre()` en el frontend).
+- **Nota sobre los datos:** la base de datos desplegada fue re-sembrada con los scripts de `Base de datos/Scripts` y quedó con los 9 usuarios y las 4 propuestas del seed (antes había 18 usuarios y 132 propuestas de trabajo). El backend de Render apunta a esa misma base.
 - El comité tiene dos roles institucionales: `CIE` (comité colegiado, usuario 17 `ricardo.mora@example.com`) y `Evaluador Comité de Ética (CIE)` (evaluadora 6 `patricia.solano@universidad.edu`). Ambos resuelven expedientes y el frontend los registra con la misma clave `cie`.
 - En los endpoints multipart el actor viaja en el cuerpo (`id_usuario` como `Form`), no en la URL: `POST /admin/convocatorias/{id}/documentos` y `POST /propuestas/{id}/documentos`. En el resto del router `/admin` `id_usuario` sigue siendo un parámetro de consulta.

@@ -1165,6 +1165,91 @@ async function guardarVinculacion(idPropuesta, payload) {
 }
 
 /**
+ * Resolver el identificador de un estado por su nombre oficial usando el catálogo de PostgreSQL.
+ * El frontend nunca escribe identificadores de estado a mano: el orden de los identificadores
+ * en la tabla «estados» difiere entre ambientes y solo el catálogo declara el nombre válido.
+ * parametros:
+ *     - string : nombre Nombre oficial del estado, por ejemplo «Con observaciones».
+ * return:
+ *     + number|null : id Identificador del estado o null si el catálogo no lo contiene.
+ */
+function idEstadoPorNombre(nombre) {
+  const lista = catalogos?.estados || [];
+  const fila = lista.find(
+    (e) =>
+      String(e.nombre_estado || "").trim().toLowerCase() ===
+      String(nombre || "").trim().toLowerCase(),
+  );
+  return fila ? Number(fila.id_estado) : null;
+}
+
+/**
+ * Cambiar el estado de una propuesta mediante el endpoint genérico de la API.
+ * El backend valida la transición contra la máquina de estados institucional y el rol del usuario.
+ * parametros:
+ *     - number : idPropuesta Identificador de la propuesta.
+ *     - string : nombreEstado Nombre oficial del estado destino.
+ *     - string : observaciones Justificación de la transición.
+ * return:
+ *     + Promise<Object> : resultado Respuesta del backend con el nuevo estado.
+ */
+async function apiCambiarEstado(idPropuesta, nombreEstado, observaciones = "") {
+  const idNuevoEstado = idEstadoPorNombre(nombreEstado);
+  if (!idNuevoEstado)
+    throw new Error(`El estado «${nombreEstado}» no está en el catálogo institucional.`);
+  const res = await fetch(`${API_URL}/propuestas/${idPropuesta}/estado`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id_nuevo_estado: idNuevoEstado,
+      id_usuario_responsable: session?.user?.id_usuario,
+      observaciones,
+    }),
+  });
+  if (!res.ok) throw new Error(await errorDesdeRespuesta(res));
+  return res.json();
+}
+
+/**
+ * Ejecutar un trámite del expediente (reenvío, aceptación, informe o cierre).
+ * parametros:
+ *     - number : idPropuesta Identificador de la propuesta.
+ *     - string : accion Ruta del trámite ('observaciones/reenvio', 'aceptacion', 'informe' o 'cierre').
+ *     - Object : payload Datos adicionales del trámite.
+ * return:
+ *     + Promise<Object> : resultado Respuesta del backend con el estado resultante.
+ */
+async function apiTramite(idPropuesta, accion, payload = {}) {
+  const res = await fetch(`${API_URL}/propuestas/${idPropuesta}/${accion}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id_usuario: session?.user?.id_usuario, ...payload }),
+  });
+  if (!res.ok) throw new Error(await errorDesdeRespuesta(res));
+  return res.json();
+}
+
+/**
+ * Leer el valor vigente de un campo del formulario o del modal activo.
+ * Prioriza el control visible en pantalla (lo que el usuario acaba de escribir) y cae al
+ * borrador persistido en 'state.saved' cuando el control ya no existe en el DOM.
+ * parametros:
+ *     - string : clave Clave estable del campo (atributo data-field).
+ *     - string : porDefecto Valor devuelto cuando el campo no tiene contenido.
+ * return:
+ *     + string : valor Texto recortado del campo o el valor por defecto.
+ */
+function valorCampo(clave, porDefecto = "") {
+  const control = document.querySelector(`[data-field="${clave}"]`);
+  if (control)
+    return control.type === "checkbox"
+      ? control.checked
+      : String(control.value || "").trim();
+  const guardado = state.saved[clave];
+  return guardado === undefined || guardado === null ? porDefecto : String(guardado).trim();
+}
+
+/**
  * Construir el payload del dictamen de Vinculación desde el formulario de la pantalla 23.
  * parametros:
  *     - string : decision Resultado favorable, observaciones o rechazo.
@@ -4008,7 +4093,9 @@ function buildProposalPayload() {
     prioridad_nacional_ods: draftValue("08:Prioridad nacional y ODS", ""),
     fecha_inicio: fechaInicio,
     fecha_fin: fechaFin,
-    estado_inicial: 2,
+    // [Línea clave]: La etapa inicial viaja por su NOMBRE oficial. El identificador numérico
+    // del catálogo «estados» no es parte del contrato y difiere entre ambientes.
+    estado_inicial_nombre: "En revisión de Vinculación",
     client_uuid: clientUuid,
     trl_inicial: Number(draftValue("16:TRL actual", "4")),
     trl_esperado: Number(draftValue("16:TRL esperado", "6")),
@@ -4569,6 +4656,9 @@ function confirmation() {
  * Lista secuencial de estados que atraviesa un expediente en el SGPI.
  * Define el ordenamiento de etapas desde 'En formulación' hasta 'Cerrada'.
  * En tracking() para calcular la posición en la línea de progreso del expediente.
+ * Los nombres coinciden con el catálogo «estados» de PostgreSQL: las etapas de devolución
+ * (observaciones y rechazo) también forman parte de la ruta porque el investigador puede
+ * corregir el expediente y reenviarlo a la etapa que lo devolvió.
  * atributos:
  *     * string : 0 'En formulación'
  *     * string : 1 'En revisión de Vinculación'
@@ -4576,10 +4666,11 @@ function confirmation() {
  *     * string : 3 'Avalada'
  *     * string : 4 'Sometida'
  *     * string : 5 'Dictaminada'
- *     * string : 6 'Resuelta'
- *     * string : 7 'Aceptada'
- *     * string : 8 'En ejecución'
- *     * string : 9 'Cerrada'
+ *     * string : 6 'Aprobada por CIE'
+ *     * string : 7 'En ejecución'
+ *     * string : 8 'Con observaciones'
+ *     * string : 9 'Rechazada'
+ *     * string : 10 'Cerrada'
  */
 const stageList = [
   "En formulación",
@@ -4588,9 +4679,10 @@ const stageList = [
   "Avalada",
   "Sometida",
   "Dictaminada",
-  "Resuelta",
-  "Aceptada",
+  "Aprobada por CIE",
   "En ejecución",
+  "Con observaciones",
+  "Rechazada",
   "Cerrada",
 ];
 
@@ -4605,7 +4697,7 @@ const ESTADOS_BACKEND_A_ETAPA = {
   "Avalada": "Avalada",
   "Sometida ante VIE": "Sometida",
   "Dictaminada por Dirección": "Dictaminada",
-  "Aprobada por CIE": "Resuelta",
+  "Aprobada por CIE": "Aprobada por CIE",
   "Con observaciones": "Con observaciones",
   "Rechazada": "Rechazada",
   "En ejecución": "En ejecución",
@@ -4645,37 +4737,32 @@ function tracking() {
         "El investigador debe someterla formalmente el 28 sep 2026.",
       ) +
       `<div class="mt">${act("Someter propuesta", "submit", "", "arrow")}</div>`;
-  if (stage === "Resuelta")
+  if (stage === "Aprobada por CIE")
     action =
       notice(
         "Resolución favorable del CIE",
         "Presenta la carta de aceptación durante el período del 2 al 6 de noviembre.",
       ) +
       `<div class="mt">${act("Presentar carta de aceptación", "acceptance", "", "upload")}</div>`;
-  if (stage === "Aceptada")
-    action = notice(
-      "Carta de aceptación registrada",
-      "La ejecución comienza el 1 ene 2027.",
-    );
   if (stage === "Con observaciones")
     action =
       notice(
         "Se requieren ajustes",
-        "Completa la justificación del riesgo de campo y vuelve a enviar la versión corregida.",
+        "Corrige lo observado y reenvía el expediente a la etapa que te lo devolvió.",
         "warning",
       ) +
-      `<div class="mt">${btn("Atender observaciones", "14", "", "edit")}</div>`;
+      `<div class="mt">${act("Atender observaciones", "attend", "", "edit")}</div>`;
   if (stage === "Rechazada")
     action = notice(
       "Resolución: no aprobada",
-      "Consulta el acuerdo motivado del CIE en el expediente. La resolución no habilita aceptación ni ejecución.",
+      "Consulta el acuerdo motivado en el expediente. La resolución no habilita aceptación ni ejecución.",
       "warning",
     );
   if (stage === "En ejecución")
     action =
       notice(
         "Proyecto en ejecución",
-        "Registra informes y productos; el cierre requiere el informe final y oficio de Vinculación.",
+        "Registra informes y productos; el cierre requiere el informe final y la certificación de Dirección.",
       ) +
       `<div class="mt">${act("Presentar informe", "report", "secondary", "upload")}</div>`;
   if (stage === "Cerrada")
@@ -4699,7 +4786,7 @@ function tracking() {
       : docPendiente("Sin documentos registrados", "Usa el botón para adjuntar el primer archivo real.")
   }<div class="action-row mt">${act("Adjuntar documento", "upload", "secondary", "plus")}</div>`;
   return shell(
-    `<div class="two-col"><div class="stack">${card(esc(d?.titulo || trackTitle), `<span class="project-code">${esc(trackCode)} · Versión 1.0</span><div class="action-row mt mb">${badge(stateText, "solid")}${badge(d?.nombre_modalidad || state.mode || "Desarrollo tecnológico")}</div>${action}<div class="stat-strip"><div><strong>${money(trackAmount)}</strong><span>Monto solicitado</span></div><div><strong>${esc(periodo)}</strong><span>Período de ejecución</span></div><div><strong>${trackHours} h</strong><span>Dedicación semanal</span></div></div>`)}${card("Documentos de la etapa", documentosEtapa)}</div>${card("Ruta del expediente", `<div class="timeline">${stageList.map((s, i) => `<div class="event ${s === stage ? "current" : ""}"><h3>${i < ix ? "✓ " : ""}${s}</h3><p>${["Investigador", "Vinculación", "Comité Técnico", "Consejos de Escuela", "Investigador → VIE", "Dirección de Investigación", "CIE", "Investigador", "Equipo investigador", "Dirección de Investigación"][i]}</p></div>`).join("")}</div>`)}</div>`,
+    `<div class="two-col"><div class="stack">${card(esc(d?.titulo || trackTitle), `<span class="project-code">${esc(trackCode)} · Versión 1.0</span><div class="action-row mt mb">${badge(stateText, "solid")}${badge(d?.nombre_modalidad || state.mode || "Desarrollo tecnológico")}</div>${action}<div class="stat-strip"><div><strong>${money(trackAmount)}</strong><span>Monto solicitado</span></div><div><strong>${esc(periodo)}</strong><span>Período de ejecución</span></div><div><strong>${trackHours} h</strong><span>Dedicación semanal</span></div></div>`)}${card("Documentos de la etapa", documentosEtapa)}</div>${card("Ruta del expediente", `<div class="timeline">${stageList.map((s, i) => `<div class="event ${s === stage ? "current" : ""}"><h3>${i < ix ? "✓ " : ""}${s}</h3><p>${["Investigador", "Vinculación", "Comité Técnico", "Consejos de Escuela", "Investigador → VIE", "Dirección de Investigación", "CIE", "Equipo investigador", "Investigador", "Dirección de Investigación", "Dirección de Investigación"][i]}</p></div>`).join("")}</div>`)}</div>`,
     "Seguimiento de propuesta",
     "Consulta la etapa actual y la próxima acción que te corresponde.",
     btn("Abrir expediente", "22", "secondary", "folder"),
@@ -4731,9 +4818,12 @@ function inbox() {
             : state.role === "cie"
               ? bandejaCie || []
               : top3propuestasmasrecientes || [];
+  // [Línea clave]: Los estados se comparan por su nombre oficial del catálogo «estados».
+  // «En ejecución» ya no está en revisión de Vinculación: el expediente sigue vigente pero
+  // Vinculación no debe volver a dictaminarlo.
   const closedStatuses =
     state.role === "vinculacion"
-      ? ["En evaluación del Comité Técnico", "Con observaciones", "Rechazada", "Aprobada por CIE", "Cerrada", "Resuelta"]
+      ? ["En evaluación del Comité Técnico", "Con observaciones", "Rechazada", "Aprobada por CIE", "En ejecución", "Cerrada"]
       : state.role === "comite"
         ? ["Pendiente de aval del Consejo", "Avalada", "Sometida ante VIE", "Dictaminada por Dirección", "Con observaciones", "Rechazada", "Aprobada por CIE", "En ejecución", "Cerrada"]
         : state.role === "consejo"
@@ -4742,7 +4832,7 @@ function inbox() {
             ? ["Dictaminada por Dirección", "Con observaciones", "Rechazada", "Aprobada por CIE", "En ejecución", "Cerrada"]
             : state.role === "cie"
               ? ["Aprobada por CIE", "Con observaciones", "Rechazada", "En ejecución", "Cerrada"]
-              : ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"];
+              : ["Cerrada", "Rechazada", "Aprobada por CIE"];
   const pending =
     state.role === "consejo"
       ? list.filter(esPendienteConsejo)
@@ -4766,6 +4856,10 @@ function inbox() {
   if (activeFilter === "Avalados") filtered = list.filter((p) => p.miAval);
   // [Línea clave]: Dirección separa los expedientes que ya dictaminó de los que aún espera.
   if (activeFilter === "Determinadas") filtered = closed;
+  // [Línea clave]: Dirección también tiene una bandeja propia con los proyectos en ejecución:
+  // son los expedientes sobre los que puede dictaminar el cierre administrativo.
+  if (activeFilter === "En ejecución")
+    filtered = list.filter((p) => p.status === "En ejecución");
   // [Línea clave]: El CIE separa los expedientes ya resueltos por el comité de los pendientes.
   if (activeFilter === "Resueltas") filtered = closed;
 
@@ -4779,6 +4873,9 @@ function inbox() {
     // [Línea clave]: El CIE abre el formulario de resolución solo en los expedientes que
     // Dirección ya dictaminó y que el comité todavía no ha resuelto.
     const puedeResolver = state.role === "cie" && esPendienteCie(p);
+    // [Línea clave]: Dirección de Investigación dictamina el cierre de los proyectos que
+    // ya están en ejecución: es la única etapa que habilita el estado terminal «Cerrada».
+    const puedeCerrar = state.role === "direccion" && p.status === "En ejecución";
     const etiquetaBoton = puedeEvaluar
       ? "Evaluar propuesta"
       : puedeAvalar
@@ -4787,7 +4884,9 @@ function inbox() {
           ? "Dictaminar"
           : puedeResolver
             ? "Resolver"
-            : "Abrir expediente";
+            : puedeCerrar
+              ? "Cerrar proyecto"
+              : "Abrir expediente";
     const destino = puedeEvaluar
       ? "24"
       : puedeAvalar
@@ -4797,17 +4896,26 @@ function inbox() {
           : puedeResolver
             ? "27"
             : "22";
+    const botonFila = puedeCerrar
+      ? act(
+          "Cerrar proyecto",
+          "close-project",
+          "secondary compact",
+          "check",
+          `data-proposal-id="${p.id || ""}"`,
+        )
+      : btn(
+          etiquetaBoton,
+          destino,
+          "secondary compact",
+          "arrow",
+          `data-proposal="${p.code}" data-proposal-id="${p.id || ""}"`,
+        );
     return [
       `<span class="project-code">${esc(p.code)}</span><strong>${esc(p.title)}</strong><br><span class="micro muted">${esc(p.leader || "Investigador")} · ${esc(p.school || "TEC")}${p.fechaIngresoVie ? ` · Ingresó a VIE ${esc(String(p.fechaIngresoVie).slice(0, 10))}` : ""}</span>`,
       esc(p.type),
       badge(p.status),
-      btn(
-        etiquetaBoton,
-        destino,
-        "secondary compact",
-        "arrow",
-        `data-proposal="${p.code}" data-proposal-id="${p.id || ""}"`,
-      ),
+      botonFila,
     ];
   });
 
@@ -4821,8 +4929,8 @@ function inbox() {
       : state.role === "direccion"
         ? [
             ["Pendientes de dictamen", String(pending.length)],
+            ["Proyectos en ejecución", String(list.filter((p) => p.status === "En ejecución").length)],
             ["Determinadas", String(closed.length)],
-            ["Total en tu bandeja", String(list.length)],
           ]
         : state.role === "cie"
           ? [
@@ -4840,7 +4948,7 @@ function inbox() {
     state.role === "consejo"
       ? ["Pendientes", "Avalados", "Finalizadas"]
       : state.role === "direccion"
-        ? ["Pendientes", "Determinadas"]
+        ? ["Pendientes", "En ejecución", "Determinadas"]
         : state.role === "cie"
           ? ["Pendientes", "Resueltas"]
           : ["Pendientes", "En revisión", "Finalizadas"];
@@ -4909,7 +5017,9 @@ function dossier() {
         line: lineas_investigacion?.[0]?.nombre || "Línea institucional",
         resumen: historical ? "Estudio sobre el recurso hídrico con resultados conservados en el expediente." : draftValue("08:Resumen", PROPOSAL_DEFAULTS["08:Resumen"]),
       };
-  const isClosed = ["Cerrada", "Rechazada", "Aprobada por CIE", "Resuelta"].includes(p.status);
+  // [Línea clave]: Solo «Cerrada» y «Rechazada» son estados terminales. «Aprobada por CIE»
+  // todavía exige la carta de aceptación del investigador, así que el expediente sigue vivo.
+  const isClosed = ["Cerrada", "Rechazada"].includes(p.status);
 
   let body;
   if (dossierTab === "Resumen")
@@ -5018,12 +5128,16 @@ function dossier() {
     ? `<p class="small muted mb">Este expediente está disponible en modo consulta.</p>${btn("Volver a resultados", "30", "secondary")}`
     : state.role === "investigador"
       ? `<p class="small muted mb">Consulta la etapa y las acciones pendientes de tu propuesta.</p>${btn("Ver seguimiento", "20", "", "arrow")}`
-      : `<p class="small muted mb">Actúas como ${roles[state.role].label}.</p>${btn(
-          p.status === "En revisión de Vinculación" ? "Iniciar revisión" : "Consultar dictamen",
-          roles[state.role].screen,
-          "",
-          "arrow",
-        )}`;
+      : // [Línea clave]: Dirección de Investigación tiene la última acción del ciclo: dictaminar
+        // el cierre del proyecto cuando el expediente ya está «En ejecución».
+        state.role === "direccion" && p.status === "En ejecución"
+        ? `<p class="small muted mb">El proyecto está en ejecución. El cierre exige el informe final y deja el expediente en estado terminal «Cerrada».</p>${act("Cerrar proyecto", "close-project", "", "check", `data-proposal-id="${p.id || ""}"`)}`
+        : `<p class="small muted mb">Actúas como ${roles[state.role].label}.</p>${btn(
+            p.status === "En revisión de Vinculación" ? "Iniciar revisión" : "Consultar dictamen",
+            roles[state.role].screen,
+            "",
+            "arrow",
+          )}`;
 
   return shell(
     `<div class="card card-pad mb"><span class="project-code">${esc(p.code)} · ${esc(p.type)}</span><div class="section-head" style="margin:10px 0 0"><h2 style="font-size:26px">${esc(p.title)}</h2>${badge(p.status, "solid")}</div></div>${tabs(["Resumen", "Documentos", "Evaluaciones", "Resolución", "Historial"], dossierTab)}<div class="two-col">${card("", body)}<div class="stack">${card("Acción disponible", accion)}${renderizarPanelReferenciaIA("22")}${card("Trazabilidad", `<p class="small muted mb">Cada decisión conserva fecha, actor, documento y versión en PostgreSQL.</p>${btn("Ver historial completo", "28", "text", "arrow")}`)}${["direccion", "cie"].includes(state.role) ? notice("Verificación restringida", "Responsabilidades institucionales: al día.") : ""}</div></div>`,
@@ -6958,13 +7072,26 @@ async function handleAction(action, el) {
         "submit",
       );
       break;
-    case "submit-confirm":
-      state.stage = "Sometida";
-      save();
-      closeModal();
-      render();
-      toast("Propuesta sometida. Próxima etapa: Dirección.");
+    case "submit-confirm": {
+      const idPropuesta = propuestaActivaId();
+      try {
+        const resultado = await apiCambiarEstado(
+          idPropuesta,
+          "Sometida ante VIE",
+          "Sometimiento formal de la propuesta ante la VIE.",
+        );
+        state.stage = resultado.nombre_estado;
+        state.viewProposalId = idPropuesta;
+        save();
+        closeModal();
+        await cargarDossier(idPropuesta, true);
+        render();
+        toast(`Propuesta sometida. Nuevo estado: ${resultado.nombre_estado}.`);
+      } catch (err) {
+        toast(err.message || "No se pudo someter la propuesta.");
+      }
       break;
+    }
     case "acceptance":
       modal(
         "Carta de aceptación",
@@ -6975,25 +7102,154 @@ async function handleAction(action, el) {
         "acceptance",
       );
       break;
-    case "acceptance-confirm":
-      state.stage = "Aceptada";
-      save();
-      closeModal();
-      render();
-      toast("Carta de aceptación registrada en el escenario.");
+    case "acceptance-confirm": {
+      const idPropuesta = propuestaActivaId();
+      try {
+        const fileInput = $("#acceptance-doc");
+        let idDocumento = null;
+        if (fileInput?.files?.length) {
+          const subido = await subirDocumentoPropuesta(
+            idPropuesta,
+            fileInput.files[0],
+            "Carta de aceptación",
+          );
+          idDocumento = subido.id_documento;
+        }
+        const resultado = await apiTramite(idPropuesta, "aceptacion", {
+          observaciones: "Carta de aceptación presentada por el investigador.",
+          id_documento: idDocumento,
+        });
+        state.stage = resultado.nombre_estado;
+        state.viewProposalId = idPropuesta;
+        save();
+        closeModal();
+        await cargarDossier(idPropuesta, true);
+        render();
+        toast(resultado.mensaje || "Carta de aceptación registrada.");
+      } catch (err) {
+        toast(err.message || "No se pudo registrar la carta de aceptación.");
+      }
       break;
+    }
+    case "attend":
+      modal(
+        "Atender observaciones",
+        `${notice("Corrección del expediente", "Describe el ajuste realizado. Al reenviar, el expediente regresa a la etapa institucional que lo devolvió.")}<div class="field"><label for="attend-doc">Evidencia de la corrección (PDF, DOCX)</label><input id="attend-doc" type="file" accept=".pdf,.docx"><span class="help">Opcional. Se adjunta al expediente.</span></div>${field("Detalle de la corrección", "", "textarea", "Ejemplo: se amplía la justificación del riesgo de campo y se adjunta el protocolo firmado.", true, "modal:attend")}`,
+        act("Cancelar", "close", "secondary") +
+          confirmBtn("Reenviar expediente", "attend-confirm"),
+        false,
+        "attend",
+      );
+      break;
+    case "attend-confirm": {
+      const idPropuesta = propuestaActivaId();
+      try {
+        const fileInput = $("#attend-doc");
+        let idDocumento = null;
+        if (fileInput?.files?.length) {
+          const subido = await subirDocumentoPropuesta(
+            idPropuesta,
+            fileInput.files[0],
+            "Respuesta a observaciones",
+          );
+          idDocumento = subido.id_documento;
+        }
+        const resultado = await apiTramite(idPropuesta, "observaciones/reenvio", {
+          observaciones: state.saved["modal:attend"] || "Corrección incorporada.",
+          id_documento: idDocumento,
+        });
+        state.stage = resultado.nombre_estado;
+        state.viewProposalId = idPropuesta;
+        save();
+        closeModal();
+        await cargarDossier(idPropuesta, true);
+        render();
+        toast(resultado.mensaje || "Expediente reenviado.");
+      } catch (err) {
+        toast(err.message || "No se pudo reenviar el expediente.");
+      }
+      break;
+    }
     case "report":
       modal(
         "Informe de seguimiento",
-        `${field("Tipo", ["Informe semestral", "Informe anual", "Informe final"], "select", "", true, "modal:reporttype")}${docPendiente("Informe de resultados", "Se adjunta al presentar el informe")}<p>El cierre DT requiere productos y oficio final de Vinculación. La certificación corresponde a Dirección.</p>`,
+        `${field("Tipo", ["Informe semestral", "Informe anual", "Informe final"], "select", "", true, "modal:reporttype")}<div class="field"><label for="report-doc">Informe de resultados (PDF, DOCX)</label><input id="report-doc" type="file" accept=".pdf,.docx"><span class="help">Opcional. Se adjunta al expediente.</span></div>${field("Detalle del informe", "", "textarea", "Ejemplo: se ejecutaron las actividades del primer semestre y se cumplieron los productos previstos.", true, "modal:reportdetail")}<p>El cierre del proyecto requiere el informe final y la certificación de Dirección de Investigación.</p>`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Registrar informe", "report-save"),
       );
       break;
-    case "report-save":
-      closeModal();
-      toast("Informe registrado en el expediente.");
+    case "report-save": {
+      // [Línea clave]: El informe se registra en el backend: queda en la bitácora de
+      // evaluaciones del expediente y notifica a Dirección de Investigación.
+      const idPropuesta = propuestaActivaId();
+      try {
+        const tipo = valorCampo("modal:reporttype", "Informe de seguimiento");
+        const detalle = valorCampo("modal:reportdetail", "");
+        const fileInput = $("#report-doc");
+        let idDocumento = null;
+        if (fileInput?.files?.length) {
+          const subido = await subirDocumentoPropuesta(idPropuesta, fileInput.files[0], tipo);
+          idDocumento = subido.id_documento;
+        }
+        const resultado = await apiTramite(idPropuesta, "informe", {
+          observaciones: detalle || tipo,
+          id_documento: idDocumento,
+        });
+        state.viewProposalId = idPropuesta;
+        save();
+        closeModal();
+        await cargarDossier(idPropuesta, true);
+        render();
+        toast(resultado.mensaje || "Informe registrado en el expediente.");
+      } catch (err) {
+        toast(err.message || "No se pudo registrar el informe.");
+      }
       break;
+    }
+    case "close-project": {
+      // [Línea clave]: El cierre administrativo lo dictamina Dirección de Investigación:
+      // el backend exige el informe final y deja el expediente en estado terminal «Cerrada».
+      if (el?.dataset?.proposalId)
+        state.viewProposalId = Number(el.dataset.proposalId) || state.viewProposalId;
+      modal(
+        "Cerrar proyecto",
+        `${notice("Cierre administrativo", "El cierre es terminal: el expediente queda en «Cerrada» y se conserva para consulta.")}<div class="field"><label for="close-doc">Informe final (PDF, DOCX)</label><input id="close-doc" type="file" accept=".pdf,.docx"><span class="help">Obligatorio. Es el soporte documental del cierre.</span></div>${field("Fundamento del cierre", "", "textarea", "Ejemplo: se cumplen los productos comprometidos y se entrega el informe final.", true, "modal:close")}`,
+        act("Cancelar", "close", "secondary") +
+          confirmBtn("Cerrar expediente", "close-confirm"),
+        false,
+        "close-project",
+      );
+      break;
+    }
+    case "close-confirm": {
+      const idPropuesta = propuestaActivaId();
+      try {
+        const fileInput = $("#close-doc");
+        if (!fileInput?.files?.length)
+          throw new Error("Adjunta el informe final para cerrar el expediente.");
+        const subido = await subirDocumentoPropuesta(
+          idPropuesta,
+          fileInput.files[0],
+          "Informe final del proyecto",
+        );
+        const resultado = await apiTramite(idPropuesta, "cierre", {
+          observaciones: valorCampo("modal:close", "Cierre administrativo del proyecto."),
+          id_documento: subido.id_documento,
+        });
+        state.stage = resultado.nombre_estado;
+        state.viewProposalId = idPropuesta;
+        save();
+        closeModal();
+        const recargas = [cargarDossier(idPropuesta, true)];
+        if (state.role === "direccion") recargas.push(cargarBandejaDireccion());
+        await Promise.all(recargas);
+        render();
+        toast(resultado.mensaje || "Expediente cerrado.");
+      } catch (err) {
+        toast(err.message || "No se pudo cerrar el expediente.");
+      }
+      break;
+    }
     case "return":
       modal(
         "Devolver con observaciones",
@@ -7139,9 +7395,28 @@ async function handleAction(action, el) {
         const id = el.dataset.step,
           sc = scoreResult(),
           negative = id === "24" && !sc.recommended;
+        // [Línea clave]: La decisión se elige de forma explícita en el modal. «Rechazada» es
+        // terminal en todas las etapas y «Con observaciones» devuelve el expediente al
+        // investigador para que lo corrija y lo reenvíe a la etapa que lo devolvió.
+        const admiteDecision = ["23", "24", "25"].includes(id);
+        const decisionPorDefecto =
+          id === "24" ? (sc.recommended ? "favorable" : "observaciones") : "favorable";
+        const opcionesDecision = [
+          { value: "favorable", label: "Favorable" },
+          { value: "observaciones", label: "Con observaciones" },
+          { value: "rechazo", label: "Rechazada" },
+        ];
+        const selectorDecision = admiteDecision
+          ? `<div class="field"><label for="decision-opcion-${id}">Decisión <span class="required-star">*</span></label><select id="decision-opcion-${id}" data-field="decision:${id}:opcion">${opcionesDecision
+              .map(
+                (opcion) =>
+                  `<option value="${opcion.value}" ${opcion.value === decisionPorDefecto ? "selected" : ""}>${opcion.label}</option>`,
+              )
+              .join("")}</select><span class="help">«Rechazada» es terminal: el expediente no admite nuevas revisiones.</span></div><div class="field"><label for="decision-observaciones-${id}">Observaciones</label><textarea id="decision-observaciones-${id}" data-field="decision:${id}:observaciones" rows="3">${esc(state.saved[`decision:${id}:observaciones`] || "")}</textarea><span class="help">Obligatorio en devoluciones y rechazos: explica al investigador el motivo de la decisión.</span></div>`
+          : "";
         modal(
           "Confirmar decisión",
-          `<p>${negative ? "La evaluación no recomienda la propuesta por la nota o los requisitos obligatorios." : "Se conservarán los datos y el documento asociados a esta revisión."}</p>${
+          `<p>${negative ? "La evaluación no recomienda la propuesta por la nota o los requisitos obligatorios." : "Se conservarán los datos y el documento asociados a esta revisión."}</p>${selectorDecision}${
             id === "27"
               ? notice(
                   "Resolución seleccionada",
@@ -7157,11 +7432,11 @@ async function handleAction(action, el) {
               : ""
           }${
             id === "23"
-              ? notice("Registro en PostgreSQL", "El dictamen cambiará el estado de la propuesta y notificará al Comité Técnico.")
+              ? notice("Registro en PostgreSQL", "El dictamen cambiará el estado de la propuesta según la decisión seleccionada y notificará a quien debe continuar el trámite.")
               : id === "24"
                 ? notice(
                     "Registro en PostgreSQL",
-                    `${gruposRubrica().reduce((total, [, cs]) => total + cs.length, 0)} puntajes, la justificación y el resultado ponderado se guardarán en el expediente. El estado pasará a «${sc.recommended ? "Pendiente de aval del Consejo" : "Con observaciones"}».`,
+                    `${gruposRubrica().reduce((total, [, cs]) => total + cs.length, 0)} puntajes, la justificación y el resultado ponderado se guardarán en el expediente. El estado seguirá la decisión seleccionada.`,
                   )
                 : id === "25"
                   ? notice(
@@ -7191,6 +7466,12 @@ async function handleAction(action, el) {
       if (id === "23") {
         const idPropuesta = propuestaActivaId();
         try {
+          // [Línea clave]: La decisión se toma en el modal de confirmación y no se deduce de
+          // la nota: «Rechazada» es terminal y «Con observaciones» devuelve el expediente.
+          const decision = valorCampo(`decision:${id}:opcion`, "favorable");
+          const observaciones = valorCampo(`decision:${id}:observaciones`, "");
+          if (decision !== "favorable" && !observaciones)
+            throw new Error("Registra las observaciones de la devolución o del rechazo.");
           const fileInput = $("#vinculacion-doc");
           let idDocumento = null;
           if (fileInput?.files?.length) {
@@ -7199,7 +7480,7 @@ async function handleAction(action, el) {
           }
           const resultado = await guardarVinculacion(
             idPropuesta,
-            payloadVinculacion("favorable", "", idDocumento),
+            payloadVinculacion(decision, observaciones, idDocumento),
           );
           state.stage = resultado.nombre_estado;
           state.viewProposalId = idPropuesta;
@@ -7210,7 +7491,11 @@ async function handleAction(action, el) {
             "Decisión registrada",
             notice(
               "Registro guardado y sincronizado con PostgreSQL",
-              `Nuevo estado: ${resultado.nombre_estado}. Se notificó al Comité Técnico y se conservó la trazabilidad.`,
+              `Nuevo estado: ${resultado.nombre_estado}.${
+                resultado.decision === "favorable"
+                  ? " Se notificó al Comité Técnico."
+                  : " Se notificó al investigador con las observaciones."
+              } Se conservó la trazabilidad.`,
             ),
             btn("Volver a la bandeja", "21", "secondary") +
               btn("Ver expediente", "22", "", "arrow"),
@@ -7225,11 +7510,15 @@ async function handleAction(action, el) {
       if (id === "24") {
         const idPropuesta = propuestaActivaId();
         const sc = scoreResult();
-        const decision = sc.recommended ? "favorable" : "observaciones";
+        const decision = valorCampo(
+          `decision:${id}:opcion`,
+          sc.recommended ? "favorable" : "observaciones",
+        );
         const observaciones =
           decision === "favorable"
             ? ""
-            : `Evaluación técnica no recomendada: ${sc.sum.toFixed(1)}/100${sc.blocked ? " con criterio obligatorio con nivel insuficiente" : ""}.`;
+            : valorCampo(`decision:${id}:observaciones`, "") ||
+              `Evaluación técnica no recomendada: ${sc.sum.toFixed(1)}/100${sc.blocked ? " con criterio obligatorio con nivel insuficiente" : ""}.`;
         try {
           const resultado = await guardarEvaluacionComite(
             idPropuesta,
@@ -7267,6 +7556,10 @@ async function handleAction(action, el) {
       if (id === "25") {
         const idPropuesta = propuestaActivaId();
         try {
+          const decision = valorCampo(`decision:${id}:opcion`, "favorable");
+          const observaciones = valorCampo(`decision:${id}:observaciones`, "");
+          if (decision !== "favorable" && !observaciones)
+            throw new Error("Registra las observaciones de la devolución o del rechazo.");
           const fileInput = $("#consejo-doc");
           let idDocumento = null;
           if (fileInput?.files?.length) {
@@ -7279,7 +7572,7 @@ async function handleAction(action, el) {
           }
           const resultado = await guardarAvalConsejo(
             idPropuesta,
-            payloadAvalConsejo("favorable", "", idDocumento),
+            payloadAvalConsejo(decision, observaciones, idDocumento),
           );
           state.stage = resultado.nombre_estado;
           state.viewProposalId = idPropuesta;
@@ -7291,12 +7584,22 @@ async function handleAction(action, el) {
             cargarAvalConsejo(idPropuesta),
           ]);
           modal(
-            resultado.aval_completo ? "Aval registrado" : "Aval parcial registrado",
+            // [Línea clave]: El encabezado distingue el aval de una devolución o de un
+            // rechazo, que no son avales parciales sino resoluciones del Consejo.
+            decision === "favorable"
+              ? resultado.aval_completo
+                ? "Aval registrado"
+                : "Aval parcial registrado"
+              : decision === "observaciones"
+                ? "Devolución registrada"
+                : "Rechazo registrado",
             notice(
               "Registro guardado y sincronizado con PostgreSQL",
-              resultado.aval_completo
-                ? `Nuevo estado: ${resultado.nombre_estado}. ${resultado.mensaje}`
-                : resultado.mensaje,
+              decision === "favorable"
+                ? resultado.aval_completo
+                  ? `Nuevo estado: ${resultado.nombre_estado}. ${resultado.mensaje}`
+                  : resultado.mensaje
+                : `Nuevo estado: ${resultado.nombre_estado}. ${resultado.mensaje}`,
             ),
             btn("Volver a la bandeja", "21", "secondary") +
               btn("Ver expediente", "22", "", "arrow"),
@@ -7439,7 +7742,7 @@ async function handleAction(action, el) {
             ? "Rechazada"
             : state.saved.resolution === "Con observaciones"
               ? "Con observaciones"
-              : "Resuelta",
+              : "Aprobada por CIE",
       }[id];
       save();
 
@@ -7972,7 +8275,6 @@ async function handleAction(action, el) {
         "Escenarios de seguimiento",
         '<p>Elige una etapa para demostrar su estado y acciones; no modifica un expediente real.</p><div class="role-grid mt">' +
           stageList
-            .concat(["Con observaciones", "Rechazada"])
             .map((s) =>
               act(s, "set-stage", "secondary compact", "", `data-stage="${s}"`),
             )
@@ -7991,7 +8293,7 @@ async function handleAction(action, el) {
     case "guide":
       modal(
         "Guía de recorridos",
-        `<p>Explora las 33 pantallas y los escenarios complementarios.</p><div class="stack mt"><div>${btn("1. Formular una propuesta", "04", "secondary")}</div><div>${act("2. Evaluar por roles", "roles", "secondary")}</div><div>${act("3. Consulta histórica", "history-scenario", "secondary")}</div><div>${act("4. Sometimiento después del aval", "set-stage", "secondary", "", 'data-stage="Avalada"')}</div><div>${act("5. Aceptación después del CIE", "set-stage", "secondary", "", 'data-stage="Resuelta"')}</div><div>${act("Reiniciar datos de demostración", "reset", "text")}</div></div><p class="micro muted">Los archivos y decisiones son simulados. Usa el selector de rol para cambiar de contexto institucional.</p>`,
+        `<p>Explora las 33 pantallas y los escenarios complementarios.</p><div class="stack mt"><div>${btn("1. Formular una propuesta", "04", "secondary")}</div><div>${act("2. Evaluar por roles", "roles", "secondary")}</div><div>${act("3. Consulta histórica", "history-scenario", "secondary")}</div><div>${act("4. Sometimiento después del aval", "set-stage", "secondary", "", 'data-stage="Avalada"')}</div><div>${act("5. Aceptación después del CIE", "set-stage", "secondary", "", 'data-stage="Aprobada por CIE"')}</div><div>${act("Reiniciar datos de demostración", "reset", "text")}</div></div><p class="micro muted">Los archivos y decisiones son simulados. Usa el selector de rol para cambiar de contexto institucional.</p>`,
         act("Cerrar", "close"),
         false,
         "guide",

@@ -17,8 +17,9 @@ ARCHIVO: backend/app/routers/cie.py
            - Retorna la bandeja del CIE, el expediente para resolver y el resultado
              a las pantallas 02, 21, 22, 27 y 28.
            - Crea 'evaluations' con rol CIE, persiste el acuerdo en
-             'cie_resolution_evaluations', cambia estado de 7 -> 8, 10 o 11, actualiza
-             el historial y notifica al investigador.
+             'cie_resolution_evaluations', cambia el estado de la propuesta
+             («Dictaminada por Dirección» → «Aprobada por CIE», «Con observaciones» o
+             «Rechazada»), actualiza el historial y notifica al investigador.
 
 2.3. ¿QUÉ HACE EL ARCHIVO A GROSOMODO?:
     Expone GET /propuestas/cie/bandeja, GET /propuestas/cie/dashboard,
@@ -38,6 +39,13 @@ from psycopg import Connection
 from pydantic import BaseModel, Field
 
 from ..db import get_conn
+from ..estados import (
+    ESTADO_APROBADA_CIE,
+    ESTADO_DICTAMINADA,
+    ESTADO_OBSERVACIONES,
+    ESTADO_RECHAZADA,
+    resolver_estado,
+)
 from .dictamen_vie import parsear_dictamen
 
 # [Línea clave]: Se registra antes que propuestas.router en main.py para que las rutas
@@ -53,20 +61,16 @@ ROLES_CIE = (ROL_CIE, ROL_EVALUADOR_CIE)
 ROL_DIRECCION = "Dirección de Investigación"
 ROL_COMITE_TECNICO = "Comité Técnico"
 
-# [Línea clave]: Los estados se resuelven por nombre porque el orden de los identificadores
-# en la tabla «estados» no coincide con el seed V3 en la base de datos desplegada.
-NOMBRE_ESTADO_DICTAMINADA = "Dictaminada por Dirección"
-NOMBRE_ESTADO_APROBADA = "Aprobada por CIE"
-NOMBRE_ESTADO_OBSERVACIONES = "Con observaciones"
-NOMBRE_ESTADO_RECHAZADA = "Rechazada"
+# [Línea clave]: Los estados se resuelven por nombre desde 'app.estados' porque el orden de los
+# identificadores en la tabla «estados» no coincide con el seed V3 en la base de datos desplegada.
 
 # [Línea clave]: Traducción del catálogo institucional «resoluciones_cie» al estado destino
 # de la propuesta. La excepción ética (4) aprueba el proyecto porque no requiere revisión.
 ESTADO_POR_RESOLUCION = {
-    1: NOMBRE_ESTADO_APROBADA,
-    2: NOMBRE_ESTADO_OBSERVACIONES,
-    3: NOMBRE_ESTADO_RECHAZADA,
-    4: NOMBRE_ESTADO_APROBADA,
+    1: ESTADO_APROBADA_CIE,
+    2: ESTADO_OBSERVACIONES,
+    3: ESTADO_RECHAZADA,
+    4: ESTADO_APROBADA_CIE,
 }
 
 BUCKET = "convocatorias"
@@ -253,22 +257,6 @@ def _documentos_propuesta(cur, id_propuesta: int) -> list[DocumentoPropuestaOut]
     ]
 
 
-def _id_estado(cur, nombre_estado: str) -> int:
-    """Resolver el identificador de un estado por su nombre oficial."""
-
-    cur.execute(
-        "SELECT id_estado FROM estados WHERE nombre_estado = %s",
-        (nombre_estado,),
-    )
-    fila = cur.fetchone()
-    if not fila:
-        raise HTTPException(
-            500,
-            f"El estado «{nombre_estado}» no está configurado en la base de datos.",
-        )
-    return fila["id_estado"]
-
-
 def _obtener_rol_cie(cur, id_usuario: int) -> dict:
     """
     Validar que el usuario exista, esté activo y tenga un rol del CIE.
@@ -414,7 +402,7 @@ def obtener_bandeja_cie(
 
     with conn.cursor() as cur:
         _obtener_rol_cie(cur, id_usuario)
-        estado_dictaminada = _id_estado(cur, NOMBRE_ESTADO_DICTAMINADA)
+        estado_dictaminada = resolver_estado(cur, ESTADO_DICTAMINADA)
 
         cur.execute(
             """
@@ -514,7 +502,7 @@ def obtener_dashboard_cie(
 
     with conn.cursor() as cur:
         _obtener_rol_cie(cur, id_usuario)
-        estado_dictaminada = _id_estado(cur, NOMBRE_ESTADO_DICTAMINADA)
+        estado_dictaminada = resolver_estado(cur, ESTADO_DICTAMINADA)
 
         cur.execute(
             """
@@ -612,7 +600,7 @@ def obtener_resolucion_cie(
 
     with conn.cursor() as cur:
         _obtener_rol_cie(cur, id_usuario)
-        estado_dictaminada = _id_estado(cur, NOMBRE_ESTADO_DICTAMINADA)
+        estado_dictaminada = resolver_estado(cur, ESTADO_DICTAMINADA)
 
         cur.execute(
             """
@@ -712,12 +700,12 @@ def registrar_resolucion_cie(
     with conn.cursor() as cur:
         cie = _obtener_rol_cie(cur, payload.id_usuario_eval)
         id_rol_cie = cie["id_rol"]
-        estado_dictaminada = _id_estado(cur, NOMBRE_ESTADO_DICTAMINADA)
+        estado_dictaminada = resolver_estado(cur, ESTADO_DICTAMINADA)
         nombre_resolucion = _nombre_resolucion(cur, payload.id_resolucion)
         nombre_estado_destino = ESTADO_POR_RESOLUCION.get(payload.id_resolucion)
         if not nombre_estado_destino:
             raise HTTPException(400, "El tipo de resolución indicado no tiene un estado asociado.")
-        estado_destino = _id_estado(cur, nombre_estado_destino)
+        estado_destino = resolver_estado(cur, nombre_estado_destino)
 
         cur.execute(
             """
