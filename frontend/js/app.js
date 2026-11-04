@@ -6490,7 +6490,8 @@ async function doLogin() {
  *     + Promise<void> : undefined Resuelve al concluir el manejo del evento.
  */
 async function handleAction(action, el) {
-  switch (action) {
+  try {
+    switch (action) {
     case "filter-calls":
       render();
       break;
@@ -8493,6 +8494,11 @@ async function handleAction(action, el) {
     default:
       toast("Acción de demostración disponible desde el expediente.");
   }
+} catch (err) {
+    console.error("handleAction error:", err);
+    toast("Error: " + err.message);
+    closeModal();
+  }
 }
 document.addEventListener("click", (e) => {
   const actionEl = e.target.closest("[data-action]");
@@ -8626,6 +8632,7 @@ window.addEventListener("hashchange", () => {
     console.warn("SGPI: Error en precarga de datos:", e);
   }
 })();
+
 
 
 
