@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 /**
  * ============================================================================
  * 2.1. OBJETIVO DEL ARCHIVO:
@@ -2654,38 +2654,7 @@ const defaultState = {
   saved: {},
   teamAdded: false,
   reviewed: false,
-  budget: [
-    {
-      name: "Equipo de laboratorio",
-      code: "5-01-06-01",
-      a: 1400000,
-      b: 0,
-      detail:
-        "Sensores y equipo de calibración; compra en primer semestre de 2027.",
-    },
-    {
-      name: "Materiales y suministros",
-      code: "2-03-04-01",
-      a: 1000000,
-      b: 1600000,
-      detail: "Componentes eléctricos y consumibles para integración y campo.",
-    },
-    {
-      name: "Servicios de laboratorio",
-      code: "1-04-01-01",
-      a: 1440000,
-      b: 2040000,
-      detail: "Análisis de referencia y verificación de mediciones.",
-    },
-    {
-      name: "Beca estudiante asistente especial",
-      code: "6-02-02-08",
-      a: 960000,
-      b: 960000,
-      detail:
-        "400 horas/año × ₡2.400. Planificación: 10 h/semana durante 40 semanas, hasta 10 meses.",
-    },
-  ],
+  budget: [],
   scores: {},
   notRecommended: false,
   search: "",
@@ -2818,18 +2787,34 @@ const totalA = () => state.budget.reduce((a, r) => a + Number(r.a), 0),
 
 /**
  * Validar el cumplimiento de las restricciones presupuestarias oficiales de la convocatoria VIE.
- * Comprueba que el total por año sea <= ₡5.000.000, equipo en año 2 sea 0, y becas cumplan mínimo de ₡960.000.
+ * Comprueba totales anuales <= ₡5M, bienes duraderos solo en año 1, y beca mínima ₡960k.
+ * Se resuelve por id_rubro del catálogo, no por posición en el array.
  * parametros:
  *     (ninguno)
  * return:
  *     + boolean : esValido Verdadero si cumple todas las reglas financieras.
  */
-const budgetValid = () =>
-  totalA() <= 5000000 &&
-  totalB() <= 5000000 &&
-  state.budget[0].b === 0 &&
-  state.budget[3].a >= 960000 &&
-  state.budget[3].b >= 960000;
+const budgetValid = () => {
+  // [Línea clave]: Presupuesto vacío es válido (el usuario aún no ha agregado rubros).
+  if (!state.budget.length) return true;
+
+  const rubros = catalogos?.rubros_presupuesto ?? [];
+  const idEquipo = 6;  // "Equipo y bienes duraderos"
+  const idBeca = 5;    // "Beca estudiante asistente especial"
+
+  // 1. Totales anuales <= ₡5.000.000
+  if (totalA() > 5000000 || totalB() > 5000000) return false;
+
+  // 2. Bienes duraderos (equipo) solo en año 1
+  const itemEquipo = state.budget.find((p) => p.id_rubro === idEquipo);
+  if (itemEquipo && Number(itemEquipo.b) > 0) return false;
+
+  // 3. Beca estudiante asistente especial: mínimo ₡960.000 por año
+  const itemBeca = state.budget.find((p) => p.id_rubro === idBeca);
+  if (itemBeca && (Number(itemBeca.a) < 960000 || Number(itemBeca.b) < 960000)) return false;
+
+  return true;
+};
 /**
  * Diccionario de textos de ayuda contextual (tooltips) para acciones y opciones principales de navegación.
  * Asocia etiquetas de botones y enlaces con su descripción funcional accesible.
@@ -4022,11 +4007,11 @@ function buildProposalPayload() {
   });
 
   const presupuesto = state.budget.flatMap((partida) => {
-    const rubro = rubroParaPartida(partida);
-    if (!rubro) return [];
+    // [Línea clave]: Usar id_rubro directamente del catálogo, ya no hace falta matching heurístico.
+    if (!partida.id_rubro) return [];
     return [
-      { id_rubro: rubro.id_rubro, monto: Number(partida.a) || 0, anio: 1, justificacion: partida.detail || "" },
-      { id_rubro: rubro.id_rubro, monto: Number(partida.b) || 0, anio: 2, justificacion: partida.detail || "" },
+      { id_rubro: partida.id_rubro, monto: Number(partida.a) || 0, anio: 1, justificacion: partida.detail || "" },
+      { id_rubro: partida.id_rubro, monto: Number(partida.b) || 0, anio: 2, justificacion: partida.detail || "" },
     ].filter((item) => item.monto > 0);
   });
 
@@ -4141,8 +4126,8 @@ function proposalValidationIssues() {
       issues.push({ screen: pantalla, text: nombre });
   }
   if (!proposalTeamMembers().length) issues.push({ screen: "09", text: "Equipo investigador" });
-  if (state.budget.some((p) => (Number(p.a) > 0 || Number(p.b) > 0) && !rubroParaPartida(p)))
-    issues.push({ screen: "15", text: "Rubros presupuestarios sin equivalente institucional" });
+  if (state.budget.some((p) => (Number(p.a) > 0 || Number(p.b) > 0) && !p.id_rubro))
+    issues.push({ screen: "15", text: "Rubros presupuestarios sin equivalente institucional (falta id_rubro)" });
   if (!budgetValid()) issues.push({ screen: "15", text: "Reglas del presupuesto" });
   return issues;
 }
@@ -4559,12 +4544,12 @@ function budgetForm() {
     )}</div>${valid ? notice("Presupuesto dentro del límite anual", "Equipo en el primer año y beca estudiantil de 10 h/semana incorporada.") : notice("Revisa el presupuesto para continuar", "El monto supera el tope anual, hay equipo en el segundo año o falta la beca mínima.", "warning")}<div class="mt">${table(
     ["Objeto de gasto", "2027", "2028", ""],
     state.budget.map((r, i) => {
-      const rubro = rubroParaPartida(r);
+      // [Línea clave]: Usar id_rubro y name guardados directamente, sin matching heurístico.
       return [
-        `<span class="project-code">${rubro ? `R-${rubro.id_rubro}` : r.code}</span><strong>${esc(rubro?.nombre_rubro || r.name)}</strong>`,
+        `<span class="project-code">${r.id_rubro ? `R-${r.id_rubro}` : r.code}</span><strong>${esc(r.name)}</strong>`,
         money(r.a),
         money(r.b),
-        act("Editar", "budget-edit", "text compact", "edit", `data-index="${i}"`),
+        `${act("Editar", "budget-edit", "text compact", "edit", `data-index="${i}"`)} ${act("Quitar", "budget-remove", "text compact danger", "trash", `data-index="${i}"`)}`,
       ];
     }),
   )}</div><div class="action-row mt">${act("Agregar rubro", "budget-add", "secondary", "plus")}${act("Ver reglas de presupuesto", "budget-rules", "text")}</div><details class="accordion"><summary>Justificaciones y otras fuentes</summary>${state.budget.map((r) => `<p><strong>${r.name}.</strong> ${r.detail}</p>`).join("")}${field("Financiamiento externo / contrapartida", "", "textarea", "Indica fuentes externas, contrapartidas o co-financiamiento.", false, "", "Sin aportes externos.")}</details>`;
@@ -6448,6 +6433,30 @@ const confirmBtn = (label, action, extra = "") =>
   act(label, action, "", "check", extra);
 
 /**
+ * Helper unificado de estados de carga (loading UX).
+ * Deshabilita el botón, muestra spinner + texto, ejecuta la promesa y restaura.
+ * Previene double-click y da feedback visual inmediato.
+ * parametros:
+ *     - HTMLElement : botonEl Botón que disparó la acción (se deshabilita y muestra spinner).
+ *     - Promise : accionAsync Función async que realiza el trabajo real.
+ *     - Object : opts Opciones: { texto: "Procesando…", deshabilitar: true, restaurarHtml: true }.
+ * return:
+ *     + Promise<any> : resultado Lo que resuelva accionAsync.
+ */
+async function conCarga(botonEl, accionAsync, { texto = "Procesando…", deshabilitar = true, restaurarHtml = true } = {}) {
+  if (!botonEl) return accionAsync();
+  const htmlOriginal = botonEl.innerHTML;
+  if (deshabilitar) botonEl.disabled = true;
+  botonEl.innerHTML = `<span class="spinner"></span>${texto}`;
+  try {
+    return await accionAsync();
+  } finally {
+    if (restaurarHtml) botonEl.innerHTML = htmlOriginal;
+    if (deshabilitar) botonEl.disabled = false;
+  }
+}
+
+/**
  * Procesar la autenticación real del usuario contra el backend y cargar su entorno.
  * Valida el formulario de acceso, envía correo/contraseña a apiLogin(), asigna la sesión en memoria,
  * aplica el rol correspondiente, ejecuta la precarga de datos con obtenerDatosBackend() y navega al inicio.
@@ -6465,9 +6474,8 @@ async function doLogin() {
     b = $('#login-form [data-action="login"]');
   const correo = emailEl.value.trim().toLowerCase(),
     password = pwEl.value;
-  b.disabled = true;
-  b.lastChild.textContent = "Ingresando…";
-  try {
+
+  await conCarga(b, async () => {
     // [Línea clave]: ¿Por qué soy importante? Petición de login contra el backend FastAPI. ¿Para qué? Verificar credenciales en la base de datos Supabase Postgres. ¿Dónde me usan? En el flujo de login en doLogin().
     const user = await apiLogin(correo, password);
     const key =
@@ -6487,7 +6495,7 @@ async function doLogin() {
         loadScreenData();
       })
       .catch((e) => console.warn("SGPI: precarga en segundo plano:", e));
-  } catch (err) {
+  }, { texto: "Ingresando…" }).catch((err) => {
     if (box?.isConnected)
       box.innerHTML = notice(
         "No fue posible ingresar",
@@ -6498,11 +6506,7 @@ async function doLogin() {
       pwEl.value = "";
       pwEl.focus();
     }
-    if (b.isConnected) {
-      b.disabled = false;
-      b.lastChild.textContent = "Ingresar";
-    }
-  }
+  });
 }
 /**
  * Despachador maestro de acciones interactivas y eventos del usuario en la interfaz.
@@ -6873,18 +6877,32 @@ async function handleAction(action, el) {
       );
       break;
     }
-    case "budget-add":
+    case "budget-add": {
+      // [Línea clave]: Los rubros vienen del catálogo institucional (GET /catalogos),
+      // no se hardcodean. El select se popula dinámicamente con rubros_presupuesto.
+      const rubrosOpts = (catalogos?.rubros_presupuesto ?? []).map((r) => ({
+        value: r.id_rubro,
+        label: `${r.id_rubro} · ${r.nombre_rubro}`,
+      }));
       modal(
         "Agregar rubro",
-        `${field("Objeto de gasto", ["1-05-02-01 · Viáticos dentro del país"], "select", "", true, "modal:new-budget")}${field("Monto 2027", "0", "number", "", true, "modal:new-a")}${field("Monto 2028", "0", "number", "", true, "modal:new-b")}${field("Justificación", "Giras previstas en el plan de acción.", "textarea", "", true, "modal:new-detail")}`,
+        `${field("Rubro presupuestario", rubrosOpts, "select", "Selecciona el rubro institucional correspondiente.", true, "modal:new-rubro")}${field("Monto 2027", "0", "number", "", true, "modal:new-a")}${field("Monto 2028", "0", "number", "", true, "modal:new-b")}${field("Justificación", "Relaciona el gasto con el plan de acción.", "textarea", "", true, "modal:new-detail")}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar rubro", "budget-add-save"),
       );
       break;
-    case "budget-add-save":
+    }
+    case "budget-add-save": {
+      const idRubro = Number($('[data-field="modal:new-rubro"]').value);
+      const rubroSel = (catalogos?.rubros_presupuesto ?? []).find((r) => r.id_rubro === idRubro);
+      if (!rubroSel) {
+        toast("Selecciona un rubro válido del catálogo institucional.");
+        break;
+      }
       state.budget.push({
-        name: "Viáticos dentro del país",
-        code: "1-05-02-01",
+        id_rubro: idRubro,
+        name: rubroSel.nombre_rubro,
+        code: String(idRubro),
         a: Number($('[data-field="modal:new-a"]').value),
         b: Number($('[data-field="modal:new-b"]').value),
         detail: $('[data-field="modal:new-detail"]').value,
@@ -6893,6 +6911,17 @@ async function handleAction(action, el) {
       closeModal();
       render();
       break;
+    }
+    case "budget-remove": {
+      const i = Number(el.dataset.index);
+      if (Number.isInteger(i) && i >= 0 && i < state.budget.length) {
+        state.budget.splice(i, 1);
+        save();
+        render();
+        toast("Rubro quitado del presupuesto.");
+      }
+      break;
+    }
     case "budget-rules":
       modal(
         "Reglas de presupuesto",
@@ -6940,15 +6969,15 @@ async function handleAction(action, el) {
         toast("Abre una propuesta registrada para adjuntar el documento.");
         break;
       }
-      try {
+      await conCarga(el, async () => {
         await subirDocumentoPropuesta(propuestaReal, archivo, tipo);
         closeModal();
         await cargarDossier(propuestaReal, true);
         render();
         toast(`Documento adjunto a ${dossierActual?.codigo || "la propuesta"}.`);
-      } catch (err) {
+      }, { texto: "Subiendo archivo…" }).catch((err) => {
         toast(err.message || "No se pudo adjuntar el documento.");
-      }
+      });
       break;
     }
     case "remove-draft-doc": {
@@ -6988,8 +7017,7 @@ async function handleAction(action, el) {
       break;
     }
     case "send-confirm": {
-      try {
-        toast("Registrando la propuesta en PostgreSQL...");
+      await conCarga(el, async () => {
         const payload = buildProposalPayload();
         const respuesta = await crearPropuestaBackend(payload);
         const creada = respuesta?.propuesta || {};
@@ -7040,14 +7068,14 @@ async function handleAction(action, el) {
         } else {
           toast("Propuesta registrada y remitida a Vinculación.");
         }
-      } catch (err) {
+      }, { texto: "Registrando propuesta…" }).catch((err) => {
         console.error("send-confirm error:", err);
         modal(
           "No se pudo registrar la propuesta",
           notice("Se conservó tu borrador en este navegador", esc(err.message || "Error desconocido al registrar."), "warning"),
           act("Cerrar", "close", "secondary"),
         );
-      }
+      });
       break;
     }
     case "refresh-ai-eval":
@@ -7144,7 +7172,7 @@ async function handleAction(action, el) {
       break;
     case "acceptance-confirm": {
       const idPropuesta = propuestaActivaId();
-      try {
+      await conCarga(el, async () => {
         const fileInput = $("#acceptance-doc");
         let idDocumento = null;
         if (fileInput?.files?.length) {
@@ -7166,9 +7194,9 @@ async function handleAction(action, el) {
         await cargarDossier(idPropuesta, true);
         render();
         toast(resultado.mensaje || "Carta de aceptación registrada.");
-      } catch (err) {
+      }, { texto: "Registrando aceptación…" }).catch((err) => {
         toast(err.message || "No se pudo registrar la carta de aceptación.");
-      }
+      });
       break;
     }
     case "attend":
@@ -7183,7 +7211,7 @@ async function handleAction(action, el) {
       break;
     case "attend-confirm": {
       const idPropuesta = propuestaActivaId();
-      try {
+      await conCarga(el, async () => {
         const fileInput = $("#attend-doc");
         let idDocumento = null;
         if (fileInput?.files?.length) {
@@ -7205,9 +7233,9 @@ async function handleAction(action, el) {
         await cargarDossier(idPropuesta, true);
         render();
         toast(resultado.mensaje || "Expediente reenviado.");
-      } catch (err) {
+      }, { texto: "Reenviando expediente…" }).catch((err) => {
         toast(err.message || "No se pudo reenviar el expediente.");
-      }
+      });
       break;
     }
     case "report":
@@ -7222,7 +7250,7 @@ async function handleAction(action, el) {
       // [Línea clave]: El informe se registra en el backend: queda en la bitácora de
       // evaluaciones del expediente y notifica a Dirección de Investigación.
       const idPropuesta = propuestaActivaId();
-      try {
+      await conCarga(el, async () => {
         const tipo = valorCampo("modal:reporttype", "Informe de seguimiento");
         const detalle = valorCampo("modal:reportdetail", "");
         const fileInput = $("#report-doc");
@@ -7241,9 +7269,9 @@ async function handleAction(action, el) {
         await cargarDossier(idPropuesta, true);
         render();
         toast(resultado.mensaje || "Informe registrado en el expediente.");
-      } catch (err) {
+      }, { texto: "Registrando informe…" }).catch((err) => {
         toast(err.message || "No se pudo registrar el informe.");
-      }
+      });
       break;
     }
     case "close-project": {
@@ -7263,7 +7291,7 @@ async function handleAction(action, el) {
     }
     case "close-confirm": {
       const idPropuesta = propuestaActivaId();
-      try {
+      await conCarga(el, async () => {
         const fileInput = $("#close-doc");
         if (!fileInput?.files?.length)
           throw new Error("Adjunta el informe final para cerrar el expediente.");
@@ -7285,9 +7313,9 @@ async function handleAction(action, el) {
         await Promise.all(recargas);
         render();
         toast(resultado.mensaje || "Expediente cerrado.");
-      } catch (err) {
+      }, { texto: "Cerrando expediente…" }).catch((err) => {
         toast(err.message || "No se pudo cerrar el expediente.");
-      }
+      });
       break;
     }
     case "return":
@@ -7505,7 +7533,7 @@ async function handleAction(action, el) {
       const id = el.dataset.step;
       if (id === "23") {
         const idPropuesta = propuestaActivaId();
-        try {
+        await conCarga(el, async () => {
           // [Línea clave]: La decisión se toma en el modal de confirmación y no se deduce de
           // la nota: «Rechazada» es terminal y «Con observaciones» devuelve el expediente.
           const decision = valorCampo(`decision:${id}:opcion`, "favorable");
@@ -7542,9 +7570,9 @@ async function handleAction(action, el) {
             false,
             "decision-saved",
           );
-        } catch (err) {
+        }, { texto: "Registrando dictamen…" }).catch((err) => {
           toast(err.message || "No se pudo registrar el dictamen de Vinculación.");
-        }
+        });
         break;
       }
       if (id === "24") {
@@ -8487,3 +8515,8 @@ window.addEventListener("hashchange", () => {
     console.warn("SGPI: Error en precarga de datos:", e);
   }
 })();
+
+
+
+
+

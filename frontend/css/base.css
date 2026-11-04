@@ -1931,4 +1931,34 @@
         margin-top: 20px
       }
     }
+
+    /* =====================================================================
+       Spinner de carga (loading UX) - Fase 2
+       ===================================================================== */
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--line);
+      border-top-color: var(--blue);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .btn:disabled .spinner,
+    .btn[disabled] .spinner {
+      display: inline-block;
+    }
+
+    .btn:disabled,
+    .btn[disabled] {
+      cursor: not-allowed;
+      opacity: .6;
+    }
   
