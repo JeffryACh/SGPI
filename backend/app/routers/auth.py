@@ -22,15 +22,16 @@ ARCHIVO: backend/app/routers/auth.py
     resistente a ataques de temporización (timing attacks con 'hmac.compare_digest'). Si las credenciales
     coinciden y el usuario se encuentra activo, consolida sus roles institucionales y devuelve su perfil;
     en caso contrario, arroja una excepción HTTP 401 unificada.
-========================================================================================
+==========================================================================================
 """
 
 import hashlib
 import hmac
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg import Connection
 from pydantic import BaseModel, Field
+from typing import Optional
 
 from ..db import get_conn
 
@@ -51,6 +52,7 @@ class LoginIn(BaseModel):
         * str : correo Dirección de correo electrónico institucional del usuario que intenta ingresar.
         * str : password Contraseña en texto plano proporcionada en el formulario de acceso.
     """
+
     correo: str = Field(min_length=1, max_length=255)
     password: str = Field(min_length=1, max_length=255)
 
@@ -70,10 +72,34 @@ class UsuarioOut(BaseModel):
         * str : correo Correo institucional del usuario.
         * list[str] : roles Lista de nombres de roles institucionales que posee el usuario.
     """
+
     id_usuario: int
     nombre: str
     correo: str
     roles: list[str]
+
+
+class UsuarioBuscarOut(BaseModel):
+    """
+    Modelo de salida para búsqueda de usuarios (sin hash de contraseña).
+
+    Se utiliza en el endpoint GET /auth/usuarios para autocompletado en formularios de equipo.
+
+    atributos:
+        * int : id_usuario Identificador numérico único del usuario.
+        * str : nombre Nombre completo (nombre + apellidos).
+        * str : correo Correo institucional.
+        * str : escuela Nombre de la escuela/dependencia (puede ser null).
+        * str : siglas_escuela Siglas de la escuela (puede ser null).
+        * bool : estado_activo Indica si el usuario está activo.
+    """
+
+    id_usuario: int
+    nombre: str
+    correo: str
+    escuela: Optional[str] = None
+    siglas_escuela: Optional[str] = None
+    estado_activo: bool
 
 
 # [Línea clave]: Hash ficticio para mitigar ataques de temporización cuando el correo no existe en la BD.
@@ -95,6 +121,50 @@ def hash_password(password: str) -> str:
     """
     # [Línea clave]: Aplica SHA-256 consistente con la función de hashing utilizada en las migraciones SQL.
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+@router.get("/usuarios", response_model=list[UsuarioBuscarOut])
+def buscar_usuarios(
+    q: str = Query(..., min_length=2, description="Texto a buscar en correo o nombre"),
+    limit: int = Query(10, ge=1, le=50),
+    conn: Connection = Depends(get_conn),
+):
+    """
+    Buscar usuarios institucionales activos por correo o nombre para autocompletado en formularios.
+
+    Realiza búsqueda ILIKE en correo y nombre concatenado, filtrando solo usuarios activos.
+    Limitado a 'limit' resultados para autocompletado eficiente.
+
+    parametros:
+        - str : q Texto de búsqueda (mínimo 2 caracteres).
+        - int : limit Máximo de resultados (por defecto 10, máximo 50).
+        - Connection : conn Conexión transaccional inyectada por FastAPI.
+
+    return:
+        + list[UsuarioBuscarOut] : usuarios Lista de usuarios que coinciden con la búsqueda.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT u.id_usuario,
+                   u.nombre || ' ' || u.lastname || ' ' || COALESCE(u.second_lastname, '') AS nombre,
+                   u.correo,
+                   e.nombre AS escuela,
+                   e.siglas AS siglas_escuela,
+                   u.estado_activo
+            FROM public.usuarios u
+            LEFT JOIN public.escuelas e ON e.id_escuela = u.id_escuela
+            JOIN public.user_roles ur ON ur.id_usuario = u.id_usuario
+            JOIN public.roles r ON r.id_rol = ur.id_rol
+            WHERE u.estado_activo
+              AND r.nombre_rol = 'Investigador'
+              AND (u.correo ILIKE %s OR u.nombre ILIKE %s OR u.lastname ILIKE %s)
+            ORDER BY u.nombre ASC
+            LIMIT %s
+            """,
+            (f"%{q}%", f"%{q}%", f"%{q}%", limit),
+        )
+        return cur.fetchall()
 
 
 @router.post("/login", response_model=UsuarioOut)

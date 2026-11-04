@@ -3838,6 +3838,10 @@ function rubroParaPartida(partida) {
 }
 
 function proposalTeamMembers() {
+  // Devuelve el equipo actual del estado (teamMembers) o el usuario logueado como fallback
+  if (state.teamMembers && state.teamMembers.length > 0) {
+    return state.teamMembers;
+  }
   const correo = String(session?.user?.correo ?? "").trim().toLowerCase();
   if (!correo) return [];
   return [
@@ -3853,7 +3857,7 @@ function proposalTeamMembers() {
 }
 
 function totalHorasEquipo() {
-  return proposalTeamMembers().reduce((total, persona) => total + Number(persona.horas || 0), 0);
+  return (state.teamMembers || []).reduce((total, persona) => total + Number(persona.horas || 0), 0);
 }
 
 function nombreResponsableActual() {
@@ -3892,7 +3896,7 @@ function rangoMeses(periodo) {
 }
 
 function responsableDeActividad(texto) {
-  const equipo = proposalTeamMembers();
+  const equipo = state.teamMembers || [];
   const iniciales = String(texto ?? "").split("·")[0].trim();
   const porIniciales = equipo.find((m) => initials(m.nombre) === iniciales);
   const porNombre = equipo.find((m) => normalizarTexto(texto).includes(normalizarTexto(m.nombre)));
@@ -3904,7 +3908,6 @@ function responsableDeActividad(texto) {
 function buildProposalPayload() {
   const fechaInicio = fechaIso(draftValue("08:Fecha de inicio", "2027-01-01"), "2027-01-01");
   const fechaFin = fechaIso(draftValue("08:Fecha de finalización", "2028-12-31"), "2028-12-31");
-  const equipo = proposalTeamMembers();
   const objetivos = [
     {
       codigo_objetivo: "OG",
@@ -4029,18 +4032,20 @@ function buildProposalPayload() {
     };
   });
 
-  const colaboradores = state.externalCollaborator
-    ? [
-        {
-          nombre_completo: state.externalCollaborator.nombre,
-          institucion: state.externalCollaborator.institucion,
-          rol: state.externalCollaborator.rol,
-          orcid: state.externalCollaborator.orcid,
-          horas_asignadas: Number(state.externalCollaborator.horas) || null,
-          responsabilidad: state.externalCollaborator.responsabilidad,
-        },
-      ]
-    : [];
+  const equipo = (state.teamMembers || []).map((m) => ({
+      correo: m.correo,
+      id_tipo_hora: tipoHoraId(m.tipo, m.tipo === "VIE" ? 1 : 4),
+      horas_asignadas: m.horas,
+    }));
+
+  const colaboradores = (state.externalCollaborators || []).map((c) => ({
+    nombre_completo: c.nombre,
+    institucion: c.institucion,
+    rol: c.rol,
+    orcid: c.orcid,
+    horas_asignadas: Number(c.horas) || null,
+    responsabilidad: c.responsabilidad,
+  }));
 
   const clientUuid = state.clientUuid || nuevoClientUuid();
   state.clientUuid = clientUuid;
@@ -4295,22 +4300,65 @@ function dataForm() {
  *     + string : teamFormHtml Marcado HTML de la gestión de equipo.
  */
 function teamForm() {
-  const equipo = proposalTeamMembers();
-  const totalHoras = totalHorasEquipo();
-  const externo = state.externalCollaborator;
+  const equipo = state.teamMembers || [];
+  const colaboradores = state.externalCollaborators || [];
+  const totalHoras = equipo.reduce((sum, m) => sum + Number(m.horas || 0), 0);
   const avisoEquipo = "Dedicación total: " + totalHoras + " horas semanales";
-  return `${notice(avisoEquipo, "El equipo se registra mediante correos de usuarios institucionales activos; el backend valida cada cuenta.")}<div class="mt">${table(
-    ["Persona / instancia", "Rol", "Horas", "Correo"],
-    equipo.map((persona) => [
-      `<strong>${esc(persona.nombre)}</strong><br><span class="micro muted">${esc(persona.escuela || "Institución")}</span>`,
-      esc(persona.rol),
-      `${esc(persona.horas)} h ${esc(persona.tipo)}`,
-      `<span class="micro muted">${esc(persona.correo)}</span>`,
-    ]),
-    externo
-      ? `<span>Participación externa: ${esc(externo.nombre)} · ${esc(externo.institucion)} · carta de compromiso.</span>`
-      : "<span>Nombramientos: 01 ene 2027 – 31 dic 2028</span>",
-  )}</div><div class="action-row mt mb">${act("Agregar participante externo", "team", "secondary", "plus")}</div>${field("Participación estudiantil", "", "textarea", "₡960.000 por año para 400 horas a ₡2.400/h. Obligatorio en desarrollo tecnológico.", true, "", "Valeria Campos · 10 h/semana de beca asistente especial; validación de campo y trabajo final de graduación.")}<details class="accordion" ${externo ? "open" : ""}><summary>Colaboración externa y responsabilidades</summary><p>Las personas externas se identifican con institución, ORCID, carta de compromiso y tareas en el plan. La persona titular se registra cuando se emplean horas CONS.</p>${externo ? definition([["Nombre", esc(externo.nombre)], ["Institución", esc(externo.institucion)], ["Rol", esc(externo.rol)], ["Horas", `${esc(externo.horas || "—")} h/semana`], ["Responsabilidad", esc(externo.responsabilidad || "—")]]) : field("Institución externa", "", "text", "Sin participantes externos en la versión inicial.", false, "", "Sin participantes externos en la versión inicial.")}</details>`;
+
+  const equiposOpts = (catalogos?.rol_colaborador ?? []).map((r) => ({
+    value: r.nombre_rol,
+    label: r.nombre_rol,
+  }));
+
+  const renderEquipo = () => equipo.map((m, i) => [
+    `<strong>${esc(m.nombre)}</strong><br><span class="micro muted">${esc(m.escuela || m.siglas_escuela || "Institución")}</span>`,
+    esc(m.rol),
+    `${esc(m.horas || 0)} h ${esc(m.tipo || "VIE")}`,
+    `<span class="micro muted">${esc(m.correo)}</span>`,
+    act("Quitar", "team-remove", "text compact danger", "trash", 'data-index="' + i + '"'),
+  ]).join("");
+
+  const renderColaboradores = () => (state.externalCollaborators || []).map((c, i) => [
+    `<strong>${esc(c.nombre)}</strong><br><span class="micro muted">${esc(c.institucion)}</span>`,
+    esc(c.rol),
+    `${esc(c.horas || 0)} h`,
+    act("Quitar", "external-remove", "text compact danger", "trash", 'data-index="' + i + '"'),
+  ]).join("");
+
+  return `${notice("Dedicación total: " + totalHoras + " horas semanales", "El equipo se registra mediante correos de usuarios institucionales activos; el backend valida cada cuenta.")}
+<div class="mt">
+  <div class="mt">${table(
+    ["Persona / instancia", "Rol", "Horas", "Correo", ""],
+    (state.teamMembers || []).map((m, i) => {
+      const esCreador = session && m.correo === session.user.correo;
+      return [
+        `<strong>${esc(m.nombre)}</strong>${esCreador ? ' <span class="badge" style="background:var(--blue);color:white;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:8px;">Creador</span>' : ''}<br><span class="micro muted">${esc(m.escuela || m.siglas_escuela || "Institución")}</span>`,
+        esc(m.rol),
+        `${esc(m.horas || 0)} h ${esc(m.tipo || "VIE")}`,
+        `<span class="micro muted">${esc(m.correo)}</span>`,
+        esCreador ? `${act("Editar", "team-edit", "text compact", "edit", 'data-index="' + i + '"')} <span class="micro muted" style="color:var(--muted);">No se puede quitar (creador)</span>` : `${act("Editar", "team-edit", "text compact", "edit", 'data-index="' + i + '"')} ${act("Quitar", "team-remove", "text compact danger", "trash", 'data-index="' + i + '"')}`,
+      ];
+    }),
+  )}</div>
+  <div class="action-row mt mb">
+    ${act("Agregar miembro al equipo", "team", "secondary", "plus")}
+  </div>
+
+  <details class="accordion" open>
+    <summary>Colaboradores externos</summary>
+    <p class="small muted" style="margin-bottom:12px">Personas externas sin cuenta institucional que colaboran en el proyecto.</p>
+    <div class="mt">${table(
+      ["Colaborador / institución", "Rol", "Horas", ""],
+      (state.externalCollaborators || []).map((c, i) => [
+        `<strong>${esc(c.nombre)}</strong><br><span class="micro muted">${esc(c.institucion)}</span>`,
+        esc(c.rol),
+        `${esc(c.horas || 0)} h`,
+        act("Quitar", "external-remove", "text compact danger", "trash", 'data-index="' + i + '"'),
+      ]),
+    )}</div>
+    <div class="action-row mt mb">
+      ${act("Agregar colaborador externo", "external-add", "secondary", "plus")}
+    </div></details>`;
 }
 
 /**
@@ -6656,37 +6704,98 @@ async function handleAction(action, el) {
       );
       break;
     }
-    case "team":
+    case "team": {
+      // Cargar resultados de búsqueda al abrir el modal
+      setTimeout(() => {
+        const input = $('[data-field="modal:user-search"]');
+        const results = $('#user-search-results');
+        if (!input || !results) return;
+        const buscar = async (texto) => {
+          if (!texto || texto.length < 2) {
+            results.innerHTML = "";
+            return;
+          }
+          try {
+            const resp = await fetch(`${API_URL}/auth/usuarios?q=${encodeURIComponent(texto)}&limit=10`);
+            if (!resp.ok) return;
+            const usuarios = await resp.json();
+            results.innerHTML = usuarios.map((u) =>
+              `<div class="user-result" style="padding:8px;border-bottom:1px solid var(--line);cursor:pointer;" data-id="${u.id_usuario}" data-nombre="${esc(u.nombre)}" data-correo="${esc(u.correo)}" data-escuela="${esc(u.escuela || '')}" data-siglas="${esc(u.siglas_escuela || '')}">
+                <strong>${esc(u.nombre)}</strong><br><span class="micro muted">${esc(u.correo)}${u.escuela ? ` · ${esc(u.escuela)}` : ""}</span>
+              </div>`
+            ).join("");
+            results.querySelectorAll(".user-result").forEach((el) => {
+              el.addEventListener("click", () => {
+                state.selectedTeamUser = {
+                  id_usuario: Number(el.dataset.id),
+                  nombre: el.dataset.nombre,
+                  correo: el.dataset.correo,
+                  escuela: el.dataset.escuela,
+                  siglas_escuela: el.dataset.siglas,
+                };
+                input.value = state.selectedTeamUser.nombre;
+                results.innerHTML = "";
+              });
+            });
+          } catch (e) {
+            console.error(e);
+          }
+        };
+        let timer;
+        input.addEventListener("input", (e) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => buscar(e.target.value), 300);
+        });
+        input.addEventListener("focus", () => buscar(input.value));
+        document.addEventListener("click", (e) => {
+          if (!results.contains(e.target) && e.target !== input) results.innerHTML = "";
+        });
+      }, 100);
       modal(
         "Participante del equipo",
-        `${field("Nombre completo", "María Arias", "text", "", true, "modal:person")}${field("Institución / instancia", "Entidad colaboradora", "text", "", true, "modal:institution")}<div class="field-row">${field("Rol", ["Colaboración externa", "Investigador"], "select", "", false, "modal:role")}${field("Dedicación", "4", "number", "Horas por semana.", false, "modal:hours")}</div>${field("ORCID", "Pendiente", "text", "Identificador ORCID del participante.", false, "modal:orcid")}${field("Responsabilidad", "Participa en la validación de campo.", "textarea", "Adjuntar carta de compromiso si es externo.", true, "modal:responsibility")}`,
+        `${field("Buscar usuario", "", "search", "Busca por nombre o correo institucional...", true, "modal:user-search")}<div id="user-search-results" class="mt" style="max-height:200px;overflow-y:auto;"></div>${field("Rol", (catalogos?.rol_colaborador ?? []).map((r) => ({ value: r.nombre_rol, label: r.nombre_rol })), "select", "", false, "modal:role", "")}${field("Dedicación", "", "number", "Horas por semana.", false, "modal:hours")}${field("ORCID", "", "text", "Identificador ORCID del participante.", false, "modal:orcid")}${field("Responsabilidad", "", "textarea", "Adjuntar carta de compromiso si es externo.", false, "modal:responsibility")}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar participante", "team-save"),
         false,
         "team",
       );
       break;
+    }
     case "team-save": {
-      const nombre = $('[data-field="modal:person"]')?.value?.trim();
-      const institucion = $('[data-field="modal:institution"]')?.value?.trim();
-      if (!nombre || !institucion) {
-        toast("Completa el nombre y la institución del participante.");
+      const selectedUser = state.selectedTeamUser;
+      if (!selectedUser) {
+        toast("Selecciona un usuario de la lista de búsqueda.");
         break;
       }
-      state.externalCollaborator = {
-        nombre,
-        institucion,
-        rol: $('[data-field="modal:role"]')?.value || "Colaboración externa",
-        horas: Number($('[data-field="modal:hours"]')?.value) || null,
-        orcid: $('[data-field="modal:orcid"]')?.value || "",
-        responsabilidad: $('[data-field="modal:responsibility"]')?.value || "",
-      };
-      state.teamAdded = true;
-      state.extraPerson = nombre;
+      const rol = $('[data-field="modal:role"]')?.value;
+      const horas = Number($('[data-field="modal:hours"]')?.value) || null;
+      const orcid = $('[data-field="modal:orcid"]')?.value || "";
+      const responsabilidad = $('[data-field="modal:responsibility"]')?.value || "";
+
+      // Agregar al equipo
+      state.teamMembers = state.teamMembers || [];
+      const yaExiste = state.teamMembers.some((m) => m.id_usuario === selectedUser.id_usuario);
+      if (yaExiste) {
+        toast("Este usuario ya está en el equipo.");
+        break;
+      }
+      state.teamMembers.push({
+        id_usuario: selectedUser.id_usuario,
+        nombre: selectedUser.nombre,
+        correo: selectedUser.correo,
+        escuela: selectedUser.escuela,
+        siglas_escuela: selectedUser.siglas_escuela,
+        rol,
+        horas,
+        orcid,
+        responsabilidad,
+        tipo: "VIE",
+      });
+      state.selectedTeamUser = null;
       save();
       closeModal();
       render();
-      toast("Participación externa registrada.");
+      toast("Miembro agregado al equipo.");
       break;
     }
     case "objective":
@@ -6841,6 +6950,86 @@ async function handleAction(action, el) {
         save();
         render();
         toast("Rubro quitado del presupuesto.");
+      }
+      break;
+    }
+    case "team-remove": {
+      const i = Number(el.dataset.index);
+      if (Number.isInteger(i) && i >= 0 && i < (state.teamMembers || []).length) {
+        const miembro = state.teamMembers[i];
+        // No permitir quitar al creador (usuario logueado)
+        if (session && miembro.correo === session.user.correo) {
+          toast("No se puede quitar al creador de la propuesta.");
+          break;
+        }
+        state.teamMembers.splice(i, 1);
+        save();
+        render();
+        toast("Miembro quitado del equipo.");
+      }
+      break;
+    }
+    case "team-edit": {
+      const i = Number(el.dataset.index);
+      if (!Number.isInteger(i) || i < 0 || i >= (state.teamMembers || []).length) break;
+      const miembro = state.teamMembers[i];
+      modal(
+        "Editar miembro del equipo",
+        `${field("Rol", (catalogos?.rol_colaborador ?? []).map((r) => ({ value: r.nombre_rol, label: r.nombre_rol })), "select", "", false, "modal:edit-role", "", miembro.rol)}${field("Dedicación (h/sem)", miembro.horas || 0, "number", "Horas por semana.", true, "modal:edit-hours")}${field("Tipo de hora", ["VIE", "CONS", "REC", "DOC", "OTRO"], "select", "", false, "modal:edit-tipo", "", miembro.tipo)}`,
+        act("Cancelar", "close", "secondary") +
+          confirmBtn("Guardar cambios", "team-edit-save", "", "", `data-index="${i}"`),
+        false,
+        "team-edit",
+      );
+      break;
+    }
+    case "team-edit-save": {
+      const i = Number(el.dataset.index);
+      if (!Number.isInteger(i) || i < 0 || i >= (state.teamMembers || []).length) break;
+      const rol = $('[data-field="modal:edit-role"]')?.value;
+      const horas = Number($('[data-field="modal:edit-hours"]')?.value) || 0;
+      const tipo = $('[data-field="modal:edit-tipo"]')?.value || "VIE";
+      state.teamMembers[i] = { ...state.teamMembers[i], rol, horas, tipo };
+      save();
+      closeModal();
+      render();
+      toast("Miembro actualizado.");
+      break;
+    }
+    case "external-add": {
+      modal(
+        "Agregar colaborador externo",
+        `${field("Nombre completo", "", "text", "", true, "modal:ext-name")}${field("Institución / entidad", "", "text", "", true, "modal:ext-institution")}<div class="field-row">${field("Rol", (catalogos?.rol_colaborador ?? []).map((r) => ({ value: r.nombre_rol, label: r.nombre_rol })), "select", "", false, "modal:ext-role")}${field("Dedicación (h/sem)", "", "number", "Horas por semana.", false, "modal:ext-hours")}</div>${field("ORCID", "", "text", "Identificador ORCID.", false, "modal:ext-orcid")}${field("Responsabilidad / tareas", "", "textarea", "Describe sus tareas en el proyecto.", false, "modal:ext-responsibility")}`,
+        act("Cancelar", "close", "secondary") +
+          confirmBtn("Guardar colaborador", "external-add-save"),
+        false,
+        "external-add",
+      );
+      break;
+    }
+    case "external-add-save": {
+      state.externalCollaborators = state.externalCollaborators || [];
+      state.externalCollaborators.push({
+        nombre: $('[data-field="modal:ext-name"]')?.value?.trim() || "",
+        institucion: $('[data-field="modal:ext-institution"]')?.value?.trim() || "",
+        rol: $('[data-field="modal:ext-role"]')?.value || "Colaborador externo",
+        horas: Number($('[data-field="modal:ext-hours"]')?.value) || 0,
+        orcid: $('[data-field="modal:ext-orcid"]')?.value || "",
+        responsabilidad: $('[data-field="modal:ext-responsibility"]')?.value || "",
+      });
+      save();
+      closeModal();
+      render();
+      toast("Colaborador externo agregado.");
+      break;
+    }
+    case "external-remove": {
+      const i = Number(el.dataset.index);
+      if (Number.isInteger(i) && i >= 0 && i < (state.externalCollaborators || []).length) {
+        state.externalCollaborators.splice(i, 1);
+        save();
+        render();
+        toast("Colaborador externo quitado.");
       }
       break;
     }
