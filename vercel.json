@@ -1,6 +1,6 @@
 {
   "buildCommand": "echo 'Static site - no build needed'",
-  "outputDirectory": "frontend/html",
+  "outputDirectory": "frontend",
   "devCommand": "echo 'No dev server needed'",
   "installCommand": "echo 'No dependencies to install'",
   "framework": null,
@@ -27,6 +27,10 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/",
+      "destination": "/html/index.html"
+    },
     {
       "source": "/api/(.*)",
       "destination": "https://sgpi-backend-api.onrender.com/api/$1"
