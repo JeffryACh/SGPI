@@ -2993,6 +2993,7 @@ function field(
   help = "",
   required = false,
   key = "",
+  placeholder = "",
 ) {
   // [Línea clave]: ¿Por qué soy importante? Genera una clave persistente única para el campo. ¿Para qué? Recuperar y almacenar borradores parciales en state.saved. ¿Dónde me usan? En el binding de valores de todos los formularios.
   const k = key || `${current}:${label}`,
@@ -3007,7 +3008,8 @@ function field(
     val = state.saved[k] ?? (kind === "select" ? opts[0]?.value ?? "" : value),
     id = "f-" + k.replace(/[^\w]/g, "-"),
     req = required ? "required" : "",
-    attr = `id="${id}" data-field="${esc(k)}" ${req}`;
+    placeholderAttr = placeholder ? ` placeholder="${esc(placeholder)}"` : "",
+    attr = `id="${id}" data-field="${esc(k)}" ${req}${placeholderAttr}`;
   let control;
   if (kind === "textarea")
     control = `<textarea ${attr} rows="3">${esc(val)}</textarea>`;
@@ -3807,9 +3809,12 @@ function currentProposalId() {
 }
 
 function draftValue(key, fallback = "") {
+  // [Línea clave]: El valor por defecto ya NO viene de PROPOSAL_DEFAULTS (textos quemados).
+  // Solo retorna lo que el usuario haya escrito (state.saved) o el fallback explícito.
+  // Los placeholders y textos de ayuda se pasan como parámetros a field().
   const value = state.saved?.[key];
   if (value !== undefined && value !== null) return value;
-  return PROPOSAL_DEFAULTS[key] ?? fallback;
+  return fallback;
 }
 
 function screenDefault(id, label, fallback = "") {
@@ -4196,15 +4201,17 @@ function dataForm() {
   return `
     ${field(
       "Título de la propuesta",
-      "Agua Inteligente: monitoreo de cuencas",
+      "",
       "text",
       "Usa un título claro que identifique el propósito de la investigación.",
-      true
+      true,
+      "",
+      "Ej.: Agua Inteligente: monitoreo de cuencas"
     )}
     
     <div class="field-row">
-      ${field("Instancia coordinadora", escuelasOpts, "select", "", true)}
-      ${field("Modalidad", state.mode || "Desarrollo tecnológico", "readonly")}
+      ${field("Instancia coordinadora", escuelasOpts, "select", "", true, "", "Selecciona la escuela líder")}
+      ${field("Modalidad", state.mode || "Desarrollo tecnológico", "readonly", "", false, "", "Modalidad seleccionada en pantalla 08")}
     </div>
 
     ${field(
@@ -4212,28 +4219,34 @@ function dataForm() {
       lineasOpts,
       "select",
       "",
-      true
+      true,
+      "",
+      "Selecciona la línea temática"
     )}
 
     <div class="field-row">
-      ${field("Fecha de inicio", "2027-01-01", "date", "", true)}
-      ${field("Fecha de finalización", "2028-12-31", "date", "Duración propuesta: 24 meses.", true)}
+      ${field("Fecha de inicio", "", "date", "", true, "", "2027-01-01")}
+      ${field("Fecha de finalización", "", "date", "Duración propuesta: 24 meses.", true, "", "2028-12-31")}
     </div>
 
     ${field(
       "Resumen",
-      screen("08").fields.find((f) => f.label === "Resumen").value,
+      "",
       "textarea",
-      "Máximo 500 palabras.",
-      true
+      "Máximo 500 palabras. Describe el objetivo, metodología y resultados esperados.",
+      true,
+      "",
+      "Desarrollo y validación de un sistema de monitoreo que integra mediciones de calidad del agua..."
     )}
 
     ${field(
       "Palabras clave",
-      "Calidad del agua; monitoreo; cuencas; sensores",
+      "",
       "text",
-      "Incluye de 4 a 6 palabras clave.",
-      true
+      "Incluye de 4 a 6 palabras clave separadas por punto y coma.",
+      true,
+      "",
+      "Calidad del agua; monitoreo; cuencas; sensores"
     )}
 
     <details class="accordion">
@@ -4241,48 +4254,72 @@ function dataForm() {
       
       ${field(
         "Resumen en inglés",
-        "Development and validation of a water-quality monitoring system in two pilot watersheds.",
+        "",
         "textarea",
-        "Máximo 500 palabras.",
-        true
+        "Máximo 500 palabras. Traducción del resumen para difusión internacional.",
+        true,
+        "",
+        "Development and validation of a water-quality monitoring system in two pilot watersheds."
       )}
       
       ${field(
         "Palabras clave en inglés",
-        "Water quality; monitoring; watersheds; sensors",
+        "",
         "text",
-        "4 a 6 palabras clave.",
-        true
+        "4 a 6 palabras clave en inglés.",
+        true,
+        "",
+        "Water quality; monitoring; watersheds; sensors"
       )}
       
       ${field(
         "Prioridad nacional y ODS",
-        "Gestión del recurso hídrico · ODS 6",
-        "text"
+        "",
+        "text",
+        "Vincula la propuesta con prioridades país u Objetivos de Desarrollo Sostenible.",
+        false,
+        "",
+        "Gestión del recurso hídrico · ODS 6"
       )}
       
       ${field(
         "Continuidad y financiamiento previo",
-        "No corresponde a una continuación; no tiene financiamiento externo.",
-        "textarea"
+        "",
+        "textarea",
+        "Indica si es continuación de otro proyecto y financiamiento previo.",
+        false,
+        "",
+        "No corresponde a una continuación; no tiene financiamiento externo."
       )}
       
       ${field(
         "Instrumento jurídico / convenio",
-        "No aplica.",
-        "text"
+        "",
+        "text",
+        "Convenio, carta de intención o instrumento que respalde la colaboración.",
+        false,
+        "",
+        "No aplica."
       )}
       
       ${field(
         "Vinculación con posgrado",
-        "No aplica.",
-        "text"
+        "",
+        "text",
+        "Relación con programas de posgrado (tesis, estudiantes, co-dirección).",
+        false,
+        "",
+        "No aplica."
       )}
       
       ${field(
         "Información sensible",
-        "Documentación técnica del software, sujeta a valoración de Vinculación.",
-        "textarea"
+        "",
+        "textarea",
+        "Datos que requieren reserva o acuerdo de confidencialidad (PI, datos personales, etc.).",
+        false,
+        "",
+        "Documentación técnica del software, sujeta a valoración de Vinculación."
       )}
     </details>
   `;
@@ -4301,7 +4338,8 @@ function teamForm() {
   const equipo = proposalTeamMembers();
   const totalHoras = totalHorasEquipo();
   const externo = state.externalCollaborator;
-  return `${notice(`Dedicación total: ${totalHoras} horas semanales`, "El equipo se registra mediante correos de usuarios institucionales activos; el backend valida cada cuenta.")}<div class="mt">${table(
+  const avisoEquipo = "Dedicación total: " + totalHoras + " horas semanales";
+  return `${notice(avisoEquipo, "El equipo se registra mediante correos de usuarios institucionales activos; el backend valida cada cuenta.")}<div class="mt">${table(
     ["Persona / instancia", "Rol", "Horas", "Correo"],
     equipo.map((persona) => [
       `<strong>${esc(persona.nombre)}</strong><br><span class="micro muted">${esc(persona.escuela || "Institución")}</span>`,
@@ -4312,7 +4350,7 @@ function teamForm() {
     externo
       ? `<span>Participación externa: ${esc(externo.nombre)} · ${esc(externo.institucion)} · carta de compromiso.</span>`
       : "<span>Nombramientos: 01 ene 2027 – 31 dic 2028</span>",
-  )}</div><div class="action-row mt mb">${act("Agregar participante externo", "team", "secondary", "plus")}</div>${field("Participación estudiantil", "Valeria Campos · 10 h/semana de beca asistente especial; validación de campo y trabajo final de graduación.", "textarea", "₡960.000 por año para 400 horas a ₡2.400/h.", true)}<details class="accordion" ${externo ? "open" : ""}><summary>Colaboración externa y responsabilidades</summary><p>Las personas externas se identifican con institución, ORCID, carta de compromiso y tareas en el plan. La persona titular se registra cuando se emplean horas CONS.</p>${externo ? definition([["Nombre", esc(externo.nombre)], ["Institución", esc(externo.institucion)], ["Rol", esc(externo.rol)], ["Horas", `${esc(externo.horas || "—")} h/semana`], ["Responsabilidad", esc(externo.responsabilidad || "—")]]) : field("Institución externa", "Sin participantes externos en la versión inicial.", "text")}</details>`;
+  )}</div><div class="action-row mt mb">${act("Agregar participante externo", "team", "secondary", "plus")}</div>${field("Participación estudiantil", "", "textarea", "₡960.000 por año para 400 horas a ₡2.400/h. Obligatorio en desarrollo tecnológico.", true, "", "Valeria Campos · 10 h/semana de beca asistente especial; validación de campo y trabajo final de graduación.")}<details class="accordion" ${externo ? "open" : ""}><summary>Colaboración externa y responsabilidades</summary><p>Las personas externas se identifican con institución, ORCID, carta de compromiso y tareas en el plan. La persona titular se registra cuando se emplean horas CONS.</p>${externo ? definition([["Nombre", esc(externo.nombre)], ["Institución", esc(externo.institucion)], ["Rol", esc(externo.rol)], ["Horas", `${esc(externo.horas || "—")} h/semana`], ["Responsabilidad", esc(externo.responsabilidad || "—")]]) : field("Institución externa", "", "text", "Sin participantes externos en la versión inicial.", false, "", "Sin participantes externos en la versión inicial.")}</details>`;
 }
 
 /**
@@ -4325,7 +4363,7 @@ function teamForm() {
  *     + string : foundationHtml Marcado HTML de fundamentación.
  */
 function foundationForm() {
-  return `${field("Problema e importancia", screen("10").fields[0].value, "textarea", "Máximo una página.", true)}${field("Justificación", screen("10").fields[1].value, "textarea", "Explica la contribución y las personas beneficiarias.", true)}${field("Estado del arte y vacío identificado", "Revisión previa documentada: los sistemas comparados presentan limitaciones de continuidad de mediciones e integración de datos en las microcuencas del caso. El prototipo aborda ese vacío mediante calibración comparativa y registro continuo.", "textarea", "Máximo 2 páginas. Incluye al menos 10 referencias primarias WoS/Scopus de los últimos 5 años.", true)}<details class="accordion"><summary>Ver referencias y antecedentes del caso</summary><p>Referencias pendientes de completar en este ejemplo.</p>${field("Antecedentes", screen("10").fields[2].value, "textarea")}${docPendiente("Fundamentación", "Anexo de referencia · pendiente de adjuntar")}</details>`;
+  return `${field("Problema e importancia", "", "textarea", "Máximo una página. Describe el problema, su alcance y relevancia.", true, "", "La información sobre calidad del agua en las microcuencas piloto se obtiene mediante mediciones aisladas...")}${field("Justificación", "", "textarea", "Explica la contribución, personas beneficiarias y pertinencia institucional.", true, "", "Un sistema de monitoreo continuo y validado permitirá reconocer variaciones en la calidad del agua...")}${field("Estado del arte y vacío identificado", "", "textarea", "Máximo 2 páginas. Incluye al menos 10 referencias primarias WoS/Scopus de los últimos 5 años.", true, "", "Revisión previa documentada: los sistemas comparados presentan limitaciones de continuidad...")}<details class="accordion"><summary>Ver referencias y antecedentes del caso</summary><p>Referencias pendientes de completar en este ejemplo.</p>${field("Antecedentes", "", "textarea", "Antecedentes institucionales, proyectos previos y base documental.", false, "", "El equipo dispone de una prueba de concepto en laboratorio...")}${docPendiente("Fundamentación", "Anexo de referencia · pendiente de adjuntar")}</details>`;
 }
 
 /**
@@ -4338,21 +4376,23 @@ function foundationForm() {
  *     + string : objFormHtml Marcado HTML de objetivos.
  */
 function objectiveForm() {
-  return `${field("Objetivo general", screen("11").fields[0].value, "textarea", "", true)}<h3 style="margin:22px 0 16px">Objetivos específicos</h3>${screen(
+  return `${field("Objetivo general", "", "textarea", "Objetivo general del proyecto (OG).", true, "", "Desarrollar y validar un sistema de monitoreo que integra mediciones de calidad del agua...")}<h3 style="margin:22px 0 16px">Objetivos específicos</h3>${screen(
     "11",
   )
     .rows.map((r) =>
       field(
         r.code,
-        r.text,
+        "",
         "textarea",
         "Cada objetivo se vincula con actividades y resultados.",
         true,
+        "",
+        r.code === "OE1" ? "Diseñar sensores IoT de bajo costo para medición de pH, temperatura y conductividad" : r.code === "OE2" ? "Integrar calibración comparativa con instrumentos de referencia" : r.code === "OE3" ? "Validar el prototipo en dos microcuencas piloto durante 12 meses" : "Objetivo específico..."
       ),
     )
     .join(
       "",
-    )}${state.extraObjective ? field("OE4", state.extraObjective, "textarea", "Objetivo agregado en esta sesión.", true) : ""}${act("Agregar objetivo", "objective", "secondary", "plus")}`;
+    )}${state.extraObjective ? field("OE4", state.extraObjective, "textarea", "Objetivo agregado en esta sesión.", true, "", "") : ""}${act("Agregar objetivo", "objective", "secondary", "plus")}`;
 }
 
 /**
@@ -4366,7 +4406,7 @@ function objectiveForm() {
  */
 function methodologyForm() {
   const totalHoras = totalHorasEquipo();
-  return `${field("Enfoque y diseño metodológico", screen("12").fields[0].value, "textarea", "Describe enfoque, alcance y diseño.", true)}${field("Procedimientos y técnicas", screen("12").fields[1].value, "textarea", "Incluye instrumentos, variables y procedimientos de medición.", true)}${field("Usuarios y validación", "Personas responsables de la gestión de dos microcuencas piloto. La validación compara mediciones de pH, temperatura y conductividad con instrumentos de referencia; se documentan concordancia, cobertura temporal y limitaciones.", "textarea", "Justifica la selección de sitios y cómo se comprobará el desempeño.", true)}${field("Análisis de resultados", screen("12").fields[2].value, "textarea", "", true)}<details class="accordion"><summary>Productos y difusión</summary><p>Productos comprometidos para ${totalHoras} h: software (activo de PI), artículo sometido WoS/Scopus y manual técnico. La validación de PI corresponde a Vinculación.</p></details>`;
+  return `${field("Enfoque y diseño metodológico", "", "textarea", "Describe enfoque, alcance y diseño del proyecto.", true, "", "Desarrollo experimental en tres fases: definición de requerimientos, integración del prototipo y validación comparativa en campo.")}${field("Procedimientos y técnicas", "", "textarea", "Incluye instrumentos, variables y procedimientos de medición.", true, "", "Se definirán puntos de medición en dos microcuencas; se calibrarán los instrumentos; se compararán registros del prototipo con mediciones de referencia...")}${field("Usuarios y validación", "", "textarea", "Justifica la selección de sitios y cómo se comprobará el desempeño.", true, "", "Personas responsables de la gestión de dos microcuencas piloto. La validación compara mediciones de pH, temperatura y conductividad con instrumentos de referencia...")}${field("Análisis de resultados", "", "textarea", "Describe cómo se evaluarán los resultados.", true, "", "Se evaluarán integridad de registros, concordancia de las mediciones y disponibilidad del sistema durante el período piloto.")}<details class="accordion"><summary>Productos y difusión</summary><p>Productos comprometidos para ${totalHoras} h: software (activo de PI), artículo sometido WoS/Scopus y manual técnico. La validación de PI corresponde a Vinculación.</p></details>`;
 }
 
 /**
@@ -4527,7 +4567,7 @@ function budgetForm() {
         act("Editar", "budget-edit", "text compact", "edit", `data-index="${i}"`),
       ];
     }),
-  )}</div><div class="action-row mt">${act("Agregar rubro", "budget-add", "secondary", "plus")}${act("Ver reglas de presupuesto", "budget-rules", "text")}</div><details class="accordion"><summary>Justificaciones y otras fuentes</summary>${state.budget.map((r) => `<p><strong>${r.name}.</strong> ${r.detail}</p>`).join("")}${field("Financiamiento externo / contrapartida", "Sin aportes externos.", "textarea")}</details>`;
+  )}</div><div class="action-row mt">${act("Agregar rubro", "budget-add", "secondary", "plus")}${act("Ver reglas de presupuesto", "budget-rules", "text")}</div><details class="accordion"><summary>Justificaciones y otras fuentes</summary>${state.budget.map((r) => `<p><strong>${r.name}.</strong> ${r.detail}</p>`).join("")}${field("Financiamiento externo / contrapartida", "", "textarea", "Indica fuentes externas, contrapartidas o co-financiamiento.", false, "", "Sin aportes externos.")}</details>`;
 }
 
 /**
@@ -4559,7 +4599,7 @@ function complementaryForm() {
       "Los sitios piloto no se ubican en territorios indígenas; cualquier cambio requerirá consulta y autorización previa.",
     ],
   ];
-  return `<h3 class="mb">Madurez tecnológica y propiedad intelectual</h3><div class="field-row">${field("TRL actual", ["4", "1", "2", "3", "5", "6", "7", "8", "9"], "select", "Rango de referencia DT: 4–7.", true)}${field("TRL esperado", ["6", "1", "2", "3", "4", "5", "7", "8", "9"], "select", "Coherente con objetivos y validación.", true)}</div>${field("Potencial de propiedad intelectual", ["Sí", "No"], "select", "En desarrollo tecnológico el dictamen de Vinculación es obligatorio.", true)}${field("Activo previsto", "Software de integración y registro de mediciones ambientales.", "textarea", "Evitar divulgación previa a la valoración institucional.", true)}<details class="accordion" open><summary>Declaraciones éticas individuales</summary><p class="small muted" style="margin-top:14px">Cada aspecto se declara y justifica por separado; no se admite una respuesta general.</p><div class="ethics-grid">${ethics.map(([label, reason], i) => `<section class="ethics-item"><h3>${label}</h3>${field("¿Aplica?", ["No", "Sí"], "select", "Selecciona Sí si la actividad requiere revisión o permisos.", true, `ethics:${i}:applies`)}${field(`Justificación específica`, reason, "textarea", "Indica entidad, estado, mitigación y plazo si corresponde.", true, `ethics:${i}:reason`)}</section>`).join("")}</div></details><details class="accordion"><summary>Producción, difusión y hoja de ruta</summary><p><strong>${totalHoras} h/semana:</strong> software + artículo sometido WoS/Scopus + manual técnico. Se asocian a OE2 y OE3.</p>${field("Difusión y socialización", "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.", "textarea")}${field("Hoja de ruta", "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.", "textarea")}</details>`;
+  return `<h3 class="mb">Madurez tecnológica y propiedad intelectual</h3><div class="field-row">${field("TRL actual", ["4", "1", "2", "3", "5", "6", "7", "8", "9"], "select", "Rango de referencia DT: 4–7.", true, "", "", "4")}${field("TRL esperado", ["6", "1", "2", "3", "4", "5", "7", "8", "9"], "select", "Coherente con objetivos y validación.", true, "", "", "6")}</div>${field("Potencial de propiedad intelectual", ["Sí", "No"], "select", "En desarrollo tecnológico el dictamen de Vinculación es obligatorio.", true, "", "", "Sí")}${field("Activo previsto", "", "textarea", "Evitar divulgación previa a la valoración institucional.", true, "", "Software de integración y registro de mediciones ambientales.")}<details class="accordion" open><summary>Declaraciones éticas individuales</summary><p class="small muted" style="margin-top:14px">Cada aspecto se declara y justifica por separado; no se admite una respuesta general.</p><div class="ethics-grid">${ethics.map(([label, reason], i) => `<section class="ethics-item"><h3>${label}</h3>${field("¿Aplica?", ["No", "Sí"], "select", "Selecciona Sí si la actividad requiere revisión o permisos.", true, `ethics:${i}:applies`, "", "No")}${field(`Justificación específica`, "", "textarea", "Indica entidad, estado, mitigación y plazo si corresponde.", true, `ethics:${i}:reason`, reason)}</section>`).join("")}</div></details><details class="accordion"><summary>Producción, difusión y hoja de ruta</summary><p><strong>${totalHoras} h/semana:</strong> software + artículo sometido WoS/Scopus + manual técnico. Se asocian a OE2 y OE3.</p>${field("Difusión y socialización", "", "textarea", "Plan de difusión de resultados (seminarios, publicaciones, transferencia).", false, "", "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.")}${field("Hoja de ruta", "", "textarea", "Hitos para avanzar del TRL actual al esperado.", false, "", "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.")}</details>`;
 }
 
 /**
@@ -5301,7 +5341,7 @@ function evaluation(id) {
     if (ev.potencial_pi_identificado === false) piOpts.reverse();
     const documentoVinculacion = documentosVinculacion[0];
     const yaDictaminado = !!ev.id_evaluacion;
-    inner = `${notice(yaDictaminado ? "Dictamen ya registrado" : "Dictamen requerido", yaDictaminado ? `Oficio ${ev.numero_oficio_dictamen || "sin número"}. La propuesta ya fue remitida con la valoración de Vinculación; este formulario queda en modo consulta.` : "Registra el oficio firmado y la valoración técnica de Vinculación antes de remitir al Comité Técnico.")}<div class="mt">${field("Potencial de PI identificado", piOpts, "select", "Indica si el activo puede protegerse o requiere reserva.", true, "vinculacion:potencial_pi")}${field("Tipo de innovación", ev.tipo_innovacion || "Software / Desarrollo tecnológico", "text", "Clasificación del activo o resultado esperado.", false, "vinculacion:tipo_innovacion")}${field("Activo previsto", ev.activo_previsto || "Software de integración, registro de mediciones y documentación técnica.", "textarea", "Describe el activo que se resguardará.", true, "vinculacion:activo_previsto")}${field("Valoración técnica", ev.valoracion_tecnica || "Se identifica potencial de protección en el software. Documentar autoría y resultados, y coordinar divulgación con Vinculación.", "textarea", "", true, "vinculacion:valoracion")}${field("Oficio del dictamen", ev.numero_oficio_dictamen || "CV-014-2026", "text", "Número de oficio emitido por Vinculación.", true, "vinculacion:oficio")}${field("Requiere reserva o resguardo previo", ev.requiere_reserva === true, "checkbox", "Marca si la divulgación debe restringirse antes de proteger el activo.", false, "vinculacion:reserva")}${yaDictaminado ? "" : `<div class="field"><label for="vinculacion-doc">Oficio firmado (PDF, DOCX)</label><input id="vinculacion-doc" type="file" accept=".pdf,.docx"><span class="help">Máximo 20 MB. Se almacena en el expediente de la propuesta.</span></div>`}${documentoVinculacion ? docPropuesta(documentoVinculacion) : yaDictaminado ? "" : notice("Adjunto pendiente", "Puedes registrar el dictamen y adjuntar el oficio firmado en la misma acción.")}</div>`;
+    inner = `${notice(yaDictaminado ? "Dictamen ya registrado" : "Dictamen requerido", yaDictaminado ? `Oficio ${ev.numero_oficio_dictamen || "sin número"}. La propuesta ya fue remitida con la valoración de Vinculación; este formulario queda en modo consulta.` : "Registra el oficio firmado y la valoración técnica de Vinculación antes de remitir al Comité Técnico.")}<div class="mt">${field("Potencial de PI identificado", piOpts, "select", "Indica si el activo puede protegerse o requiere reserva.", true, "vinculacion:potencial_pi", "", "Sí · existe potencial de protección")}${field("Tipo de innovación", "", "text", "Clasificación del activo o resultado esperado.", false, "vinculacion:tipo_innovacion", "Software / Desarrollo tecnológico")}${field("Activo previsto", "", "textarea", "Describe el activo que se resguardará.", true, "vinculacion:activo_previsto", "Software de integración, registro de mediciones y documentación técnica.")}${field("Valoración técnica", "", "textarea", "Justificación y valoración técnica desarrollada por Vinculación.", true, "vinculacion:valoracion", "Se identifica potencial de protección en el software. Documentar autoría y resultados, y coordinar divulgación con Vinculación.")}${field("Oficio del dictamen", "", "text", "Número de oficio emitido por Vinculación.", true, "vinculacion:oficio", "CV-014-2026")}${field("Requiere reserva o resguardo previo", ev.requiere_reserva === true, "checkbox", "Marca si la divulgación debe restringirse antes de proteger el activo.", false, "vinculacion:reserva")}${yaDictaminado ? "" : `<div class="field"><label for="vinculacion-doc">Oficio firmado (PDF, DOCX)</label><input id="vinculacion-doc" type="file" accept=".pdf,.docx"><span class="help">Máximo 20 MB. Se almacena en el expediente de la propuesta.</span></div>`}${documentoVinculacion ? docPropuesta(documentoVinculacion) : yaDictaminado ? "" : notice("Adjunto pendiente", "Puedes registrar el dictamen y adjuntar el oficio firmado en la misma acción.")}</div>`;
   }
   if (id === "24") {
     const sc = scoreResult();
@@ -5356,7 +5396,7 @@ function evaluation(id) {
       )
       .join(
         "",
-      )}</div><label class="checkline"><input type="checkbox" id="products-ok" ${!state.notRecommended ? "checked" : ""}${yaDictaminado ? " disabled" : ""}>Producción no sumativa conforme: software + artículo WoS/Scopus + manual técnico para ${totalHorasEquipo()} h.</label>${field("Justificación de criterios obligatorios", dictamen?.justificacion || "La propuesta identifica responsables, plazos, beca, riesgos y declaración ética; consta dictamen de Vinculación.", "textarea", "Justifica los criterios obligatorios con referencia a la evidencia.", true, "comite:justificacion")}<div id="score-result" class="notice ${sc.recommended ? "" : "warning"}"><div><strong>${sc.sum.toFixed(1)} / 100 · ${sc.recommended ? "Recomendada" : "No recomendada"}</strong><p>${sc.blocked ? "Hay un criterio obligatorio con nivel insuficiente." : "La recomendación depende de la nota y de los requisitos obligatorios."}</p></div></div>`;
+      )}</div><label class="checkline"><input type="checkbox" id="products-ok" ${!state.notRecommended ? "checked" : ""}${yaDictaminado ? " disabled" : ""}>Producción no sumativa conforme: software + artículo WoS/Scopus + manual técnico para ${totalHorasEquipo()} h.</label>${field("Justificación de criterios obligatorios", "", "textarea", "Justifica los criterios obligatorios con referencia a la evidencia.", true, "comite:justificacion", "La propuesta identifica responsables, plazos, beca, riesgos y declaración ética; consta dictamen de Vinculación.")}<div id="score-result" class="notice ${sc.recommended ? "" : "warning"}"><div><strong>${sc.sum.toFixed(1)} / 100 · ${sc.recommended ? "Recomendada" : "No recomendada"}</strong><p>${sc.blocked ? "Hay un criterio obligatorio con nivel insuficiente." : "La recomendación depende de la nota y de los requisitos obligatorios."}</p></div></div>`;
   }
   if (id === "25") {
     // [Línea clave]: El aval del Consejo de Escuela se construye con los datos reales de
@@ -5445,7 +5485,7 @@ function evaluation(id) {
     const beca = yaDictaminadoDir ? (detalleDir.dictamen_direccion.verificacion_beca !== false) : (state.saved["direccion:beca"] !== false);
     const decl = yaDictaminadoDir ? (detalleDir.dictamen_direccion.verificacion_declaraciones !== false) : (state.saved["direccion:decl"] !== false);
     const docs = yaDictaminadoDir ? (detalleDir.dictamen_direccion.verificacion_documentos !== false) : (state.saved["direccion:docs"] !== false);
-    inner = `${aviso}<div class="mt"><strong>Verificación por criterios VIE</strong>${checklist}</div><div class="mt"><strong>Verificación institucional</strong><label class="checkline"><input type="checkbox" data-direccion-check="resp" ${resp ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Personal investigador al día con informes y compromisos</label><label class="checkline"><input type="checkbox" data-direccion-check="riesgos" ${riesgos ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Riesgos identificados y medidas de mitigación coherentes</label><label class="checkline"><input type="checkbox" data-direccion-check="beca" ${beca ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Beca obligatoria para estudiante asistente especial (cuando aplica)</label><label class="checkline"><input type="checkbox" data-direccion-check="decl" ${decl ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Declaraciones éticas completas y justificadas</label><label class="checkline"><input type="checkbox" data-direccion-check="docs" ${docs ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Avales, evaluación y documentos completos</label></div>${field("Dictamen", yaDictaminadoDir ? [detalleDir.dictamen_direccion.dictamen] : ["Favorable", "Con observaciones", "No favorable"], yaDictaminadoDir ? "select" : "select", "", true, "direccion:dictamen")}${field("Fundamentación", yaDictaminadoDir ? detalleDir.dictamen_direccion.fundamentacion : "El expediente incorpora la evaluación del Comité, los avales del Consejo y la documentación requerida. Se verifica el cumplimiento de los criterios VIE.", "textarea", "", true, "direccion:fundamentacion")}${yaDictaminadoDir ? "" : (detalleDir.documentos?.length ? `<div class="mt">${detalleDir.documentos.map(docPropuesta).join("")}</div>` : notice("Documentos del expediente", "Los documentos de la propuesta están disponibles en el expediente."))}`;
+    inner = `${aviso}<div class="mt"><strong>Verificación por criterios VIE</strong>${checklist}</div><div class="mt"><strong>Verificación institucional</strong><label class="checkline"><input type="checkbox" data-direccion-check="resp" ${resp ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Personal investigador al día con informes y compromisos</label><label class="checkline"><input type="checkbox" data-direccion-check="riesgos" ${riesgos ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Riesgos identificados y medidas de mitigación coherentes</label><label class="checkline"><input type="checkbox" data-direccion-check="beca" ${beca ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Beca obligatoria para estudiante asistente especial (cuando aplica)</label><label class="checkline"><input type="checkbox" data-direccion-check="decl" ${decl ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Declaraciones éticas completas y justificadas</label><label class="checkline"><input type="checkbox" data-direccion-check="docs" ${docs ? "checked" : ""} ${yaDictaminadoDir ? "disabled" : ""}>Avales, evaluación y documentos completos</label></div>${field("Dictamen", yaDictaminadoDir ? [detalleDir.dictamen_direccion.dictamen] : ["Favorable", "Con observaciones", "No favorable"], yaDictaminadoDir ? "select" : "select", "", true, "direccion:dictamen", "", "Favorable")}${field("Fundamentación", "", "textarea", "Fundamenta el dictamen con referencia a los criterios VIE y evidencia del expediente.", true, "direccion:fundamentacion", "El expediente incorpora la evaluación del Comité, los avales del Consejo y la documentación requerida. Se verifica el cumplimiento de los criterios VIE.")}${yaDictaminadoDir ? "" : (detalleDir.documentos?.length ? `<div class="mt">${detalleDir.documentos.map(docPropuesta).join("")}</div>` : notice("Documentos del expediente", "Los documentos de la propuesta están disponibles en el expediente."))}`;
   }
   if (id === "27") {
     // [Línea clave]: La resolución del CIE se registra con los datos reales del expediente:
