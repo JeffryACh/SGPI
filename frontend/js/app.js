@@ -6978,7 +6978,7 @@ async function handleAction(action, el) {
         "Editar miembro del equipo",
         `${field("Rol", (catalogos?.rol_colaborador ?? []).map((r) => ({ value: r.nombre_rol, label: r.nombre_rol })), "select", "", false, "modal:edit-role", "", miembro.rol)}${field("Dedicación (h/sem)", miembro.horas || 0, "number", "Horas por semana.", true, "modal:edit-hours")}${field("Tipo de hora", ["VIE", "CONS", "REC", "DOC", "OTRO"], "select", "", false, "modal:edit-tipo", "", miembro.tipo)}`,
         act("Cancelar", "close", "secondary") +
-          confirmBtn("Guardar cambios", "team-edit-save", "", "", `data-index="${i}"`),
+          confirmBtn("Guardar cambios", "team-edit-save", `data-index="${i}"`),
         false,
         "team-edit",
       );
