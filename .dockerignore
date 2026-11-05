@@ -1,0 +1,6 @@
+app.py
+.env
+.env.*
+.git
+.gitignore
+.vercelignore

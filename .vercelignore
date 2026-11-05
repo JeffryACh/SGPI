@@ -1,0 +1,21 @@
+# Ignorar archivos del backend, scripts de prueba y prototipos auxiliares
+# para que Vercel solo despliegue el frontend estático SPA y no active
+# detectores de funciones serverless de Python (app.py).
+
+app.py
+.env
+.env.*
+
+# Backend y base de datos (se ejecutan en Render y Supabase)
+backend/
+Base de datos/
+
+# Documentación y archivos de desarrollo
+docs/
+MDS - cambios/
+figma-import/
+docker-compose.yml
+render.yaml
+test_endpoints.ps1
+graft/
+.vscode/
