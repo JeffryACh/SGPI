@@ -16,7 +16,7 @@
 ### Recorrido 1: Formulación, Validación Normativa y Envío con Asistencia IA
 1. Abre la aplicación (`http://localhost:8080`, `SGPI.html` o la URL de Vercel) e ingresa con las credenciales de demostración (`laura.mendez@example.com` / `demostracion`).
 2. Navega a **Convocatorias $\rightarrow$ Fondos VIE 2027 $\rightarrow$ Crear propuesta $\rightarrow$ Desarrollo tecnológico**.
-3. Recorre el asistente de 11 pasos: datos generales, equipo (con tipos de hora oficiales `VIE`, `CONS`, `REC`, etc.), fundamentación, objetivos, metodología, plan de acción mensualizado, riesgos vinculados, presupuesto anualizado, información complementaria y declaraciones éticas.
+3. Recorre el asistente de 11 pasos: datos generales (con límites de caracteres `maxlength` y protección contra inyección SQL), equipo (con buscador de investigadores institucionales, autocompletado de ORCID desde el perfil o solicitud validada bajo norma **ISO 7064 MOD 11-2** con unicidad por participante, y tipos de hora oficiales `VIE`, `CONS`, `REC`, etc.), fundamentación, objetivos, metodología, plan de acción mensualizado, riesgos vinculados, presupuesto anualizado, información complementaria y declaraciones éticas.
 4. En **Presupuesto (Paso 8)**, comprueba la regla de la **Sección 2.3.9**: el sistema valida que bienes duraderos y equipos solo se presupuesten en el Año 1.
 5. En **Revisión y Pre-envío (Paso 11 / Pantalla 18)**, haz clic en **«Confirmar y enviar propuesta»**:
    - El sistema invoca `POST /propuestas` para persistir la propuesta atómicamente en Supabase.

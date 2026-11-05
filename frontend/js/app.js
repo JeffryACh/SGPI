@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 /**
  * ============================================================================
  * 2.1. OBJETIVO DEL ARCHIVO:
@@ -78,6 +78,205 @@ const ROLE_KEYS = {
 };
 // La sesión solo recuerda quién ingresó (nunca la contraseña). Sin un token emitido por el backend es estado de interfaz, no seguridad real.
 let session = null;
+
+/**
+ * Diccionario institucional de identificadores ORCID verificados bajo ISO 7064 MOD 11-2 por correo o nombre.
+ * Vincula los perfiles de investigadores activos con su ORCID solicitado y validado.
+ * Se utiliza en obtenerOrcidDePerfil() para autocompletar el ORCID al seleccionar a un investigador.
+ * atributos:
+ *     * string : "laura.mendez@example.com" ORCID verificado de Laura Méndez Quesada.
+ *     * string : "andres.rojas@example.com" ORCID verificado de Andrés Rojas Calderón.
+ *     * string : "sofia.vega@example.com" ORCID verificado de Sofía Vega Araya.
+ */
+const ORCID_PERFILES_INSTITUCIONALES = {
+  "laura.mendez@example.com": "0000-0002-1825-0097",
+  "andres.rojas@example.com": "0000-0001-5109-3700",
+  "sofia.vega@example.com": "0000-0002-9079-593X",
+  "mariana.solis@example.com": "0000-0003-1415-9269",
+  "gabriel.sanchez@example.com": "0000-0002-7182-8182",
+  "patricia.vargas@example.com": "0000-0001-6180-3398",
+  "elena.chacon@example.com": "0000-0002-2360-679X",
+  "ricardo.mora@example.com": "0000-0003-3162-2779",
+};
+
+/**
+ * Formatear mientras el usuario escribe un identificador ORCID al patrón oficial 0000-0000-0000-000X.
+ * Filtra caracteres no permitidos (conservando solo dígitos 0-9 y la letra verificadora X en mayúscula),
+ * limita la longitud a 16 caracteres útiles y agrupa en bloques de 4 separados por guiones.
+ * parametros:
+ *     - string : valor Texto digitado por la persona usuaria en un campo de ORCID.
+ * return:
+ *     + string : orcidFormateado Cadena con guiones intercalados hasta 19 caracteres.
+ */
+function formatearOrcidInput(valor) {
+  // [Línea clave]: ¿Por qué soy importante? Normaliza la entrada del usuario en tiempo real. ¿Para qué? Facilitar la captura del ORCID solicitado sin errores de guiones. ¿Dónde me usan? En los listeners de input de los modales de equipo, colaborador externo y perfil.
+  const limpio = String(valor || "")
+    .toUpperCase()
+    .replace(/[^0-9X]/g, "")
+    .slice(0, 16);
+  const partes = [];
+  for (let i = 0; i < limpio.length; i += 4) {
+    partes.push(limpio.slice(i, i + 4));
+  }
+  return partes.join("-");
+}
+
+/**
+ * Validar un identificador ORCID comprobando su estructura sintáctica y su dígito verificador ISO 7064 MOD 11-2.
+ * Verifica el patrón '0000-0000-0000-000X' y ejecuta el algoritmo matemático oficial ISO/IEC 7064:2003 (MOD 11-2)
+ * sobre los primeros 15 dígitos para garantizar que el ORCID solicitado sea auténtico y no inventado.
+ * parametros:
+ *     - string : valor Cadena con el identificador ORCID a verificar.
+ * return:
+ *     + boolean : esValido Verdadero si cumple formato y dígito verificador ISO 7064; falso en caso contrario.
+ */
+function esOrcidValido(valor) {
+  const limpio = String(valor || "").trim().toUpperCase();
+  // [Línea clave]: ¿Por qué soy importante? Valida el formato estructural de 4 bloques de 4 caracteres. ¿Para qué? Rechazar cadenas mal formadas antes del cálculo modular. ¿Dónde me usan? En team-save, external-add-save y guardado de perfil.
+  if (!/^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/.test(limpio)) return false;
+  const compacto = limpio.replace(/-/g, "");
+  if (compacto.slice(0, 15) === "000000000000000") return false;
+  let total = 0;
+  for (let i = 0; i < 15; i++) {
+    total = (total + Number(compacto[i])) * 2;
+  }
+  const resto = total % 11;
+  const resultado = (12 - resto) % 11;
+  const digitoEsperado = resultado === 10 ? "X" : String(resultado);
+  return compacto[15] === digitoEsperado;
+}
+
+/**
+ * Consultar el ORCID validado que se encuentra asociado al perfil de un investigador o colaborador por correo o nombre.
+ * Busca en el registro persistido en estado ('state.orcidRegistry'), en el catálogo institucional y en los miembros actuales,
+ * devolviendo cadena vacía cuando la persona aún no tiene un ORCID registrado para que le sea solicitado.
+ * parametros:
+ *     - string : correo Correo electrónico institucional del investigador (opcional).
+ *     - string : nombre Nombre completo del investigador o colaborador externo (opcional).
+ * return:
+ *     + string : orcid Identificador ORCID validado vinculado al perfil o cadena vacía si debe solicitarse.
+ */
+function obtenerOrcidDePerfil(correo = "", nombre = "") {
+  // [Línea clave]: ¿Por qué soy importante? Recupera el ORCID vinculado al perfil del investigador. ¿Para qué? Autocompletar el ORCID al seleccionar su nombre sin generarlo sintéticamente. ¿Dónde me usan? En el buscador de equipo, colaboradores externos y perfil.
+  const reg = state?.orcidRegistry || {};
+  const c = String(correo || "").trim().toLowerCase();
+  const n = String(nombre || "").trim().toLowerCase();
+  if (c && reg[`correo:${c}`] && esOrcidValido(reg[`correo:${c}`])) {
+    return reg[`correo:${c}`];
+  }
+  if (n && reg[`nombre:${n}`] && esOrcidValido(reg[`nombre:${n}`])) {
+    return reg[`nombre:${n}`];
+  }
+  if (c && ORCID_PERFILES_INSTITUCIONALES[c]) {
+    return ORCID_PERFILES_INSTITUCIONALES[c];
+  }
+  for (const m of state?.teamMembers || []) {
+    if ((c && String(m.correo || "").trim().toLowerCase() === c) || (n && String(m.nombre || "").trim().toLowerCase() === n)) {
+      if (esOrcidValido(m.orcid)) return String(m.orcid).trim().toUpperCase();
+    }
+  }
+  for (const ext of state?.externalCollaborators || []) {
+    if (n && String(ext.nombre || "").trim().toLowerCase() === n) {
+      if (esOrcidValido(ext.orcid)) return String(ext.orcid).trim().toUpperCase();
+    }
+  }
+  return "";
+}
+
+/**
+ * Vincular y persistir un ORCID previamente validado al perfil de un investigador o colaborador en el estado de la aplicación.
+ * Almacena la relación biunívoca por correo y por nombre en 'state.orcidRegistry' para que se autocomplete en futuras selecciones.
+ * parametros:
+ *     - string : correo Correo electrónico de la persona investigadora.
+ *     - string : nombre Nombre completo de la persona investigadora o colaboradora.
+ *     - string : orcid Identificador ORCID validado bajo ISO 7064 MOD 11-2.
+ * return:
+ *     + void : undefined Actualiza el registro de perfiles en memoria.
+ */
+function registrarOrcidEnPerfil(correo = "", nombre = "", orcid = "") {
+  const orc = String(orcid || "").trim().toUpperCase();
+  if (!esOrcidValido(orc)) return;
+  state.orcidRegistry = state.orcidRegistry || {};
+  const c = String(correo || "").trim().toLowerCase();
+  const n = String(nombre || "").trim().toLowerCase();
+  if (c) state.orcidRegistry[`correo:${c}`] = orc;
+  if (n) state.orcidRegistry[`nombre:${n}`] = orc;
+}
+
+/**
+ * Obtener el conjunto de identificadores ORCID ya asignados a otros participantes en la propuesta y registro activo.
+ * Recorre los miembros del equipo investigador, colaboradores externos y perfiles registrados, excluyendo a la persona indicada.
+ * parametros:
+ *     - string : excluirCorreo Correo de la persona actual a excluir de la colisión.
+ *     - string : excluirNombre Nombre de la persona actual a excluir de la colisión.
+ * return:
+ *     + Set<string> : ocupados Conjunto de cadenas ORCID en uso por otros investigadores.
+ */
+function obtenerOrcidsOcupados(excluirCorreo = "", excluirNombre = "") {
+  // [Línea clave]: ¿Por qué soy importante? Garantiza la unicidad estricta de cada ORCID en el sistema. ¿Para qué? Impedir que dos investigadores o colaboradores compartan el mismo ORCID. ¿Dónde me usan? En team-save, external-add-save y actualización de perfil.
+  const ocupados = new Set();
+  const correoEx = String(excluirCorreo || "").trim().toLowerCase();
+  const nombreEx = String(excluirNombre || "").trim().toLowerCase();
+  for (const [correoCat, orcidCat] of Object.entries(ORCID_PERFILES_INSTITUCIONALES)) {
+    if (correoEx && correoCat === correoEx) continue;
+    ocupados.add(orcidCat.toUpperCase());
+  }
+  for (const m of state?.teamMembers || []) {
+    const c = String(m.correo || "").trim().toLowerCase();
+    const n = String(m.nombre || "").trim().toLowerCase();
+    if ((correoEx && c === correoEx) || (nombreEx && n === nombreEx)) continue;
+    const orc = String(m.orcid || obtenerOrcidDePerfil(m.correo, m.nombre)).trim().toUpperCase();
+    if (orc) ocupados.add(orc);
+  }
+  for (const ext of state?.externalCollaborators || []) {
+    const n = String(ext.nombre || "").trim().toLowerCase();
+    if (nombreEx && n === nombreEx) continue;
+    const orc = String(ext.orcid || "").trim().toUpperCase();
+    if (orc) ocupados.add(orc);
+  }
+  return ocupados;
+}
+
+/**
+ * Obtener el identificador ORCID validado asociado al perfil del usuario activo en sesión.
+ * Consulta el objeto 'session.user.orcid' y el registro de perfiles institucionales por correo o nombre.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + string : orcidActivo Identificador ORCID validado del usuario en sesión o cadena vacía si no se ha registrado.
+ */
+function orcidUsuarioActivo() {
+  if (!session?.user) return ORCID_PERFILES_INSTITUCIONALES["laura.mendez@example.com"];
+  if (esOrcidValido(session.user.orcid)) return session.user.orcid.trim().toUpperCase();
+  const desdePerfil = obtenerOrcidDePerfil(session.user.correo, session.user.nombre);
+  if (desdePerfil) {
+    session.user.orcid = desdePerfil;
+    return desdePerfil;
+  }
+  return "";
+}
+
+/**
+ * Expresión regular cliente para interceptar patrones de inyección SQL en controles de entrada.
+ * Detecta sentencias UNION SELECT, DROP/ALTER/TRUNCATE, comentarios SQL y tautologías booleanas.
+ * Se utiliza dentro de contieneInyeccionSQL() para validación inmediata en formularios y buscadores.
+ */
+const _SQLI_CLIENT_REGEX = /(\b(UNION\s+ALL\s+SELECT|UNION\s+SELECT|DROP\s+TABLE|DROP\s+DATABASE|INSERT\s+INTO|DELETE\s+FROM|UPDATE\s+\w+\s+SET|ALTER\s+TABLE|TRUNCATE\s+TABLE|EXEC\s*\(|EXECUTE\s*\(|PG_SLEEP|WAITFOR\s+DELAY|INFORMATION_SCHEMA)\b|--\s|;\s*(DROP|DELETE|UPDATE|INSERT|ALTER|SELECT)|'\s*(OR|AND)\s*'?\d+'?\s*=\s*'?\d+)/i;
+
+/**
+ * Verificar si un valor de texto escrito en el navegador contiene patrones sospechosos de inyección SQL.
+ * Evalúa la cadena contra '_SQLI_CLIENT_REGEX' para bloquear el envío antes de que salga la petición HTTP.
+ * parametros:
+ *     - any : valor Cadena o valor del campo de formulario a inspeccionar.
+ * return:
+ *     + boolean : tieneInyeccion Verdadero si se detecta un patrón prohibido; falso si el texto es seguro.
+ */
+function contieneInyeccionSQL(valor) {
+  if (typeof valor !== "string" || !valor) return false;
+  // [Línea clave]: ¿Por qué soy importante? Filtro preventivo de seguridad en el cliente. ¿Para qué? Rechazar payloads de inyección SQL en tiempo real en cualquier input o textarea. ¿Dónde me usan? En validate(), listener global 'input' y guardado de modales.
+  return _SQLI_CLIENT_REGEX.test(valor);
+}
+
 try {
   const s = JSON.parse(localStorage.getItem(SESSION_KEY));
   if (
@@ -86,8 +285,12 @@ try {
     Array.isArray(s.user.roles) &&
     s.user.roles.length &&
     ROLE_KEYS[s.user.roles[0]]
-  )
+  ) {
+    if (!esOrcidValido(s.user.orcid)) {
+      s.user.orcid = ORCID_PERFILES_INSTITUCIONALES[String(s.user.correo || "").trim().toLowerCase()] || "";
+    }
     session = s;
+  }
 } catch {}
 /**
  * Persistir o revocar el objeto de sesión de usuario en memoria y en localStorage.
@@ -99,6 +302,12 @@ try {
  *     + void : undefined No retorna valor.
  */
 const setSession = (s) => {
+  if (s?.user && !esOrcidValido(s.user.orcid)) {
+    s.user.orcid = obtenerOrcidDePerfil(s.user.correo, s.user.nombre);
+  }
+  if (s?.user?.orcid && esOrcidValido(s.user.orcid)) {
+    registrarOrcidEnPerfil(s.user.correo, s.user.nombre, s.user.orcid);
+  }
   session = s;
   if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s));
   else {
@@ -2095,6 +2304,35 @@ async function refrescarCatalogosFront() {
 }
 
 /**
+ * Determinar el límite máximo de caracteres permitido (maxlength) para un campo de formulario según su semántica.
+ * Evalúa la etiqueta, la clave de almacenamiento y el tipo de control para asignar topes coherentes con los modelos Pydantic del backend.
+ * parametros:
+ *     - string : label Etiqueta visible del campo en la interfaz.
+ *     - string : key Clave interna de almacenamiento o nombre del campo.
+ *     - string : kind Tipo de control ('text', 'textarea', 'email', 'password', 'search', etc.).
+ * return:
+ *     + number|null : limite Cantidad máxima de caracteres permitidos o null si el control no es textual.
+ */
+function obtenerLimiteCaracteres(label = "", key = "", kind = "text") {
+  if (kind === "select" || kind === "checkbox" || kind === "file" || kind === "date" || kind === "number") return null;
+  // [Línea clave]: ¿Por qué soy importante? Asigna el tope de caracteres por tipo semántico de campo. ¿Para qué? Impedir desbordamientos de texto en el navegador y alinear el cliente con los límites de Pydantic. ¿Dónde me usan? En field() y adminField().
+  const ref = `${label} ${key}`.toLowerCase();
+  if (ref.includes("orcid")) return 19;
+  if (ref.includes("siglas") || ref.includes("version") || ref.includes("versión")) return 20;
+  if (ref.includes("oficio") || ref.includes("sesion") || ref.includes("sesión") || ref.includes("articulo") || ref.includes("artículo") || ref.includes("codigo") || ref.includes("código")) return 50;
+  if (ref.includes("correo") || ref.includes("email") || kind === "email") return 255;
+  if (ref.includes("password") || ref.includes("contraseña") || kind === "password") return 128;
+  if (ref.includes("buscar") || ref.includes("query") || kind === "search") return 150;
+  if (ref.includes("nombre") || ref.includes("persona") || ref.includes("responsable")) return 150;
+  if (ref.includes("institucion") || ref.includes("institución") || ref.includes("entidad")) return 200;
+  if (ref.includes("titulo") || ref.includes("título") || ref.includes("palabras clave") || ref.includes("actividad") || ref.includes("resultado")) return 300;
+  if (ref.includes("objetivo") || ref.includes("riesgo") || ref.includes("mitigacion") || ref.includes("mitigación") || ref.includes("justificacion") || ref.includes("justificación") || ref.includes("responsabilidad")) return 1000;
+  if (ref.includes("resumen")) return 3000;
+  if (kind === "textarea") return 4000;
+  return 250;
+}
+
+/**
  * Construir un campo de formulario administrativo sin persistencia en el navegador.
  * A diferencia de field(), estos controles no se guardan en state.saved porque
  * administran datos maestros del servidor y no borradores de propuestas.
@@ -2109,7 +2347,17 @@ async function refrescarCatalogosFront() {
  */
 function adminField(label, value = "", kind = "text", name = "", required = false) {
   const id = `adm-${name}`;
-  const attr = `id="${id}" data-admin-field="${esc(name)}"${required ? " required" : ""}`;
+  const maxLen = obtenerLimiteCaracteres(label, name, kind);
+  const maxAttr = maxLen ? ` maxlength="${maxLen}"` : "";
+  const numBounds =
+    kind === "number"
+      ? name.includes("peso")
+        ? ' min="0" max="100"'
+        : name.includes("monto")
+          ? ' min="0" max="50000000"'
+          : ' min="1" max="999"'
+      : "";
+  const attr = `id="${id}" data-admin-field="${esc(name)}"${required ? " required" : ""}${maxAttr}${numBounds}`;
   let control;
   if (kind === "textarea")
     control = `<textarea ${attr} rows="3">${esc(value)}</textarea>`;
@@ -2123,7 +2371,8 @@ function adminField(label, value = "", kind = "text", name = "", required = fals
       )
       .join("")}</select>`;
   else control = `<input ${attr} type="${["number", "date"].includes(kind) ? kind : "text"}" value="${esc(value)}">`;
-  return `<div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>`;
+  const counterHtml = maxLen ? `<small class="char-counter micro muted" style="display:block;text-align:right;margin-top:2px">${String(value ?? "").length}/${maxLen} caracteres</small>` : "";
+  return `<div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}${counterHtml}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>`;
 }
 
 /**
@@ -2169,9 +2418,19 @@ function modalConvocatoria(convocatoria = null) {
  */
 function modalEtapa(etapa = null) {
   const e = etapa || {};
+  const respActual = e.responsable || "Investigador proponente";
+  const responsablesOpts = [
+    "Investigador proponente",
+    "Centro de Vinculación",
+    "Comité Técnico",
+    "Consejo de Escuela",
+    "Dirección de Investigación",
+    "CIE",
+    "Funcionario VIE",
+  ].map((r) => ({ value: r, label: r, selected: r === respActual }));
   modal(
     etapa ? "Editar etapa" : "Agregar etapa",
-    `<div class="stack">${adminField("Nombre de la etapa", e.nombre_etapa || "", "text", "nombre_etapa", true)}${adminField("Responsable", e.responsable || "", "text", "responsable", true)}<div class="field-row">${adminField("Fecha de inicio", e.fecha_inicio || "", "date", "fecha_inicio", true)}${adminField("Fecha de fin", e.fecha_fin || "", "date", "fecha_fin", true)}</div>${adminField("Orden en el cronograma", e.orden || adminEtapas.length + 1, "number", "orden", true)}</div>`,
+    `<div class="stack">${adminField("Nombre de la etapa", e.nombre_etapa || "", "text", "nombre_etapa", true)}${adminField("Responsable", responsablesOpts, "select", "responsable", true)}<div class="field-row">${adminField("Fecha de inicio", e.fecha_inicio || "", "date", "fecha_inicio", true)}${adminField("Fecha de fin", e.fecha_fin || "", "date", "fecha_fin", true)}</div>${adminField("Orden en el cronograma", e.orden || adminEtapas.length + 1, "number", "orden", true)}</div>`,
     `${act("Cancelar", "close", "text")}${act(etapa ? "Guardar cambios" : "Agregar etapa", "admin-stage-save", "secondary", "check", etapa ? `data-id="${etapa.id_etapa}"` : "")}`,
     false,
     "admin-etapa",
@@ -2203,9 +2462,17 @@ function modalDocumento() {
  *     + void : undefined Abre el modal con el formulario.
  */
 function modalDocumentoEdicion(documento) {
+  const tipoActual = (documento.tipo_instrumento || "disposiciones").toLowerCase();
+  const tiposOpts = [
+    { value: "disposiciones", label: "Disposiciones" },
+    { value: "rubrica", label: "Rúbrica" },
+    { value: "formulario", label: "Formulario" },
+    { value: "plantilla", label: "Plantilla" },
+    { value: "otro", label: "Otro" },
+  ].map((t) => ({ ...t, selected: t.value === tipoActual }));
   modal(
     "Editar instrumento",
-    `<div class="stack">${adminField("Título del instrumento", documento.nombre_documento || "", "text", "nombre_documento", true)}${adminField("Tipo de instrumento", documento.tipo_instrumento || "", "text", "tipo_instrumento")}<div class="field-row">${adminField("Orden", documento.orden || 1, "number", "orden")}${adminField("Versión", documento.version || "1.0", "text", "version")}</div>${adminField("Publicado", documento.activo !== false, "checkbox", "activo")}</div>`,
+    `<div class="stack">${adminField("Título del instrumento", documento.nombre_documento || "", "text", "nombre_documento", true)}${adminField("Tipo de instrumento", tiposOpts, "select", "tipo_instrumento")}<div class="field-row">${adminField("Orden", documento.orden || 1, "number", "orden")}${adminField("Versión", documento.version || "1.0", "text", "version")}</div>${adminField("Publicado", documento.activo !== false, "checkbox", "activo")}</div>`,
     `${act("Cancelar", "close", "text")}${act("Guardar cambios", "admin-doc-save-edit", "secondary", "check", `data-id="${documento.id_documento_conv}"`)}`,
     false,
     "admin-documento-edicion",
@@ -2979,6 +3246,7 @@ function field(
   required = false,
   key = "",
   placeholder = "",
+  defaultValue = undefined,
 ) {
   // [Línea clave]: ¿Por qué soy importante? Genera una clave persistente única para el campo. ¿Para qué? Recuperar y almacenar borradores parciales en state.saved. ¿Dónde me usan? En el binding de valores de todos los formularios.
   const k = key || `${current}:${label}`,
@@ -2990,23 +3258,43 @@ function field(
               : { value: String(v), label: String(v) },
           )
         : [],
-    val = state.saved[k] ?? (kind === "select" ? opts[0]?.value ?? "" : value),
+    val =
+      state.saved[k] ??
+      (defaultValue !== undefined
+        ? defaultValue
+        : kind === "select"
+          ? opts[0]?.value ?? ""
+          : value),
     id = "f-" + k.replace(/[^\w]/g, "-"),
     req = required ? "required" : "",
     placeholderAttr = placeholder ? ` placeholder="${esc(placeholder)}"` : "",
-    attr = `id="${id}" data-field="${esc(k)}" ${req}${placeholderAttr}`;
+    maxLen = obtenerLimiteCaracteres(label, k, kind),
+    maxAttr = maxLen ? ` maxlength="${maxLen}"` : "",
+    numBounds =
+      kind === "number"
+        ? /hours|horas|dedicaci/i.test(`${label} ${k}`)
+          ? ' min="1" max="40"'
+          : /budget|monto/i.test(`${label} ${k}`)
+            ? ' min="0" max="50000000"'
+            : ' min="0" max="9999"'
+        : "",
+    attr = `id="${id}" data-field="${esc(k)}" ${req}${placeholderAttr}${maxAttr}${numBounds}`;
   let control;
   if (kind === "textarea")
     control = `<textarea ${attr} rows="3">${esc(val)}</textarea>`;
   else if (kind === "select") {
-    control = `<select ${attr}>${opts.map((o) => `<option value="${esc(o.value)}" ${o.value === String(val) ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
+    control = `<select ${attr}>${opts.map((o) => `<option value="${esc(o.value)}" ${o.value === String(val) || o.label === String(val) ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
   } else if (kind === "checkbox")
     return `<label class="checkline"><input type="checkbox" ${attr} ${val === true ? "checked" : ""}>${esc(label)}</label>`;
   else if (kind === "file")
     control = `<div class="doc-row"><span class="doc-icon">PDF</span><div class="grow"><strong>${esc(val)}</strong></div>${act("Adjuntar", "upload", "secondary compact", "upload")}</div>`;
   else
     control = `<input ${attr} type="${["email", "number", "password", "date", "search"].includes(kind) ? kind : "text"}" value="${esc(val)}" ${kind === "readonly" ? "readonly" : ""}>`;
-  return `<div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}${help ? `<span class="help">${esc(help)}</span>` : ""}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>`;
+  const counterHtml =
+    maxLen && kind !== "readonly"
+      ? `<small class="char-counter micro muted" style="display:block;text-align:right;margin-top:2px">${String(val ?? "").length}/${maxLen} caracteres</small>`
+      : "";
+  return `<div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}${counterHtml}${help ? `<span class="help">${esc(help)}</span>` : ""}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>`;
 }
 
 /**
@@ -3837,23 +4125,36 @@ function rubroParaPartida(partida) {
   return rubros.find((r) => normalizarTexto(r.nombre_rubro) === normalizarTexto(partida.name)) ?? null;
 }
 
+/**
+ * Obtener la lista de miembros del equipo investigador de la propuesta actual con su ORCID validado de perfil.
+ * Si el estado aún no tiene miembros registrados, inicializa el arreglo con la persona investigadora autenticada como coordinadora.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Array<Object> : equipo Lista de integrantes con id_usuario, nombre, correo, orcid, tipo, horas y rol.
+ */
 function proposalTeamMembers() {
-  // Devuelve el equipo actual del estado (teamMembers) o el usuario logueado como fallback
+  // [Línea clave]: ¿Por qué soy importante? Resuelve los integrantes del equipo y sincroniza su ORCID de perfil. ¿Para qué? Mantener consistente la tabla de la Pantalla 09 y el payload de creación. ¿Dónde me usan? En teamForm(), buildProposalPayload() y selectores de responsables.
   if (state.teamMembers && state.teamMembers.length > 0) {
-    return state.teamMembers;
+    return state.teamMembers.map((m) => ({
+      ...m,
+      orcid: m.orcid || obtenerOrcidDePerfil(m.correo, m.nombre),
+    }));
   }
   const correo = String(session?.user?.correo ?? "").trim().toLowerCase();
   if (!correo) return [];
-  return [
-    {
-      nombre: session.user.nombre,
-      correo,
-      tipo: "VIE",
-      horas: 8,
-      rol: "Coordinador/a",
-      escuela: escuelas?.[0]?.nombre || "Instancia coordinadora",
-    },
-  ];
+  const miembroInicial = {
+    id_usuario: session.user.id_usuario,
+    nombre: session.user.nombre,
+    correo,
+    orcid: orcidUsuarioActivo(),
+    tipo: "VIE",
+    horas: 8,
+    rol: "Coordinador/a",
+    escuela: escuelas?.[0]?.nombre || "Instancia coordinadora",
+  };
+  state.teamMembers = [miembroInicial];
+  return state.teamMembers;
 }
 
 function totalHorasEquipo() {
@@ -4032,8 +4333,9 @@ function buildProposalPayload() {
     };
   });
 
-  const equipo = (state.teamMembers || []).map((m) => ({
+  const equipo = proposalTeamMembers().map((m) => ({
       correo: m.correo,
+      orcid: m.orcid || obtenerOrcidDePerfil(m.correo, m.nombre),
       id_tipo_hora: tipoHoraId(m.tipo, m.tipo === "VIE" ? 1 : 4),
       horas_asignadas: m.horas,
     }));
@@ -4042,7 +4344,7 @@ function buildProposalPayload() {
     nombre_completo: c.nombre,
     institucion: c.institucion,
     rol: c.rol,
-    orcid: c.orcid,
+    orcid: c.orcid || obtenerOrcidDePerfil("", c.nombre),
     horas_asignadas: Number(c.horas) || null,
     responsabilidad: c.responsabilidad,
   }));
@@ -4073,8 +4375,9 @@ function buildProposalPayload() {
     activo_previsto: draftValue("16:Activo previsto", ""),
     equipo: equipo.map((m) => ({
       correo: m.correo,
-      id_tipo_hora: tipoHoraId(m.tipo, m.tipo === "VIE" ? 1 : 4),
-      horas_asignadas: m.horas,
+      orcid: m.orcid,
+      id_tipo_hora: m.id_tipo_hora,
+      horas_asignadas: m.horas_asignadas,
     })),
     colaboradores_externos: colaboradores,
     objetivos,
@@ -4239,12 +4542,22 @@ function dataForm() {
       
       ${field(
         "Prioridad nacional y ODS",
-        "",
-        "text",
+        [
+          "ODS 6 · Agua limpia y saneamiento",
+          "ODS 7 · Energía asequible y no contaminante",
+          "ODS 9 · Industria, innovación e infraestructura",
+          "ODS 11 · Ciudades y comunidades sostenibles",
+          "ODS 12 · Producción y consumo responsables",
+          "ODS 13 · Acción por el clima",
+          "ODS 15 · Vida de ecosistemas terrestres",
+          "Salud pública y biotecnología (PNDIP)",
+          "Transformación digital e inteligencia artificial",
+        ],
+        "select",
         "Vincula la propuesta con prioridades país u Objetivos de Desarrollo Sostenible.",
         false,
         "",
-        "Gestión del recurso hídrico · ODS 6"
+        "ODS 6 · Agua limpia y saneamiento"
       )}
       
       ${field(
@@ -4259,22 +4572,35 @@ function dataForm() {
       
       ${field(
         "Instrumento jurídico / convenio",
-        "",
-        "text",
+        [
+          "No aplica",
+          "Carta de intención institucional",
+          "Convenio marco vigente",
+          "Convenio específico de cooperación",
+          "Acuerdo de confidencialidad (NDA)",
+          "Contrato de transferencia o cotitularidad",
+        ],
+        "select",
         "Convenio, carta de intención o instrumento que respalde la colaboración.",
         false,
         "",
-        "No aplica."
+        "No aplica"
       )}
       
       ${field(
         "Vinculación con posgrado",
-        "",
-        "text",
+        [
+          "No aplica",
+          "Tesis de maestría académica / profesional",
+          "Tesis de doctorado",
+          "Participación de estudiantes de posgrado",
+          "Co-dirección de proyecto de graduación",
+        ],
+        "select",
         "Relación con programas de posgrado (tesis, estudiantes, co-dirección).",
         false,
         "",
-        "No aplica."
+        "No aplica"
       )}
       
       ${field(
@@ -4300,39 +4626,20 @@ function dataForm() {
  *     + string : teamFormHtml Marcado HTML de la gestión de equipo.
  */
 function teamForm() {
-  const equipo = state.teamMembers || [];
+  const equipo = proposalTeamMembers();
   const colaboradores = state.externalCollaborators || [];
   const totalHoras = equipo.reduce((sum, m) => sum + Number(m.horas || 0), 0);
-  const avisoEquipo = "Dedicación total: " + totalHoras + " horas semanales";
 
-  const equiposOpts = (catalogos?.rol_colaborador ?? []).map((r) => ({
-    value: r.nombre_rol,
-    label: r.nombre_rol,
-  }));
-
-  const renderEquipo = () => equipo.map((m, i) => [
-    `<strong>${esc(m.nombre)}</strong><br><span class="micro muted">${esc(m.escuela || m.siglas_escuela || "Institución")}</span>`,
-    esc(m.rol),
-    `${esc(m.horas || 0)} h ${esc(m.tipo || "VIE")}`,
-    `<span class="micro muted">${esc(m.correo)}</span>`,
-    act("Quitar", "team-remove", "text compact danger", "trash", 'data-index="' + i + '"'),
-  ]).join("");
-
-  const renderColaboradores = () => (state.externalCollaborators || []).map((c, i) => [
-    `<strong>${esc(c.nombre)}</strong><br><span class="micro muted">${esc(c.institucion)}</span>`,
-    esc(c.rol),
-    `${esc(c.horas || 0)} h`,
-    act("Quitar", "external-remove", "text compact danger", "trash", 'data-index="' + i + '"'),
-  ]).join("");
-
-  return `${notice("Dedicación total: " + totalHoras + " horas semanales", "El equipo se registra mediante correos de usuarios institucionales activos; el backend valida cada cuenta.")}
+  return `${notice("Dedicación total: " + totalHoras + " horas semanales", "Cada investigador tiene un ORCID único vinculado a su perfil institucional.")}
 <div class="mt">
   <div class="mt">${table(
-    ["Persona / instancia", "Rol", "Horas", "Correo", ""],
-    (state.teamMembers || []).map((m, i) => {
+    ["Persona / instancia", "ORCID", "Rol", "Horas", "Correo", ""],
+    equipo.map((m, i) => {
       const esCreador = session && m.correo === session.user.correo;
+      const orcidMiembro = m.orcid || obtenerOrcidDePerfil(m.correo, m.nombre) || "Pendiente de solicitar";
       return [
         `<strong>${esc(m.nombre)}</strong>${esCreador ? ' <span class="badge" style="background:var(--blue);color:white;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:8px;">Creador</span>' : ''}<br><span class="micro muted">${esc(m.escuela || m.siglas_escuela || "Institución")}</span>`,
+        `<code class="micro">${esc(orcidMiembro)}</code>`,
         esc(m.rol),
         `${esc(m.horas || 0)} h ${esc(m.tipo || "VIE")}`,
         `<span class="micro muted">${esc(m.correo)}</span>`,
@@ -4346,11 +4653,12 @@ function teamForm() {
 
   <details class="accordion" open>
     <summary>Colaboradores externos</summary>
-    <p class="small muted" style="margin-bottom:12px">Personas externas sin cuenta institucional que colaboran en el proyecto.</p>
+    <p class="small muted" style="margin-bottom:12px">Personas externas sin cuenta institucional que colaboran en el proyecto (se solicita y valida el ORCID único de cada persona).</p>
     <div class="mt">${table(
-      ["Colaborador / institución", "Rol", "Horas", ""],
-      (state.externalCollaborators || []).map((c, i) => [
+      ["Colaborador / institución", "ORCID", "Rol", "Horas", ""],
+      colaboradores.map((c, i) => [
         `<strong>${esc(c.nombre)}</strong><br><span class="micro muted">${esc(c.institucion)}</span>`,
+        `<code class="micro">${esc(c.orcid || obtenerOrcidDePerfil("", c.nombre) || "Pendiente")}</code>`,
         esc(c.rol),
         `${esc(c.horas || 0)} h`,
         act("Quitar", "external-remove", "text compact danger", "trash", 'data-index="' + i + '"'),
@@ -4550,7 +4858,10 @@ function complementaryForm() {
       "Los sitios piloto no se ubican en territorios indígenas; cualquier cambio requerirá consulta y autorización previa.",
     ],
   ];
-  const trlOpts = (catalogos?.nivel_trl ?? []).map((t) => ({
+  const trlBase = catalogos?.nivel_trl?.length
+    ? catalogos.nivel_trl
+    : [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ nivel: n, nombre: `TRL ${n}` }));
+  const trlOpts = trlBase.map((t) => ({
     value: String(t.nivel),
     label: t.nombre,
   }));
@@ -5296,7 +5607,15 @@ function evaluation(id) {
     if (ev.potencial_pi_identificado === false) piOpts.reverse();
     const documentoVinculacion = documentosVinculacion[0];
     const yaDictaminado = !!ev.id_evaluacion;
-    inner = `${notice(yaDictaminado ? "Dictamen ya registrado" : "Dictamen requerido", yaDictaminado ? `Oficio ${ev.numero_oficio_dictamen || "sin número"}. La propuesta ya fue remitida con la valoración de Vinculación; este formulario queda en modo consulta.` : "Registra el oficio firmado y la valoración técnica de Vinculación antes de remitir al Comité Técnico.")}<div class="mt">${field("Potencial de PI identificado", piOpts, "select", "Indica si el activo puede protegerse o requiere reserva.", true, "vinculacion:potencial_pi", "", "Sí · existe potencial de protección")}${field("Tipo de innovación", "", "text", "Clasificación del activo o resultado esperado.", false, "vinculacion:tipo_innovacion", "Software / Desarrollo tecnológico")}${field("Activo previsto", "", "textarea", "Describe el activo que se resguardará.", true, "vinculacion:activo_previsto", "Software de integración, registro de mediciones y documentación técnica.")}${field("Valoración técnica", "", "textarea", "Justificación y valoración técnica desarrollada por Vinculación.", true, "vinculacion:valoracion", "Se identifica potencial de protección en el software. Documentar autoría y resultados, y coordinar divulgación con Vinculación.")}${field("Oficio del dictamen", "", "text", "Número de oficio emitido por Vinculación.", true, "vinculacion:oficio", "CV-014-2026")}${field("Requiere reserva o resguardo previo", ev.requiere_reserva === true, "checkbox", "Marca si la divulgación debe restringirse antes de proteger el activo.", false, "vinculacion:reserva")}${yaDictaminado ? "" : `<div class="field"><label for="vinculacion-doc">Oficio firmado (PDF, DOCX)</label><input id="vinculacion-doc" type="file" accept=".pdf,.docx"><span class="help">Máximo 20 MB. Se almacena en el expediente de la propuesta.</span></div>`}${documentoVinculacion ? docPropuesta(documentoVinculacion) : yaDictaminado ? "" : notice("Adjunto pendiente", "Puedes registrar el dictamen y adjuntar el oficio firmado en la misma acción.")}</div>`;
+    const innovacionOpts = [
+      "Software / Desarrollo tecnológico",
+      "Prototipo funcional / Hardware",
+      "Proceso o metodología transferible",
+      "Invención patentable / Modelo de utilidad",
+      "Secreto industrial / Know-how",
+      "Obra protegible por derechos de autor",
+    ];
+    inner = `${notice(yaDictaminado ? "Dictamen ya registrado" : "Dictamen requerido", yaDictaminado ? `Oficio ${ev.numero_oficio_dictamen || "sin número"}. La propuesta ya fue remitida con la valoración de Vinculación; este formulario queda en modo consulta.` : "Registra el oficio firmado y la valoración técnica de Vinculación antes de remitir al Comité Técnico.")}<div class="mt">${field("Potencial de PI identificado", piOpts, "select", "Indica si el activo puede protegerse o requiere reserva.", true, "vinculacion:potencial_pi", "", "Sí · existe potencial de protección")}${field("Tipo de innovación", innovacionOpts, "select", "Clasificación del activo o resultado esperado.", false, "vinculacion:tipo_innovacion", "Software / Desarrollo tecnológico")}${field("Activo previsto", "", "textarea", "Describe el activo que se resguardará.", true, "vinculacion:activo_previsto", "Software de integración, registro de mediciones y documentación técnica.")}${field("Valoración técnica", "", "textarea", "Justificación y valoración técnica desarrollada por Vinculación.", true, "vinculacion:valoracion", "Se identifica potencial de protección en el software. Documentar autoría y resultados, y coordinar divulgación con Vinculación.")}${field("Oficio del dictamen", "", "text", "Número de oficio emitido por Vinculación.", true, "vinculacion:oficio", "CV-014-2026")}${field("Requiere reserva o resguardo previo", ev.requiere_reserva === true, "checkbox", "Marca si la divulgación debe restringirse antes de proteger el activo.", false, "vinculacion:reserva")}${yaDictaminado ? "" : `<div class="field"><label for="vinculacion-doc">Oficio firmado (PDF, DOCX)</label><input id="vinculacion-doc" type="file" accept=".pdf,.docx"><span class="help">Máximo 20 MB. Se almacena en el expediente de la propuesta.</span></div>`}${documentoVinculacion ? docPropuesta(documentoVinculacion) : yaDictaminado ? "" : notice("Adjunto pendiente", "Puedes registrar el dictamen y adjuntar el oficio firmado en la misma acción.")}</div>`;
   }
   if (id === "24") {
     const sc = scoreResult();
@@ -5856,8 +6175,10 @@ function searchHistory() {
   const estadosOpts = opciones(catalogos?.estados, "id_estado", "nombre_estado", "Todos");
   const lineasOpts = opciones(lineas_investigacion?.length ? lineas_investigacion : catalogos?.lineas_investigacion, "id_linea_investigacion", "nombre_linea", "Todas");
 
+  const aniosOpts = ["2020", "2021", "2022", "2023", "2024", "2025", "2026", "2027", "2028", "2029", "2030"];
+
   return shell(
-    `<div class="two-col"><form class="card card-pad" id="history-search"><div class="section-head"><h2>Encuentra un expediente</h2>${badge("Consulta institucional en BD")}</div>${field("Código, título o persona investigadora", state.search, "search", "Puedes combinar la búsqueda con filtros institucionales.", false, "history:query")}<div class="field-row">${field("Escuela", escuelasOpts, "select", "", false, "history:school")}${field("Modalidad", modalidadesOpts, "select", "", false, "history:mode")}</div><div class="field-row">${field("Estado", estadosOpts, "select", "", false, "history:status")}${field("Línea de investigación", lineasOpts, "select", "", false, "history:line")}</div><div class="field-row">${field("Desde", "2024", "number", "", false, "history:from")}${field("Hasta", "2028", "number", "", false, "history:to")}</div>${field("Mostrar únicamente propuestas cerradas", false, "checkbox", "Excluye expedientes todavía en trámite.", false, "history:closed")}<div class="form-footer">${act("Limpiar filtros", "clear-search", "text")}${act("Buscar expedientes", "search-history", "", "search")}</div></form><div class="stack">${card("Consulta con trazabilidad", `<div class="list-item">${icon("folder")}<div><h3>Expediente completo</h3><p>Propuesta, recursos, documentos y productos.</p></div></div><div class="list-item">${icon("shield")}<div><h3>Decisiones y evidencia</h3><p>Evaluaciones, avales, dictámenes y resolución.</p></div></div><div class="list-item">${icon("clock")}<div><h3>Historial conservado</h3><p>Fechas, actores y versiones sincronizadas con PostgreSQL.</p></div></div>`)}</div></div>`,
+    `<div class="two-col"><form class="card card-pad" id="history-search"><div class="section-head"><h2>Encuentra un expediente</h2>${badge("Consulta institucional en BD")}</div>${field("Código, título o persona investigadora", state.search, "search", "Puedes combinar la búsqueda con filtros institucionales.", false, "history:query")}<div class="field-row">${field("Escuela", escuelasOpts, "select", "", false, "history:school")}${field("Modalidad", modalidadesOpts, "select", "", false, "history:mode")}</div><div class="field-row">${field("Estado", estadosOpts, "select", "", false, "history:status")}${field("Línea de investigación", lineasOpts, "select", "", false, "history:line")}</div><div class="field-row">${field("Desde", aniosOpts, "select", "", false, "history:from", "", "2024")}${field("Hasta", aniosOpts, "select", "", false, "history:to", "", "2028")}</div>${field("Mostrar únicamente propuestas cerradas", false, "checkbox", "Excluye expedientes todavía en trámite.", false, "history:closed")}<div class="form-footer">${act("Limpiar filtros", "clear-search", "text")}${act("Buscar expedientes", "search-history", "", "search")}</div></form><div class="stack">${card("Consulta con trazabilidad", `<div class="list-item">${icon("folder")}<div><h3>Expediente completo</h3><p>Propuesta, recursos, documentos y productos.</p></div></div><div class="list-item">${icon("shield")}<div><h3>Decisiones y evidencia</h3><p>Evaluaciones, avales, dictámenes y resolución.</p></div></div><div class="list-item">${icon("clock")}<div><h3>Historial conservado</h3><p>Fechas, actores y versiones sincronizadas con PostgreSQL.</p></div></div>`)}</div></div>`,
     "Consulta histórica",
     "Busca iniciativas y recupera la evidencia de su recorrido.",
   );
@@ -6131,6 +6452,7 @@ function adminCatalogs() {
  */
 function profile() {
   const p = person();
+  const orcidActual = orcidUsuarioActivo();
   return shell(
     `<div class="card card-pad" style="max-width:760px"><div class="action-row mb"><span class="avatar" style="width:60px;height:60px;font-size:20px">${esc(p.initials)}</span><div><h2>${esc(p.name)}</h2><span class="small muted">${p.label}</span></div></div>${definition(
       [
@@ -6138,10 +6460,14 @@ function profile() {
           "Correo",
           esc(session ? session.user.correo : "cuenta.demo@example.com"),
         ],
+        [
+          "ORCID institucional",
+          orcidActual ? `<code>${esc(orcidActual)}</code>` : `<span class="muted">Pendiente de solicitar / vincular</span>`,
+        ],
         ["Rol activo", p.label],
         ["Tema", state.theme === "dark" ? "Oscuro" : "Claro"],
       ],
-    )}<div class="action-row mt">${act("Ajustes y accesibilidad", "settings", "secondary", "settings")}${act("Contactar soporte", "contact", "text", "info")}</div></div><details class="accordion" style="max-width:760px;margin-top:28px"><summary>Opciones del prototipo</summary><div class="action-row mt">${act("Cambiar rol", "roles", "secondary", "user")}${act("Guía de recorridos", "guide", "text")}${act("Ver etapas", "stages", "text")}</div><p class="small muted mt">Los datos, documentos y decisiones son ejemplos para evaluar la interfaz.</p></details>`,
+    )}<div class="action-row mt">${act("Solicitar / actualizar ORCID", "profile-orcid-modal", "secondary", "edit")}${act("Ajustes y accesibilidad", "settings", "secondary", "settings")}${act("Contactar soporte", "contact", "text", "info")}</div></div><details class="accordion" style="max-width:760px;margin-top:28px"><summary>Opciones del prototipo</summary><div class="action-row mt">${act("Cambiar rol", "roles", "secondary", "user")}${act("Guía de recorridos", "guide", "text")}${act("Ver etapas", "stages", "text")}</div><p class="small muted mt">Los datos, documentos y decisiones son ejemplos para evaluar la interfaz.</p></details>`,
     "Mi perfil",
   );
 }
@@ -6341,15 +6667,27 @@ function validate(formId) {
   const form = $(formId);
   if (!form) return true;
   let valid = true;
-  $$("[required]", form).forEach((el) => {
-    const ok =
-      el.type === "checkbox"
+  let sqliDetectado = false;
+  $$("input, textarea, select", form).forEach((el) => {
+    const val = typeof el.value === "string" ? el.value.trim() : "";
+    const tieneSqli = el.type !== "checkbox" && contieneInyeccionSQL(val);
+    if (tieneSqli) sqliDetectado = true;
+    const reqOk =
+      !el.hasAttribute("required") ||
+      (el.type === "checkbox"
         ? el.checked
-        : el.value.trim() !== "" && (el.type !== "email" || el.validity.valid);
+        : val !== "" && (el.type !== "email" || el.validity.valid));
+    const ok = reqOk && !tieneSqli;
     const f = el.closest(".field");
     if (f) {
       f.classList.toggle("error", !ok);
-      $(".error-msg", f).hidden = ok;
+      const errNode = $(".error-msg", f);
+      if (errNode) {
+        errNode.textContent = tieneSqli
+          ? "Entrada bloqueada: se detectaron patrones de inyección SQL no permitidos."
+          : "Completa este campo para continuar.";
+        errNode.hidden = ok;
+      }
     }
     if (!ok) valid = false;
   });
@@ -6358,7 +6696,11 @@ function validate(formId) {
       ".field.error input,.field.error textarea,.field.error select",
       form,
     )?.focus();
-    toast("Revisa los campos obligatorios indicados.");
+    toast(
+      sqliDetectado
+        ? "Se bloquearon patrones sospechosos de inyección SQL."
+        : "Revisa los campos obligatorios indicados.",
+    );
   }
   return valid;
 }
@@ -6705,14 +7047,127 @@ async function handleAction(action, el) {
       );
       break;
     }
+    case "profile-orcid-modal": {
+      state.saved["modal:profile-orcid"] = orcidUsuarioActivo();
+      setTimeout(() => {
+        const orcidInput = $('[data-field="modal:profile-orcid"]');
+        if (!orcidInput) return;
+        orcidInput.addEventListener("input", () => {
+          orcidInput.value = formatearOrcidInput(orcidInput.value);
+          state.saved["modal:profile-orcid"] = orcidInput.value;
+        });
+      }, 60);
+      modal(
+        "Vincular ORCID al perfil del investigador",
+        `${notice("Validación oficial ISO 7064 (MOD 11-2)", "El ORCID es solicitado al investigador y validado matemáticamente con su dígito verificador. Cada ORCID es único en el sistema.")}${field("Identificador ORCID", orcidUsuarioActivo(), "text", "Formato obligatorio: 0000-0000-0000-000X.", true, "modal:profile-orcid", "0000-0002-1825-0097")}`,
+        act("Cancelar", "close", "secondary") +
+          confirmBtn("Validar y vincular ORCID", "profile-orcid-save"),
+        false,
+        "profile-orcid",
+      );
+      break;
+    }
+    case "profile-orcid-save": {
+      const nuevoOrcid = ($('[data-field="modal:profile-orcid"]')?.value || "").trim().toUpperCase();
+      if (contieneInyeccionSQL(nuevoOrcid)) {
+        toast("Entrada bloqueada: se detectaron patrones no permitidos.");
+        break;
+      }
+      if (!esOrcidValido(nuevoOrcid)) {
+        toast("ORCID inválido: verifica el formato 0000-0000-0000-000X y su dígito verificador ISO 7064.");
+        break;
+      }
+      const correoActual = session?.user?.correo || "";
+      const nombreActual = session?.user?.nombre || "";
+      const ocupados = obtenerOrcidsOcupados(correoActual, nombreActual);
+      if (ocupados.has(nuevoOrcid)) {
+        toast(`El ORCID ${nuevoOrcid} ya está asignado a otro perfil de investigador.`);
+        break;
+      }
+      if (session?.user?.id_usuario) {
+        try {
+          await fetch(`${API_URL}/auth/usuarios/${session.user.id_usuario}/orcid`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ orcid: nuevoOrcid, correo: correoActual }),
+          });
+        } catch (err) {
+          console.warn("profile-orcid-save sync warning:", err);
+        }
+      }
+      registrarOrcidEnPerfil(correoActual, nombreActual, nuevoOrcid);
+      if (session?.user) {
+        session.user.orcid = nuevoOrcid;
+        setSession(session);
+      }
+      if (Array.isArray(state.teamMembers)) {
+        state.teamMembers = state.teamMembers.map((m) =>
+          String(m.correo || "").toLowerCase() === String(correoActual).toLowerCase()
+            ? { ...m, orcid: nuevoOrcid }
+            : m,
+        );
+      }
+      save();
+      closeModal();
+      render();
+      toast("ORCID validado y vinculado a tu perfil de investigador.");
+      break;
+    }
     case "team": {
-      // Cargar resultados de búsqueda al abrir el modal
+      delete state.saved["modal:user-search"];
+      delete state.saved["modal:orcid"];
+      delete state.saved["modal:hours"];
+      delete state.saved["modal:responsibility"];
+      state.selectedTeamUser = null;
+      const rolesOpts = (catalogos?.rol_colaborador?.length
+        ? catalogos.rol_colaborador
+        : [
+            { nombre_rol: "Investigador/a asociado/a" },
+            { nombre_rol: "Coordinador/a" },
+            { nombre_rol: "Estudiante asistente" },
+            { nombre_rol: "Especialista técnico" },
+          ]
+      ).map((r) => ({ value: r.nombre_rol, label: r.nombre_rol }));
+      const tiposHoraOpts = (catalogos?.tipos_hora?.length
+        ? catalogos.tipos_hora.map((t) => ({ value: t.nombre_tipo_hora, label: t.nombre_tipo_hora }))
+        : ["VIE", "CONS", "REC", "DOC", "OTRO"].map((t) => ({ value: t, label: t })));
+
+      // Cargar resultados de búsqueda al abrir el modal y autocompletar el ORCID validado del perfil del investigador
       setTimeout(() => {
         const input = $('[data-field="modal:user-search"]');
+        const orcidInput = $('[data-field="modal:orcid"]');
         const results = $('#user-search-results');
         if (!input || !results) return;
+        if (orcidInput) {
+          orcidInput.addEventListener("input", () => {
+            orcidInput.value = formatearOrcidInput(orcidInput.value);
+            state.saved["modal:orcid"] = orcidInput.value;
+          });
+        }
+        const aplicarUsuarioSeleccionado = (u) => {
+          // [Línea clave]: ¿Por qué soy importante? Autocompleta el ORCID desde el perfil del investigador seleccionado. ¿Para qué? Mantener la relación 1 a 1 entre investigador y su ORCID validado o solicitarlo si aún no lo tiene registrado. ¿Dónde me usan? Al elegir un investigador en el modal de equipo.
+          const orcidRegistrado = u.orcid || obtenerOrcidDePerfil(u.correo, u.nombre);
+          state.selectedTeamUser = {
+            id_usuario: Number(u.id_usuario),
+            nombre: u.nombre,
+            correo: u.correo,
+            orcid: orcidRegistrado,
+            escuela: u.escuela || "",
+            siglas_escuela: u.siglas_escuela || "",
+          };
+          input.value = state.selectedTeamUser.nombre;
+          state.saved["modal:user-search"] = state.selectedTeamUser.nombre;
+          if (orcidInput) {
+            orcidInput.value = orcidRegistrado;
+            orcidInput.readOnly = Boolean(orcidRegistrado);
+            state.saved["modal:orcid"] = orcidRegistrado;
+            const counter = orcidInput.closest(".field")?.querySelector(".char-counter");
+            if (counter) counter.textContent = `${orcidRegistrado.length}/19 caracteres`;
+          }
+          results.innerHTML = "";
+        };
         const buscar = async (texto) => {
-          if (!texto || texto.length < 2) {
+          if (!texto || texto.length < 2 || contieneInyeccionSQL(texto)) {
             results.innerHTML = "";
             return;
           }
@@ -6720,22 +7175,29 @@ async function handleAction(action, el) {
             const resp = await fetch(`${API_URL}/auth/usuarios?q=${encodeURIComponent(texto)}&limit=10`);
             if (!resp.ok) return;
             const usuarios = await resp.json();
-            results.innerHTML = usuarios.map((u) =>
-              `<div class="user-result" style="padding:8px;border-bottom:1px solid var(--line);cursor:pointer;" data-id="${u.id_usuario}" data-nombre="${esc(u.nombre)}" data-correo="${esc(u.correo)}" data-escuela="${esc(u.escuela || '')}" data-siglas="${esc(u.siglas_escuela || '')}">
-                <strong>${esc(u.nombre)}</strong><br><span class="micro muted">${esc(u.correo)}${u.escuela ? ` · ${esc(u.escuela)}` : ""}</span>
-              </div>`
-            ).join("");
-            results.querySelectorAll(".user-result").forEach((el) => {
-              el.addEventListener("click", () => {
-                state.selectedTeamUser = {
-                  id_usuario: Number(el.dataset.id),
-                  nombre: el.dataset.nombre,
-                  correo: el.dataset.correo,
-                  escuela: el.dataset.escuela,
-                  siglas_escuela: el.dataset.siglas,
-                };
-                input.value = state.selectedTeamUser.nombre;
-                results.innerHTML = "";
+            const matchExacto = usuarios.find(
+              (u) => normalizarTexto(u.nombre) === normalizarTexto(texto) || normalizarTexto(u.correo) === normalizarTexto(texto),
+            );
+            if (matchExacto) {
+              aplicarUsuarioSeleccionado(matchExacto);
+              return;
+            }
+            results.innerHTML = usuarios.map((u) => {
+              const orc = u.orcid || obtenerOrcidDePerfil(u.correo, u.nombre);
+              return `<div class="user-result" style="padding:8px;border-bottom:1px solid var(--line);cursor:pointer;" data-id="${u.id_usuario}" data-nombre="${esc(u.nombre)}" data-correo="${esc(u.correo)}" data-orcid="${esc(orc)}" data-escuela="${esc(u.escuela || '')}" data-siglas="${esc(u.siglas_escuela || '')}">
+                <strong>${esc(u.nombre)}</strong> ${orc ? `<code class="micro">${esc(orc)}</code>` : `<span class="micro muted">(solicitar ORCID)</span>`}<br><span class="micro muted">${esc(u.correo)}${u.escuela ? ` · ${esc(u.escuela)}` : ""}</span>
+              </div>`;
+            }).join("");
+            results.querySelectorAll(".user-result").forEach((elItem) => {
+              elItem.addEventListener("click", () => {
+                aplicarUsuarioSeleccionado({
+                  id_usuario: Number(elItem.dataset.id),
+                  nombre: elItem.dataset.nombre,
+                  correo: elItem.dataset.correo,
+                  orcid: elItem.dataset.orcid,
+                  escuela: elItem.dataset.escuela,
+                  siglas_escuela: elItem.dataset.siglas,
+                });
               });
             });
           } catch (e) {
@@ -6744,8 +7206,16 @@ async function handleAction(action, el) {
         };
         let timer;
         input.addEventListener("input", (e) => {
+          const val = e.target.value;
+          if (orcidInput && (!state.selectedTeamUser || state.selectedTeamUser.nombre !== val)) {
+            state.selectedTeamUser = null;
+            const orcidDePerfil = obtenerOrcidDePerfil(val, val);
+            orcidInput.value = orcidDePerfil;
+            orcidInput.readOnly = Boolean(orcidDePerfil);
+            state.saved["modal:orcid"] = orcidDePerfil;
+          }
           clearTimeout(timer);
-          timer = setTimeout(() => buscar(e.target.value), 300);
+          timer = setTimeout(() => buscar(val), 250);
         });
         input.addEventListener("focus", () => buscar(input.value));
         document.addEventListener("click", (e) => {
@@ -6754,7 +7224,7 @@ async function handleAction(action, el) {
       }, 100);
       modal(
         "Participante del equipo",
-        `${field("Buscar usuario", "", "search", "Busca por nombre o correo institucional...", true, "modal:user-search")}<div id="user-search-results" class="mt" style="max-height:200px;overflow-y:auto;"></div>${field("Rol", (catalogos?.rol_colaborador ?? []).map((r) => ({ value: r.nombre_rol, label: r.nombre_rol })), "select", "", false, "modal:role", "")}${field("Dedicación", "", "number", "Horas por semana.", false, "modal:hours")}${field("ORCID", "", "text", "Identificador ORCID del participante.", false, "modal:orcid")}${field("Responsabilidad", "", "textarea", "Adjuntar carta de compromiso si es externo.", false, "modal:responsibility")}`,
+        `${field("Buscar usuario", "", "search", "Busca por nombre o correo institucional (si tiene ORCID en su perfil se autocompleta; si no, solicítalo)...", true, "modal:user-search")}<div id="user-search-results" class="mt" style="max-height:200px;overflow-y:auto;"></div><div class="field-row">${field("Rol", rolesOpts, "select", "", false, "modal:role", "")}${field("Tipo de hora", tiposHoraOpts, "select", "", false, "modal:hour-type", "", "VIE")}</div><div class="field-row">${field("Dedicación", "4", "number", "Horas por semana (1–40).", true, "modal:hours")}${field("ORCID", "", "text", "Se autocompleta con el perfil o se solicita y valida bajo ISO 7064 (0000-0000-0000-000X).", true, "modal:orcid", "0000-0001-5109-3700")}</div>${field("Responsabilidad", "", "textarea", "Funciones técnicas en la propuesta.", false, "modal:responsibility")}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar participante", "team-save"),
         false,
@@ -6765,21 +7235,43 @@ async function handleAction(action, el) {
     case "team-save": {
       const selectedUser = state.selectedTeamUser;
       if (!selectedUser) {
-        toast("Selecciona un usuario de la lista de búsqueda.");
+        toast("Selecciona un investigador de la lista de búsqueda.");
         break;
       }
-      const rol = $('[data-field="modal:role"]')?.value;
-      const horas = Number($('[data-field="modal:hours"]')?.value) || null;
-      const orcid = $('[data-field="modal:orcid"]')?.value || "";
+      const rol = $('[data-field="modal:role"]')?.value || "Investigador/a asociado/a";
+      const tipo = $('[data-field="modal:hour-type"]')?.value || "VIE";
+      const horas = Math.min(40, Math.max(1, Number($('[data-field="modal:hours"]')?.value) || 4));
+      const orcid = ($('[data-field="modal:orcid"]')?.value || selectedUser.orcid || obtenerOrcidDePerfil(selectedUser.correo, selectedUser.nombre)).trim().toUpperCase();
       const responsabilidad = $('[data-field="modal:responsibility"]')?.value || "";
 
-      // Agregar al equipo
-      state.teamMembers = state.teamMembers || [];
-      const yaExiste = state.teamMembers.some((m) => m.id_usuario === selectedUser.id_usuario);
-      if (yaExiste) {
-        toast("Este usuario ya está en el equipo.");
+      if (contieneInyeccionSQL(responsabilidad) || contieneInyeccionSQL(orcid)) {
+        toast("Se detectó contenido inválido o no permitido.");
         break;
       }
+      if (!orcid) {
+        toast("Solicita e ingresa el ORCID del investigador para vincularlo a su perfil.");
+        break;
+      }
+      if (!esOrcidValido(orcid)) {
+        toast("El ORCID ingresado no es válido según el estándar oficial ISO 7064 (formato 0000-0000-0000-000X).");
+        break;
+      }
+
+      // Agregar al equipo validando unicidad de usuario y de ORCID
+      state.teamMembers = proposalTeamMembers();
+      const yaExiste = state.teamMembers.some(
+        (m) => m.id_usuario === selectedUser.id_usuario || String(m.correo).toLowerCase() === String(selectedUser.correo).toLowerCase(),
+      );
+      if (yaExiste) {
+        toast("Este investigador ya forma parte del equipo.");
+        break;
+      }
+      const ocupados = obtenerOrcidsOcupados(selectedUser.correo, selectedUser.nombre);
+      if (ocupados.has(orcid)) {
+        toast(`El ORCID ${orcid} ya está asignado a otra persona. Cada ORCID debe ser único.`);
+        break;
+      }
+      registrarOrcidEnPerfil(selectedUser.correo, selectedUser.nombre, orcid);
       state.teamMembers.push({
         id_usuario: selectedUser.id_usuario,
         nombre: selectedUser.nombre,
@@ -6790,13 +7282,13 @@ async function handleAction(action, el) {
         horas,
         orcid,
         responsabilidad,
-        tipo: "VIE",
+        tipo,
       });
       state.selectedTeamUser = null;
       save();
       closeModal();
       render();
-      toast("Miembro agregado al equipo.");
+      toast("Miembro agregado al equipo con su ORCID validado.");
       break;
     }
     case "objective":
@@ -6814,28 +7306,58 @@ async function handleAction(action, el) {
           confirmBtn("Guardar objetivo", "save-extra", 'data-kind="objective"'),
       );
       break;
-    case "activity":
+    case "activity": {
+      const miembrosOpts = proposalTeamMembers().map((m) => ({
+        value: `${m.nombre} · Ejecuta`,
+        label: `${m.nombre} (${m.rol || "Equipo"})`,
+      }));
+      const periodosOpts = [
+        "1 / 3",
+        "1 / 6",
+        "4 / 6",
+        "6 / 1",
+        "7 / 6",
+        "12 / 1",
+        "13 / 6",
+        "18 / 1",
+        "19 / 6",
+        "24 / 1",
+      ];
       modal(
         "Agregar actividad",
-        `${field("Objetivo específico", ["OE1", "OE2", "OE3"], "select", "", true, "modal:objective-code")}${field("Actividad", "Entregar informe semestral de avance", "text", "", true, "modal:activity")}${field("Resultado esperado", "Informe semestral registrado", "text", "", true, "modal:result")}<div class="field-row">${field("Responsable", nombreResponsableActual(), "text", "Ejecuta / Supervisa / Participa.", true, "modal:owner")}${field("Mes inicial / duración", "6 / 1", "text", "Meses correlativos.", true, "modal:period")}</div>`,
+        `${field("Objetivo específico", ["OE1", "OE2", "OE3", ...(state.extraObjective ? ["OE4"] : [])], "select", "", true, "modal:objective-code")}${field("Actividad", "Entregar informe semestral de avance", "text", "", true, "modal:activity")}${field("Resultado esperado", "Informe semestral registrado", "text", "", true, "modal:result")}<div class="field-row">${field("Responsable", miembrosOpts.length ? miembrosOpts : [nombreResponsableActual()], "select", "Integrante del equipo responsable.", true, "modal:owner")}${field("Mes inicial / duración", periodosOpts, "select", "Mes de inicio / duración en meses.", true, "modal:period", "", "6 / 1")}</div>`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar actividad", "save-extra", 'data-kind="activity"'),
         false,
         "activity",
       );
       break;
-    case "risk":
+    }
+    case "risk": {
+      const miembrosRiesgoOpts = proposalTeamMembers().map((m) => ({
+        value: m.nombre,
+        label: `${m.nombre} (${m.rol || "Equipo"})`,
+      }));
+      const nivelesRiesgoOpts = (catalogos?.niveles_riesgo?.length
+        ? catalogos.niveles_riesgo.map((n) => ({ value: n.nombre_nivel, label: n.nombre_nivel }))
+        : ["Bajo", "Medio", "Alto"].map((n) => ({ value: n, label: n })));
       modal(
         "Agregar riesgo",
-        `${field("Actividad", ["Definir requerimientos", "Integrar y calibrar", "Validar en campo", "Evaluar y documentar"], "select", "", true, "modal:riskactivity")}${field("Riesgo", "Indisponibilidad temporal de un sitio piloto.", "textarea", "", true, "modal:risk")}${field("Mitigación", "Acordar un sitio alternativo antes del inicio de la validación.", "textarea", "", true, "modal:mitigation")}${field("Responsable", nombreResponsableActual(), "text", "", true, "modal:riskowner")}`,
+        `${field("Actividad", ["Definir requerimientos", "Integrar y calibrar", "Validar en campo", "Evaluar y documentar"], "select", "", true, "modal:riskactivity")}${field("Riesgo", "Indisponibilidad temporal de un sitio piloto.", "textarea", "", true, "modal:risk")}<div class="field-row">${field("Probabilidad", nivelesRiesgoOpts, "select", "", true, "modal:riskprob", "", "Medio")}${field("Impacto", nivelesRiesgoOpts, "select", "", true, "modal:riskimpact", "", "Medio")}</div>${field("Mitigación", "Acordar un sitio alternativo antes del inicio de la validación.", "textarea", "", true, "modal:mitigation")}${field("Responsable", miembrosRiesgoOpts.length ? miembrosRiesgoOpts : [nombreResponsableActual()], "select", "Persona encargada del monitoreo.", true, "modal:riskowner")}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar riesgo", "save-extra", 'data-kind="risk"'),
         false,
         "risk",
       );
       break;
+    }
     case "save-extra": {
       const kind = el.dataset.kind;
+      const controlesModal = $$(".modal input, .modal textarea");
+      if (controlesModal.some((c) => contieneInyeccionSQL(c.value))) {
+        toast("Entrada rechazada: se detectaron patrones de inyección SQL.");
+        break;
+      }
       if (kind === "objective")
         state.extraObjective = $('[data-field="modal:objective"]').value;
       if (kind === "activity") {
@@ -6972,11 +7494,27 @@ async function handleAction(action, el) {
     }
     case "team-edit": {
       const i = Number(el.dataset.index);
-      if (!Number.isInteger(i) || i < 0 || i >= (state.teamMembers || []).length) break;
-      const miembro = state.teamMembers[i];
+      const listaEquipo = proposalTeamMembers();
+      if (!Number.isInteger(i) || i < 0 || i >= listaEquipo.length) break;
+      const miembro = listaEquipo[i];
+      delete state.saved["modal:edit-role"];
+      delete state.saved["modal:edit-hours"];
+      delete state.saved["modal:edit-tipo"];
+      const rolesEditOpts = (catalogos?.rol_colaborador?.length
+        ? catalogos.rol_colaborador
+        : [
+            { nombre_rol: "Coordinador/a" },
+            { nombre_rol: "Investigador/a asociado/a" },
+            { nombre_rol: "Estudiante asistente" },
+            { nombre_rol: "Especialista técnico" },
+          ]
+      ).map((r) => ({ value: r.nombre_rol, label: r.nombre_rol }));
+      const tiposHoraEditOpts = (catalogos?.tipos_hora?.length
+        ? catalogos.tipos_hora.map((t) => ({ value: t.nombre_tipo_hora, label: t.nombre_tipo_hora }))
+        : ["VIE", "CONS", "REC", "DOC", "OTRO"].map((t) => ({ value: t, label: t })));
       modal(
         "Editar miembro del equipo",
-        `${field("Rol", (catalogos?.rol_colaborador ?? []).map((r) => ({ value: r.nombre_rol, label: r.nombre_rol })), "select", "", false, "modal:edit-role", "", miembro.rol)}${field("Dedicación (h/sem)", miembro.horas || 0, "number", "Horas por semana.", true, "modal:edit-hours")}${field("Tipo de hora", ["VIE", "CONS", "REC", "DOC", "OTRO"], "select", "", false, "modal:edit-tipo", "", miembro.tipo)}`,
+        `${field("Rol", rolesEditOpts, "select", "", false, "modal:edit-role", "", miembro.rol)}${field("Dedicación (h/sem)", miembro.horas || 4, "number", "Horas por semana (1–40).", true, "modal:edit-hours")}${field("Tipo de hora", tiposHoraEditOpts, "select", "", false, "modal:edit-tipo", "", miembro.tipo)}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar cambios", "team-edit-save", `data-index="${i}"`),
         false,
@@ -6986,9 +7524,10 @@ async function handleAction(action, el) {
     }
     case "team-edit-save": {
       const i = Number(el.dataset.index);
-      if (!Number.isInteger(i) || i < 0 || i >= (state.teamMembers || []).length) break;
+      state.teamMembers = proposalTeamMembers();
+      if (!Number.isInteger(i) || i < 0 || i >= state.teamMembers.length) break;
       const rol = $('[data-field="modal:edit-role"]')?.value;
-      const horas = Number($('[data-field="modal:edit-hours"]')?.value) || 0;
+      const horas = Math.min(40, Math.max(1, Number($('[data-field="modal:edit-hours"]')?.value) || 4));
       const tipo = $('[data-field="modal:edit-tipo"]')?.value || "VIE";
       state.teamMembers[i] = { ...state.teamMembers[i], rol, horas, tipo };
       save();
@@ -6998,9 +7537,43 @@ async function handleAction(action, el) {
       break;
     }
     case "external-add": {
+      delete state.saved["modal:ext-name"];
+      delete state.saved["modal:ext-institution"];
+      delete state.saved["modal:ext-hours"];
+      delete state.saved["modal:ext-orcid"];
+      delete state.saved["modal:ext-responsibility"];
+      const extRolesOpts = (catalogos?.rol_colaborador?.length
+        ? catalogos.rol_colaborador
+        : [
+            { nombre_rol: "Colaborador externo" },
+            { nombre_rol: "Co-investigador/a externo/a" },
+            { nombre_rol: "Asesor/a internacional" },
+            { nombre_rol: "Contraparte comunitaria / institucional" },
+          ]
+      ).map((r) => ({ value: r.nombre_rol, label: r.nombre_rol }));
+      setTimeout(() => {
+        const nameInput = $('[data-field="modal:ext-name"]');
+        const orcidInput = $('[data-field="modal:ext-orcid"]');
+        if (!nameInput || !orcidInput) return;
+        let orcidEditadoManualmente = false;
+        orcidInput.addEventListener("input", () => {
+          orcidEditadoManualmente = true;
+          orcidInput.value = formatearOrcidInput(orcidInput.value);
+          state.saved["modal:ext-orcid"] = orcidInput.value;
+        });
+        nameInput.addEventListener("input", () => {
+          if (orcidEditadoManualmente && orcidInput.value.trim()) return;
+          // [Línea clave]: ¿Por qué soy importante? Autocompleta el ORCID únicamente si el colaborador ya tiene uno validado en su perfil. ¿Para qué? Solicitar un ORCID real cuando la persona es nueva en lugar de generarlo sintéticamente. ¿Dónde me usan? En el listener de nombre del modal external-add.
+          const registradoEnPerfil = obtenerOrcidDePerfil("", nameInput.value);
+          orcidInput.value = registradoEnPerfil;
+          state.saved["modal:ext-orcid"] = registradoEnPerfil;
+          const counter = orcidInput.closest(".field")?.querySelector(".char-counter");
+          if (counter) counter.textContent = `${registradoEnPerfil.length}/19 caracteres`;
+        });
+      }, 80);
       modal(
         "Agregar colaborador externo",
-        `${field("Nombre completo", "", "text", "", true, "modal:ext-name")}${field("Institución / entidad", "", "text", "", true, "modal:ext-institution")}<div class="field-row">${field("Rol", (catalogos?.rol_colaborador ?? []).map((r) => ({ value: r.nombre_rol, label: r.nombre_rol })), "select", "", false, "modal:ext-role")}${field("Dedicación (h/sem)", "", "number", "Horas por semana.", false, "modal:ext-hours")}</div>${field("ORCID", "", "text", "Identificador ORCID.", false, "modal:ext-orcid")}${field("Responsabilidad / tareas", "", "textarea", "Describe sus tareas en el proyecto.", false, "modal:ext-responsibility")}`,
+        `${field("Nombre completo", "", "text", "Si la persona ya tiene perfil con ORCID registrado se autocompleta; de lo contrario solicítalo.", true, "modal:ext-name")}${field("Institución / entidad", "", "text", "", true, "modal:ext-institution")}<div class="field-row">${field("Rol", extRolesOpts, "select", "", false, "modal:ext-role")}${field("Dedicación (h/sem)", "4", "number", "Horas por semana (1–40).", false, "modal:ext-hours")}</div>${field("ORCID", "", "text", "Solicita e ingresa el ORCID del colaborador (validado bajo ISO 7064: 0000-0000-0000-000X).", true, "modal:ext-orcid", "0000-0002-1825-0097")}${field("Responsabilidad / tareas", "", "textarea", "Describe sus tareas en el proyecto.", false, "modal:ext-responsibility")}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar colaborador", "external-add-save"),
         false,
@@ -7009,19 +7582,52 @@ async function handleAction(action, el) {
       break;
     }
     case "external-add-save": {
+      const nombre = $('[data-field="modal:ext-name"]')?.value?.trim() || "";
+      const institucion = $('[data-field="modal:ext-institution"]')?.value?.trim() || "";
+      const rol = $('[data-field="modal:ext-role"]')?.value || "Colaborador externo";
+      const horas = Math.min(40, Math.max(1, Number($('[data-field="modal:ext-hours"]')?.value) || 4));
+      const orcid = ($('[data-field="modal:ext-orcid"]')?.value?.trim() || obtenerOrcidDePerfil("", nombre)).toUpperCase();
+      const responsabilidad = $('[data-field="modal:ext-responsibility"]')?.value?.trim() || "";
+
+      if (!nombre || !institucion) {
+        toast("Completa el nombre y la institución del colaborador externo.");
+        break;
+      }
+      if ([nombre, institucion, orcid, responsabilidad].some(contieneInyeccionSQL)) {
+        toast("Entrada bloqueada: se detectaron patrones de inyección SQL.");
+        break;
+      }
+      if (!orcid) {
+        toast("Debes solicitar e ingresar el ORCID del colaborador externo.");
+        break;
+      }
+      if (!esOrcidValido(orcid)) {
+        toast("El ORCID ingresado no es válido según el estándar oficial ISO 7064 (formato 0000-0000-0000-000X).");
+        break;
+      }
+      const ocupados = obtenerOrcidsOcupados("", nombre);
+      if (ocupados.has(orcid)) {
+        toast(`El ORCID ${orcid} ya está registrado en otro participante. Cada ORCID debe ser único.`);
+        break;
+      }
       state.externalCollaborators = state.externalCollaborators || [];
+      if (state.externalCollaborators.some((c) => normalizarTexto(c.nombre) === normalizarTexto(nombre))) {
+        toast("Esta persona colaboradora externa ya fue agregada.");
+        break;
+      }
+      registrarOrcidEnPerfil("", nombre, orcid);
       state.externalCollaborators.push({
-        nombre: $('[data-field="modal:ext-name"]')?.value?.trim() || "",
-        institucion: $('[data-field="modal:ext-institution"]')?.value?.trim() || "",
-        rol: $('[data-field="modal:ext-role"]')?.value || "Colaborador externo",
-        horas: Number($('[data-field="modal:ext-hours"]')?.value) || 0,
-        orcid: $('[data-field="modal:ext-orcid"]')?.value || "",
-        responsabilidad: $('[data-field="modal:ext-responsibility"]')?.value || "",
+        nombre,
+        institucion,
+        rol,
+        horas,
+        orcid,
+        responsabilidad,
       });
       save();
       closeModal();
       render();
-      toast("Colaborador externo agregado.");
+      toast("Colaborador externo agregado con su ORCID validado.");
       break;
     }
     case "external-remove": {
@@ -8547,15 +9153,29 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("input", (e) => {
   const el = e.target;
-  if (el.dataset.field) {
-    const priv = el.dataset.field.startsWith("login:"); // lo escrito en el login nunca se guarda (ni la contraseña ni el correo)
-    if (!priv) {
+  if (el.maxLength && el.maxLength > 0) {
+    const counter = el.closest(".field")?.querySelector(".char-counter");
+    if (counter) counter.textContent = `${String(el.value || "").length}/${el.maxLength} caracteres`;
+  }
+  if (el.dataset.field || el.dataset.adminField) {
+    const sqli = el.type !== "checkbox" && contieneInyeccionSQL(el.value);
+    const fieldWrap = el.closest(".field");
+    const msg = fieldWrap?.querySelector(".error-msg");
+    if (sqli) {
+      fieldWrap?.classList.add("error");
+      if (msg) {
+        msg.textContent = "Entrada bloqueada: se detectaron patrones de inyección SQL no permitidos.";
+        msg.hidden = false;
+      }
+      return;
+    }
+    const priv = el.dataset.field && el.dataset.field.startsWith("login:"); // lo escrito en el login nunca se guarda (ni la contraseña ni el correo)
+    if (el.dataset.field && !priv) {
       state.saved[el.dataset.field] =
         el.type === "checkbox" ? el.checked : el.value;
       save();
     }
-    el.closest(".field")?.classList.remove("error");
-    const msg = el.closest(".field")?.querySelector(".error-msg");
+    fieldWrap?.classList.remove("error");
     if (msg) msg.hidden = true;
     if (priv) {
       const lb = $("#login-error");
@@ -8632,9 +9252,3 @@ window.addEventListener("hashchange", () => {
     console.warn("SGPI: Error en precarga de datos:", e);
   }
 })();
-
-
-
-
-
-

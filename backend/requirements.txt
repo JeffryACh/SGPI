@@ -4,3 +4,6 @@ psycopg[binary,pool]==3.3.6
 psycopg-pool==3.3.3
 httpx
 python-multipart
+supabase
+python-dotenv
+flask

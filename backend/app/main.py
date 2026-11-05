@@ -89,6 +89,32 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # [Línea clave]: Comprime respuestas JSON mayores a 500 bytes para reducir el tiempo de descarga del expediente y catálogos.
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
+
+@app.middleware("http")
+async def sql_injection_guard(request: Request, call_next):
+    """
+    Interceptar y validar parámetros de consulta HTTP contra patrones maliciosos de inyección SQL.
+
+    Actúa como capa de defensa en profundidad antes de llegar a los controladores, inspeccionando
+    todos los query parameters mediante 'auth.contiene_inyeccion_sql' y complementando las consultas
+    parametrizadas (%s) de psycopg.
+
+    parametros:
+        - Request : request Objeto de solicitud HTTP entrante recibido por FastAPI.
+        - Callable : call_next Función asíncrona que invoca el siguiente eslabón de la cadena de middlewares.
+
+    return:
+        + Response / JSONResponse : response Respuesta HTTP del endpoint o código 400 si se detecta un patrón prohibido.
+    """
+    # [Línea clave]: Recorre todos los parámetros de URL y bloquea con HTTP 400 cualquier intento de inyección SQL.
+    for _, val in request.query_params.multi_items():
+        if auth.contiene_inyeccion_sql(val):
+            return JSONResponse(
+                {"detail": "Entrada rechazada por políticas de seguridad contra inyección SQL."},
+                status_code=400,
+            )
+    return await call_next(request)
+
 # [Línea clave]: Monta el router de autenticación para login de usuarios institucionales.
 app.include_router(auth.router)
 # [Línea clave]: Monta la bandeja y el dictamen de Vinculación antes de la ruta dinámica

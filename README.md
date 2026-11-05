@@ -132,7 +132,9 @@ sequenceDiagram
 SGPI/
 ├── docker-compose.yml                  # Orquestador local: FastAPI (backend) + Nginx (frontend)
 ├── render.yaml                         # Blueprint de infraestructura en la nube para Render (Docker Web Service)
-├── vercel.json                         # Configuración declarativa de rutas estáticas y headers para Vercel
+├── vercel.json                         # Configuración declarativa de rutas estáticas (outputDirectory: "frontend") y headers para Vercel
+├── app.py                              # Cliente directo de verificación con SDK oficial de Supabase (Flask + supabase-py)
+├── .env                                # Variables de entorno de conexión a Supabase Cloud (SUPABASE_URL y SUPABASE_KEY)
 ├── test_endpoints.ps1                  # Suite automatizada de pruebas HTTP (20 endpoints probados)
 ├── README.md                           # Documentación principal, arquitectura y guía de inicio rápido
 ├── .env.example                        # Plantilla de variables de entorno (Supabase, Gemini API, Render)
@@ -162,12 +164,12 @@ SGPI/
 │
 ├── backend/                            # Capa de Servicios y API REST (FastAPI + Python 3.12)
 │   ├── Dockerfile                      # Imagen Python que expone Uvicorn dinámicamente en ${PORT:-3000}
-│   ├── requirements.txt                # Dependencias: fastapi, uvicorn[standard], psycopg[binary,pool]
+│   ├── requirements.txt                # Dependencias: fastapi, uvicorn[standard], psycopg[binary,pool], supabase, python-dotenv, flask
 │   └── app/
-│       ├── main.py                     # Punto de entrada FastAPI, CORS, lifespan del pool y montaje de routers
+│       ├── main.py                     # Punto de entrada FastAPI, CORS, middleware anti-SQLi (`sql_injection_guard`), lifespan del pool y montaje de routers
 │       ├── db.py                       # Conexión transaccional a Supabase (psycopg_pool en AWS us-west-2:6543)
 │       └── routers/
-│           ├── auth.py                 # POST /auth/login (validación SHA-256 + hmac.compare_digest)
+│           ├── auth.py                 # POST /auth/login, GET /auth/usuarios y PATCH /auth/usuarios/{id}/orcid (validación ORCID ISO 7064 MOD 11-2)
 │           ├── catalogos.py            # GET /catalogos (catálogos unificados en una sola petición)
 │           ├── comite.py               # Rúbrica oficial V12, bandeja por rol y dictamen del Comité Técnico
 │           ├── convocatorias.py        # Convocatorias, 11 etapas y 9 instrumentos oficiales descargables
@@ -176,7 +178,7 @@ SGPI/
 │           ├── lineas_de_investigacion.py # GET /lineas_de_investigacion/totalLineas
 │           ├── modalidades.py          # GET /modalidades/totalmodalidades (topes y duraciones)
 │           ├── notificaciones.py       # GET /notificaciones, PATCH /leer, PATCH /leer-todas
-│           ├── propuestas.py           # Dashboard, recientes, creación atómica, expediente y evaluaciones
+│           ├── propuestas.py           # Dashboard, recientes, creación atómica (con validación ORCID ISO 7064 y unicidad), expediente y evaluaciones
 │           └── tipos_hora.py           # GET /tipos_hora/totalTiposHora (VIE, CONS, REC, DOC, etc.)
 │
 ├── frontend/                           # Capa de Presentación e Interacción (33 Pantallas SPA Vanilla JS)
@@ -211,7 +213,9 @@ SGPI/
 | Módulo | Método y Ruta | Descripción |
 | :--- | :--- | :--- |
 | **Salud** | `GET /health` | Healthcheck de conexión transaccional con Supabase PostgreSQL. |
-| **Autenticación** | `POST /auth/login` | Login institucional por correo y contraseña contra `usuarios`. |
+| **Autenticación** | `POST /auth/login` | Login institucional por correo y contraseña contra `usuarios` (retorna ORCID validado del perfil). |
+| **Autenticación** | `GET /auth/usuarios` | Búsqueda de investigadores institucionales activos con escape seguro `ILIKE` y ORCID de perfil. |
+| **Autenticación** | `PATCH /auth/usuarios/{id}/orcid` | Solicitud, validación ISO 7064 MOD 11-2, unicidad y vinculación del ORCID al perfil del investigador. |
 | **Catálogos** | `GET /catalogos` | Retorno unificado de escuelas, modalidades, tipos de hora, rubros y estados. |
 | **Catálogos** | `GET /tipos_hora/totalTiposHora` | Catálogo de tipos de hora oficiales (`VIE`, `CONS`, `REC`, `DOC`, etc.). |
 | **Catálogos** | `GET /escuelas/totalescuelas` | Catálogo completo de escuelas y centros de investigación del TEC. |

@@ -29,7 +29,9 @@ const API_URL = (typeof window !== "undefined" && window.SGPI_API_URL)
 
 | Pantalla | Endpoint Backend | Método | Propósito en el Frontend |
 | :--- | :--- | :---: | :--- |
-| **01 (Acceso)** | `/auth/login` | `POST` | Autenticación institucional por correo y contraseña contra `usuarios` (hash SHA-256 + HMAC). |
+| **01 (Acceso)** | `/auth/login` | `POST` | Autenticación institucional por correo y contraseña contra `usuarios` (hash SHA-256 + HMAC) y retorno del `orcid` asociado al perfil del investigador. |
+| **09 / 33 (Equipo y Perfil)** | `/auth/usuarios` | `GET` | Búsqueda de investigadores institucionales activos con escape seguro de comodines `ILIKE` y retorno de su ORCID registrado. |
+| **09 / 33 (ORCID Perfil)** | `/auth/usuarios/{id_usuario}/orcid` | `PATCH` | Solicitud, validación ISO 7064 MOD 11-2, unicidad y vinculación del ORCID al perfil institucional del investigador. |
 | **02 (Dashboard)** | `/propuestas/dashboardpropuestas?id_usuario=X` | `GET` | Indicadores numéricos reales: total, formulación, ejecución y cerradas. |
 | **02 (Dashboard)** | `/propuestas/propuestaMasReciente?id_usuario=X` | `GET` | Tarjeta principal para continuar la propuesta activa en formulación. |
 | **02 / 03 / 30** | `/propuestas/top3PropuestaMasReciente?id_usuario=X` | `GET` | Listado de propuestas recientes con código real (`SI-YYYY-NNN`) y período calculado. |
@@ -104,3 +106,18 @@ let documentosConvocatoria = null;
 let evaluacionIAPerfil = null;
 let criteriosOficialesIA = null;
 ```
+
+---
+
+## 5. Controles de Seguridad, Límites de Caracteres, Listas Cerradas y Validación ORCID (ISO 7064 MOD 11-2)
+
+1. **Límites de Caracteres (`obtenerLimiteCaracteres`)**:
+   - Todo campo de texto (`<input>` y `<textarea>`) incorpora el atributo `maxlength` correspondiente a las columnas de PostgreSQL y reglas institucionales VIE 2027 (ej. ORCID `19`, códigos/oficios `30`, correos `120`, nombres `120`, títulos `300`, resúmenes `2500`, secciones extensas `4000`) y trunca entradas excedentes en tiempo real.
+2. **Protección contra Inyección SQL (`contieneInyeccionSQL` y `sql_injection_guard`)**:
+   - En el cliente (`frontend/js/app.js`), la función `contieneInyeccionSQL(valor)` inspecciona todos los campos antes de guardar o enviar formularios.
+   - En el servidor (`backend/app/main.py` y `backend/app/routers/auth.py`), el middleware HTTP `sql_injection_guard` analiza parámetros de consulta y cuerpos JSON rechazando patrones maliciosos con `400 Bad Request`, además del uso estricto de consultas parametrizadas (`%s`) en `psycopg` y escape de comodines en `ILIKE` (`_escape_ilike`).
+3. **Listas Desplegables (`<select>`) para Dominios Acotados**:
+   - Los campos con valores limitados utilizan selectores cerrados alimentados por catálogos oficiales: escuelas/instancias, modalidades, líneas de investigación, tipos de hora (`VIE`, `VIE-Centros`, `CONS`, `REC`, `DOC`, `VIESA`), niveles de probabilidad/impacto, responsables del equipo (`proposalTeamMembers()`) y tipos de colaboración externa.
+4. **Solicitud, Validación ISO 7064 MOD 11-2, Autocompletado y Unicidad del ORCID**:
+   - Los códigos ORCID **no se autogeneran**: se solicitan al investigador y se validan sintácticamente (`0000-0000-0000-000X`) y matemáticamente mediante el dígito verificador oficial **ISO 7064 MOD 11-2** tanto en frontend (`esOrcidValido`) como en backend (`validar_orcid`).
+   - Cada ORCID está vinculado al perfil del investigador (`ORCID_PERFILES_INSTITUCIONALES` / `state.orcidRegistry` y `PATCH /auth/usuarios/{id}/orcid`). Al seleccionar un investigador que ya posee ORCID registrado en su perfil, el campo se autocompleta; si no posee uno registrado o es colaborador externo, el sistema lo solicita obligatoriamente y verifica que sea único entre todos los participantes.

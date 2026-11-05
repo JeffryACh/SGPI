@@ -132,7 +132,9 @@
 
 | Estado | Método | Ruta | Uso actual |
 |---|---|---|---|
-| OK | POST | `/auth/login` | Conectado a pantalla 01 |
+| OK | POST | `/auth/login` | Conectado a pantalla 01 (retorna `orcid` del perfil del investigador) |
+| OK | GET | `/auth/usuarios` | Búsqueda de investigadores institucionales activos con escape seguro `ILIKE` y retorno de ORCID de perfil |
+| OK | PATCH | `/auth/usuarios/{id_usuario}/orcid` | Solicitud, validación ISO 7064 MOD 11-2, unicidad y asociación del ORCID al perfil del investigador |
 | OK | GET | `/health` | Monitoreo |
 | OK | GET | `/catalogos` | Catálogos consolidados |
 | OK | GET | `/escuelas/totalescuelas` | Selector de escuela |
@@ -216,7 +218,7 @@ Pantallas principales: `02`, `03`, `04`–`20`, `22`, `28`, `33`.
 - [ ] **08–18 · Borrador:** definir endpoint de actualización o descartar formalmente el guardado remoto.
 - [x] **09 · Equipo:** integrantes por correo institucional y horas.
 - [x] **09 · Equipo:** colaborador externo se persiste al crear.
-- [ ] **09 · Equipo:** endpoint para buscar usuarios institucionales y agregarlos sin escribir correo.
+- [x] **09 · Equipo:** endpoint `GET /auth/usuarios` para buscar usuarios institucionales, autocompletar su ORCID si está registrado en su perfil o solicitarlo y validarlo bajo norma **ISO 7064 MOD 11-2** con unicidad por participante.
 - [x] **10 · Descripción:** secciones narrativas persistidas.
 - [x] **11 · Objetivos:** objetivos y productos académicos persistidos.
 - [x] **12 · Metodología:** secciones persistidas.
@@ -237,7 +239,7 @@ Pantallas principales: `02`, `03`, `04`–`20`, `22`, `28`, `33`.
 - [x] **22 · Expediente:** la pantalla consume el dossier real del backend (`dossierActual`).
 - [x] **22 · Expediente:** pestañas Documentos, Evaluaciones, Resolución e Historial conectadas al dossier real.
 - [x] **28 · Historial:** conectado al arreglo `historial` y a `vinculacion_evaluaciones` del dossier.
-- [ ] **33 · Perfil:** no hay endpoint para actualizar datos del usuario.
+- [x] **33 · Perfil:** endpoint `PATCH /auth/usuarios/{id_usuario}/orcid` para solicitar, validar (ISO 7064 MOD 11-2) y vincular el ORCID único al perfil del investigador.
 - [ ] **33 · Perfil:** no hay endpoint para consultar roles/permisos actualizados.
 
 ### 4.2 Vinculación

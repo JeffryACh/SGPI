@@ -46,17 +46,19 @@ Se ejecutó la suite de verificación automatizada [`test_endpoints.ps1`](../../
 ## 2. Comprobaciones Funcionales de Interfaz y Lógica de Negocio
 
 1. **Autenticación Institucional y Control por Rol:** Valida credenciales contra `usuarios` con hash SHA-256 + HMAC; los endpoints de bandeja y dictamen del Comité Técnico (`/propuestas/comite/*`) rechazan con `403 Forbidden` a usuarios sin el rol correspondiente.
-2. **Validación de Formularios de Formulación:** Los campos obligatorios vacíos bloquean el avance; la dedicación horaria exige $\ge 4\text{ h/semana}$ por investigador.
-3. **Control Presupuestario en Tiempo Real:** Recalcula dinámicamente y bloquea el avance al superar el tope anual de la modalidad; valida estrictamente que partidas de equipo e instrumentación científica se presupuesten solo en el Año 1 (Sección 2.3.9).
-4. **Repositorio de Instrumentos VIE 2027:** La tarjeta de instrumentos en Pantalla 05 carga los documentos oficiales dinámicamente desde el Backend y Supabase Storage.
-5. **Generación Asíncrona de Evaluación IA:** Al confirmar el envío de la propuesta (Pantalla 18 $\rightarrow$ 19), el frontend dispara la evaluación preliminar con Gemini Online (`gemini-3.5-flash`) y muestra el puntaje sugerido en la pantalla de éxito.
-6. **Paneles de Referencia IA Adaptados por Nivel:**
+2. **Validación de Formularios, Límites de Caracteres y Listas Cerradas:** Los campos obligatorios vacíos bloquean el avance; cada `<input>` y `<textarea>` aplica `maxlength` acorde al esquema de base de datos; los campos de dominio acotado emplean listas `<select>` alimentadas por catálogos oficiales; la dedicación horaria exige $\ge 4\text{ h/semana}$ por investigador.
+3. **Protección Multicapa contra Inyección SQL:** Validación preventiva en cliente (`contieneInyeccionSQL`), middleware HTTP en FastAPI (`sql_injection_guard` en `backend/app/main.py`), escape de comodines en búsquedas `ILIKE` (`_escape_ilike`) y consultas parametrizadas (`%s`) en `psycopg`.
+4. **Solicitud, Validación ISO 7064 MOD 11-2, Autocompletado y Unicidad del ORCID:** Los códigos ORCID no se generan sintéticamente; se solicitan al investigador, se validan con el algoritmo oficial de dígito verificador **ISO 7064 MOD 11-2** (`esOrcidValido` / `validar_orcid`), se asocian al perfil del investigador para autocompletar al seleccionarlo y se verifica su unicidad entre todos los miembros y colaboradores externos.
+5. **Control Presupuestario en Tiempo Real:** Recalcula dinámicamente y bloquea el avance al superar el tope anual de la modalidad; valida estrictamente que partidas de equipo e instrumentación científica se presupuesten solo en el Año 1 (Sección 2.3.9).
+6. **Repositorio de Instrumentos VIE 2027:** La tarjeta de instrumentos en Pantalla 05 carga los documentos oficiales dinámicamente desde el Backend y Supabase Storage.
+7. **Generación Asíncrona de Evaluación IA:** Al confirmar el envío de la propuesta (Pantalla 18 $\rightarrow$ 19), el frontend dispara la evaluación preliminar con Gemini Online (`gemini-3.5-flash`) y muestra el puntaje sugerido en la pantalla de éxito.
+8. **Paneles de Referencia IA Adaptados por Nivel:**
    - **Vinculación (Pantalla 23):** Diagnóstico preliminar de activos de propiedad intelectual y madurez tecnológica (TRL).
    - **Comité Técnico (Pantalla 24):** Rúbrica oficial ponderada V12, advertencia de bloqueo si un obligatorio tiene $< 8$, botón interactivo **«Aplicar puntajes IA como base»**, y transición de estado respaldada en backend.
    - **Consejo de Escuela (Pantalla 25):** Auditoría de carga horaria semanal y pertinencia temática.
    - **Dirección de Investigación (Pantalla 26):** Checklist normativo de 5 puntos de admisibilidad de la VIE.
    - **CIE (Pantalla 27):** Borrador de resolución colegiada motivada para acta formal.
-7. **Buscador Facetado e Histórico:** Búsqueda por palabras clave, códigos institucionales (`SI-YYYY-NNN`) y filtros combinados.
-8. **Centro de Notificaciones:** Notificaciones automáticas ante cambios de estado de las propuestas registradas por triggers en PostgreSQL y generadas al emitir dictamen favorable.
-9. **Compatibilidad Multiplataforma y Responsiva:** Funcionamiento verificado en navegadores modernos de escritorio y dispositivos móviles.
-10. **Conmutación Transparente de Hosting:** Funciona de forma idéntica en entorno local (`http://localhost:3001`) y desplegado en la nube (**Frontend en Vercel + Backend en Render**).
+9. **Buscador Facetado e Histórico:** Búsqueda por palabras clave, códigos institucionales (`SI-YYYY-NNN`) y filtros combinados.
+10. **Centro de Notificaciones:** Notificaciones automáticas ante cambios de estado de las propuestas registradas por triggers en PostgreSQL y generadas al emitir dictamen favorable.
+11. **Compatibilidad Multiplataforma y Responsiva:** Funcionamiento verificado en navegadores modernos de escritorio y dispositivos móviles.
+12. **Conmutación Transparente de Hosting:** Funciona de forma idéntica en entorno local (`http://localhost:3001`) y desplegado en la nube (**Frontend en Vercel con `outputDirectory: "frontend"` + Backend en Render + Supabase Cloud**).

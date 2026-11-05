@@ -16,7 +16,7 @@ Este catálogo define las **33 pantallas base** del prototipo interactivo del SG
 | **06** | Mis Propuestas | Formulación / Gestión | Investigador | `GET /propuestas?id_usuario=X` |
 | **07** | Selección de Modalidad | Formulación (Paso 0) | Investigador | `GET /modalidades/totalmodalidades` (Topes anuales de financiamiento) |
 | **08** | Asistente: Datos Generales | Formulación (Paso 1) | Investigador | `GET /escuelas/totalescuelas`, `/lineas_de_investigacion/totalLineas` |
-| **09** | Asistente: Equipo Investigador | Formulación (Paso 2) | Investigador | `GET /tipos_hora/totalTiposHora` (Validación $\ge 4\text{ h/sem}$ por persona) |
+| **09** | Asistente: Equipo Investigador | Formulación (Paso 2) | Investigador | `GET /tipos_hora/totalTiposHora`, `GET /auth/usuarios`, `PATCH /auth/usuarios/{id}/orcid` (Validación $\ge 4\text{ h/sem}$ por persona, listas cerradas y ORCID único validado bajo ISO 7064 MOD 11-2) |
 | **10** | Asistente: Descripción y Fundamentación | Formulación (Paso 3) | Investigador | Almacenamiento estructurado (Problema, justificación y estado del arte) |
 | **11** | Asistente: Objetivos (General y Específicos)| Formulación (Paso 4) | Investigador | Tabla `proposal_objectives` |
 | **12** | Asistente: Metodología y TRL | Formulación (Paso 5) | Investigador | Validación de nivel de madurez tecnológica (TRL 4 a 7 en DT) |
@@ -40,7 +40,7 @@ Este catálogo define las **33 pantallas base** del prototipo interactivo del SG
 | **30** | Resultados de Consulta Histórica | Consulta / Reporte | Todos | Tabla de resultados con código `SI-YYYY-NNN`, modalidad, escuela y monto |
 | **31** | Administración de Convocatorias | Administración | Dirección / VIE | Gestión de etapas y cronograma oficial de la VIE |
 | **32** | Gestión de Rúbricas y Catálogos | Administración | Dirección / VIE | `GET /catalogos` y `GET /ia/criterios` |
-| **33** | Perfil de Usuario y Cambio de Rol | Sistema | Todos | Selector interactivo de roles institucionales y logout |
+| **33** | Perfil de Usuario y Cambio de Rol | Sistema | Todos | Solicitud/actualización de ORCID institucional validado (`PATCH /auth/usuarios/{id}/orcid`), selector de roles y logout |
 
 ---
 

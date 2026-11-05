@@ -37,6 +37,7 @@ ARCHIVO: backend/app/routers/propuestas.py
 import logging
 import math
 import os
+import re
 from contextlib import ExitStack
 from datetime import date, datetime
 from typing import Any, Optional
@@ -54,6 +55,13 @@ from ..estados import (
     resolver_estado,
     transicion_permitida,
     usuario_puede_transicionar,
+)
+from .auth import (
+    _escape_ilike,
+    contiene_inyeccion_sql,
+    obtener_orcid_usuario,
+    registrar_orcid_usuario,
+    validar_orcid,
 )
 from .dictamen_vie import parsear_dictamen
 from .ia import generar_y_guardar_evaluacion_ia, obtener_evaluacion_ia_guardada
@@ -145,18 +153,21 @@ class TeamMemberIn(BaseModel):
     """
     Modelo de entrada que representa a un miembro del equipo de investigación en la propuesta.
 
-    Valida la asignación horaria semanal de cada investigador entre 1 y 40 horas y su tipo de financiamiento.
+    Valida la asignación horaria semanal de cada investigador entre 1 y 40 horas, su tipo de financiamiento
+    y el identificador ORCID único asociado a su perfil institucional.
 
     Se utiliza dentro del arreglo 'equipo' de PropuestaCrearIn (Pantalla 09).
 
     atributos:
         * Optional[int] : id_usuario Identificador del usuario que integrará el equipo investigador.
         * Optional[str] : correo Correo institucional para resolver al usuario en servidor.
+        * Optional[str] : orcid Identificador ORCID validado vinculado al perfil del investigador.
         * int : id_tipo_hora Identificador del tipo de hora asignada (VIE, CONS, REC, DOC, etc.).
         * int : horas_asignadas Cantidad de horas semanales dedicadas al proyecto.
     """
     id_usuario: Optional[int] = None
-    correo: Optional[str] = None
+    correo: Optional[str] = Field(default=None, max_length=255)
+    orcid: Optional[str] = Field(default=None, max_length=19)
     id_tipo_hora: int
     horas_asignadas: int = Field(ge=1, le=40)
 
@@ -175,7 +186,7 @@ class ObjetivoIn(BaseModel):
         * int : orden Posición ordinal del objetivo en el documento de propuesta.
     """
     codigo_objetivo: str = Field(..., max_length=10, description="Ej: OG, OE1, OE2")
-    descripcion: str
+    descripcion: str = Field(..., max_length=1000)
     orden: int = 1
 
 
@@ -195,11 +206,11 @@ class ProductoAcademicoIn(BaseModel):
         * Optional[int] : id_objetivo Objetivo específico al que se asocia el producto.
         * bool : es_obligatorio Indica si el producto es parte de la cuota normativa obligatoria.
     """
-    tipo_producto: str
-    descripcion: str
-    meta_esperada: str
-    categoria: str
-    codigo_objetivo: Optional[str] = None
+    tipo_producto: str = Field(..., max_length=120)
+    descripcion: str = Field(..., max_length=1000)
+    meta_esperada: str = Field(..., max_length=500)
+    categoria: str = Field(..., max_length=120)
+    codigo_objetivo: Optional[str] = Field(default=None, max_length=10)
     id_objetivo: Optional[int] = None
     es_obligatorio: bool = True
 
@@ -223,15 +234,15 @@ class PlanAccionIn(BaseModel):
         * Optional[int] : mes_inicio Mes ordinal de inicio dentro del proyecto.
         * Optional[int] : mes_fin Mes ordinal de finalización dentro del proyecto.
     """
-    descripcion_actividad: str
+    descripcion_actividad: str = Field(..., max_length=500)
     fecha_inicio: date
     fecha_fin: Optional[date] = None
     id_usuario_responsable: Optional[int] = None
-    correo_responsable: Optional[str] = None
-    codigo_objetivo: Optional[str] = None
+    correo_responsable: Optional[str] = Field(default=None, max_length=255)
+    codigo_objetivo: Optional[str] = Field(default=None, max_length=10)
     id_objetivo: Optional[int] = None
-    resultado_esperado: Optional[str] = None
-    rol_responsable: Optional[str] = None
+    resultado_esperado: Optional[str] = Field(default=None, max_length=500)
+    rol_responsable: Optional[str] = Field(default=None, max_length=100)
     mes_inicio: Optional[int] = Field(default=None, ge=1, le=36)
     mes_fin: Optional[int] = Field(default=None, ge=1, le=36)
 
@@ -253,13 +264,13 @@ class RiesgoIn(BaseModel):
         * Optional[int] : id_usuario_responsable Persona encargada de monitorear el riesgo.
         * Optional[str] : correo_responsable Correo institucional para resolver al responsable.
     """
-    descripcion_riesgo: str
+    descripcion_riesgo: str = Field(..., max_length=500)
     id_nivel_probabilidad: int
     id_nivel_impacto: int
-    medida_mitigacion: Optional[str] = None
+    medida_mitigacion: Optional[str] = Field(default=None, max_length=1000)
     id_plan_accion: Optional[int] = None
     id_usuario_responsable: Optional[int] = None
-    correo_responsable: Optional[str] = None
+    correo_responsable: Optional[str] = Field(default=None, max_length=255)
 
 
 class PresupuestoItemIn(BaseModel):
@@ -279,7 +290,7 @@ class PresupuestoItemIn(BaseModel):
     id_rubro: int
     monto: float = Field(ge=0)
     anio: int = Field(default=1, ge=1, le=3)
-    justificacion: Optional[str] = ""
+    justificacion: Optional[str] = Field(default="", max_length=1000)
 
 
 class DeclaracionEticaIn(BaseModel):
@@ -298,12 +309,12 @@ class DeclaracionEticaIn(BaseModel):
         * Optional[str] : numero_permiso Número oficial de oficio o resolución de permiso.
         * Optional[str] : estado_tramite Estado actual de la gestión (Aprobado, En trámite).
     """
-    tipo_aspecto: str
+    tipo_aspecto: str = Field(..., max_length=120)
     aplica: bool
-    justificacion_exencion: Optional[str] = ""
-    ente_regulatorio: Optional[str] = None
-    numero_permiso: Optional[str] = None
-    estado_tramite: Optional[str] = None
+    justificacion_exencion: Optional[str] = Field(default="", max_length=1500)
+    ente_regulatorio: Optional[str] = Field(default=None, max_length=150)
+    numero_permiso: Optional[str] = Field(default=None, max_length=100)
+    estado_tramite: Optional[str] = Field(default=None, max_length=100)
 
 
 class ColaboradorExternoIn(BaseModel):
@@ -324,10 +335,10 @@ class ColaboradorExternoIn(BaseModel):
     nombre_completo: str = Field(..., min_length=3, max_length=150)
     institucion: str = Field(..., min_length=2, max_length=200)
     rol: str = Field(..., min_length=2, max_length=100)
-    correo: Optional[str] = None
-    orcid: Optional[str] = None
+    correo: Optional[str] = Field(default=None, max_length=255)
+    orcid: Optional[str] = Field(default=None, max_length=19)
     horas_asignadas: Optional[int] = Field(default=None, ge=1, le=40)
-    responsabilidad: Optional[str] = None
+    responsabilidad: Optional[str] = Field(default=None, max_length=500)
 
 
 class SeccionPropuestaIn(BaseModel):
@@ -344,7 +355,7 @@ class SeccionPropuestaIn(BaseModel):
     """
     codigo_seccion: str = Field(..., min_length=1, max_length=80)
     titulo: str = Field(..., min_length=1, max_length=200)
-    contenido: str
+    contenido: str = Field(..., max_length=8000)
     orden: int = 1
 
 
@@ -364,10 +375,10 @@ class DocumentoPropuestaIn(BaseModel):
     """
     nombre_archivo: str = Field(..., min_length=1, max_length=255)
     tipo_documento: str = Field(default="Documento de propuesta", max_length=100)
-    extension: Optional[str] = None
-    file_path: Optional[str] = None
+    extension: Optional[str] = Field(default=None, max_length=20)
+    file_path: Optional[str] = Field(default=None, max_length=500)
     tamano_bytes: Optional[int] = Field(default=0, ge=0)
-    mime_type: Optional[str] = None
+    mime_type: Optional[str] = Field(default=None, max_length=120)
 
 
 class PropuestaCrearIn(BaseModel):
@@ -415,21 +426,21 @@ class PropuestaCrearIn(BaseModel):
     id_modalidad: int
     id_linea_investigacion: int
     titulo: str = Field(..., min_length=5, max_length=300)
-    resumen: Optional[str] = ""
+    resumen: Optional[str] = Field(default="", max_length=3000)
     id_convocatoria: Optional[int] = 1
     fecha_inicio: Optional[date] = None
     fecha_fin: Optional[date] = None
     estado_inicial: Optional[int] = None
-    estado_inicial_nombre: Optional[str] = None
+    estado_inicial_nombre: Optional[str] = Field(default=None, max_length=120)
     client_uuid: Optional[UUID] = None
-    palabras_clave: Optional[str] = None
-    resumen_en: Optional[str] = None
-    palabras_clave_en: Optional[str] = None
-    prioridad_nacional_ods: Optional[str] = None
+    palabras_clave: Optional[str] = Field(default=None, max_length=300)
+    resumen_en: Optional[str] = Field(default=None, max_length=3000)
+    palabras_clave_en: Optional[str] = Field(default=None, max_length=300)
+    prioridad_nacional_ods: Optional[str] = Field(default=None, max_length=200)
     trl_inicial: Optional[int] = Field(default=None, ge=1, le=9)
     trl_esperado: Optional[int] = Field(default=None, ge=1, le=9)
     potencial_pi: Optional[bool] = None
-    activo_previsto: Optional[str] = None
+    activo_previsto: Optional[str] = Field(default=None, max_length=250)
     equipo: list[TeamMemberIn] = []
     colaboradores_externos: list[ColaboradorExternoIn] = []
     secciones: list[SeccionPropuestaIn] = []
@@ -457,7 +468,7 @@ class EstadoActualizarIn(BaseModel):
     """
     id_nuevo_estado: int
     id_usuario_responsable: int
-    observaciones: Optional[str] = "Cambio de estado de propuesta"
+    observaciones: Optional[str] = Field(default="Cambio de estado de propuesta", max_length=2000)
 
 
 class EvaluacionIn(BaseModel):
@@ -481,8 +492,8 @@ class EvaluacionIn(BaseModel):
     """
     id_usuario_eval: int
     id_rol_evaluador: int
-    observaciones: Optional[str] = ""
-    puntaje_comite: Optional[int] = None
+    observaciones: Optional[str] = Field(default="", max_length=4000)
+    puntaje_comite: Optional[int] = Field(default=None, ge=0, le=100)
     id_resolucion_cie: Optional[int] = None
     cambiar_a_estado: Optional[int] = None
 
@@ -725,10 +736,10 @@ def listar_propuestas(
     id_modalidad: Optional[int] = Query(default=None, description="Filtrar por modalidad"),
     id_linea: Optional[int] = Query(default=None, description="Filtrar por línea de investigación"),
     id_estado: Optional[int] = Query(default=None, description="Filtrar por ID de estado"),
-    estado_nombre: Optional[str] = Query(default=None, description="Filtrar por nombre de estado"),
-    q: Optional[str] = Query(default=None, description="Término de búsqueda en título o código"),
-    anio_desde: Optional[int] = Query(default=None, description="Filtrar desde el año de inicio"),
-    anio_hasta: Optional[int] = Query(default=None, description="Filtrar hasta el año de inicio"),
+    estado_nombre: Optional[str] = Query(default=None, max_length=100, description="Filtrar por nombre de estado"),
+    q: Optional[str] = Query(default=None, max_length=150, description="Término de búsqueda en título o código"),
+    anio_desde: Optional[int] = Query(default=None, ge=2000, le=2100, description="Filtrar desde el año de inicio"),
+    anio_hasta: Optional[int] = Query(default=None, ge=2000, le=2100, description="Filtrar hasta el año de inicio"),
     solo_cerradas: bool = Query(default=False, description="Mostrar únicamente propuestas cerradas"),
     conn: Connection = Depends(get_conn),
 ):
@@ -795,16 +806,22 @@ def listar_propuestas(
             params.append(id_estado)
 
         if estado_nombre:
-            where_clauses.append("e.nombre_estado ILIKE %s")
-            params.append(f"%{estado_nombre}%")
+            if contiene_inyeccion_sql(estado_nombre):
+                raise HTTPException(status_code=400, detail="Filtro de estado inválido.")
+            est_clean = _escape_ilike(estado_nombre.strip())
+            where_clauses.append("e.nombre_estado ILIKE %s ESCAPE '\\'")
+            params.append(f"%{est_clean}%")
 
         if q:
+            if contiene_inyeccion_sql(q):
+                raise HTTPException(status_code=400, detail="Término de búsqueda inválido.")
+            q_clean = _escape_ilike(q.strip())
             if has_codigo:
-                where_clauses.append("(p.titulo ILIKE %s OR p.codigo ILIKE %s)")
-                params.extend([f"%{q}%", f"%{q}%"])
+                where_clauses.append("(p.titulo ILIKE %s ESCAPE '\\' OR p.codigo ILIKE %s ESCAPE '\\')")
+                params.extend([f"%{q_clean}%", f"%{q_clean}%"])
             else:
-                where_clauses.append("p.titulo ILIKE %s")
-                params.append(f"%{q}%")
+                where_clauses.append("p.titulo ILIKE %s ESCAPE '\\'")
+                params.append(f"%{q_clean}%")
 
         anio_expr = "EXTRACT(YEAR FROM COALESCE(p.fecha_inicio, p.fecha_creacion))" if has_fechas else "EXTRACT(YEAR FROM p.fecha_creacion)"
         if anio_desde is not None:
@@ -1245,7 +1262,10 @@ def obtener_dossier_propuesta(
         if not prop:
             raise HTTPException(status_code=404, detail="Propuesta no encontrada")
 
-        equipo = equipo_cur.fetchall()
+        equipo = [
+            {**dict(m), "orcid": generar_orcid_usuario(m["id_usuario"])}
+            for m in equipo_cur.fetchall()
+        ]
         objetivos = objetivos_cur.fetchall()
         productos = productos_cur.fetchall()
         planes = planes_cur.fetchall()
@@ -1416,10 +1436,19 @@ def crear_propuesta(
             usuarios_por_correo[clave] = fila["id_usuario"] if fila else None
             return usuarios_por_correo[clave]
 
+        # [Línea clave]: Bloquea patrones de inyección SQL en los textos principales del expediente antes de procesar.
+        if contiene_inyeccion_sql(payload.titulo) or contiene_inyeccion_sql(payload.resumen):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El título o resumen contiene patrones de texto no permitidos por seguridad.",
+            )
+
         equipo_resuelto: list[TeamMemberIn] = []
         claves_equipo: set[tuple[int, int]] = set()
+        orcids_ocupados: dict[str, str] = {}
         for miembro in payload.equipo:
             id_usuario = miembro.id_usuario
+            correo_resuelto = miembro.correo
             if miembro.correo:
                 cur.execute(
                     f"SELECT id_usuario, correo FROM usuarios WHERE lower(trim(correo)) = lower(trim(%s)){active_filter} LIMIT 1;",
@@ -1432,11 +1461,39 @@ def crear_propuesta(
                         detail=f"El correo {miembro.correo} no corresponde a un usuario institucional activo.",
                     )
                 id_usuario = usuario["id_usuario"]
+                correo_resuelto = usuario["correo"]
+            elif id_usuario:
+                cur.execute("SELECT correo FROM usuarios WHERE id_usuario = %s LIMIT 1;", (id_usuario,))
+                fila_u = cur.fetchone()
+                if fila_u:
+                    correo_resuelto = fila_u["correo"]
             if not id_usuario:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Cada integrante del equipo debe incluir id_usuario o correo institucional.",
                 )
+            # [Línea clave]: Obtiene el ORCID registrado en el perfil del investigador o solicita validar el proporcionado.
+            orcid_perfil = obtener_orcid_usuario(id_usuario=id_usuario, correo=correo_resuelto, conn=conn)
+            orcid_miembro = (miembro.orcid or orcid_perfil).strip().upper()
+            if not orcid_miembro:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Se debe solicitar y registrar un ORCID válido para el investigador ({correo_resuelto or id_usuario}).",
+                )
+            if not validar_orcid(orcid_miembro):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"El ORCID «{miembro.orcid}» no es válido según el estándar oficial ISO 7064 (formato 0000-0000-0000-000X).",
+                )
+            dueno_orcid = orcids_ocupados.get(orcid_miembro)
+            if dueno_orcid and dueno_orcid != f"user:{id_usuario}":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"El ORCID {orcid_miembro} ya está asignado a otro investigador. Cada ORCID debe ser único.",
+                )
+            # [Línea clave]: Vincula el ORCID validado al perfil del investigador para futuros autocompletados.
+            registrar_orcid_usuario(id_usuario, correo_resuelto, orcid_miembro)
+            orcids_ocupados[orcid_miembro] = f"user:{id_usuario}"
             clave = (id_usuario, miembro.id_tipo_hora)
             if clave in claves_equipo:
                 continue
@@ -1444,11 +1501,29 @@ def crear_propuesta(
             equipo_resuelto.append(
                 TeamMemberIn(
                     id_usuario=id_usuario,
-                    correo=miembro.correo,
+                    correo=correo_resuelto,
+                    orcid=orcid_miembro,
                     id_tipo_hora=miembro.id_tipo_hora,
                     horas_asignadas=miembro.horas_asignadas,
                 )
             )
+
+        for colab in payload.colaboradores_externos:
+            orcid_ext = (colab.orcid or "").strip().upper()
+            # [Línea clave]: Exige y valida el ORCID solicitado de cada colaborador externo bajo ISO 7064 MOD 11-2.
+            if not orcid_ext or not validar_orcid(orcid_ext):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"El ORCID «{colab.orcid or ''}» del colaborador externo «{colab.nombre_completo}» no es válido según el estándar ISO 7064.",
+                )
+            clave_ext = f"ext:{colab.nombre_completo.strip().lower()}"
+            dueno_previo = orcids_ocupados.get(orcid_ext)
+            if dueno_previo and dueno_previo != clave_ext:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"El ORCID {orcid_ext} ya pertenece a otro participante. Cada ORCID debe ser único.",
+                )
+            orcids_ocupados[orcid_ext] = clave_ext
 
         # [Línea clave]: Regla 2.3.9: bloquea compras de bienes duraderos en años 2 o 3 con HTTP 400.
         for item in payload.presupuesto:
