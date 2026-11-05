@@ -1,10 +1,29 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "cleanUrls": true,
   "rewrites": [
     {
       "source": "/",
       "destination": "/frontend/html/SGPI.html"
+    },
+    {
+      "source": "/index.html",
+      "destination": "/frontend/html/SGPI.html"
+    },
+    {
+      "source": "/SGPI",
+      "destination": "/frontend/html/SGPI.html"
+    },
+    {
+      "source": "/SGPI.html",
+      "destination": "/frontend/html/SGPI.html"
+    },
+    {
+      "source": "/catalogo",
+      "destination": "/frontend/html/catalogo.html"
+    },
+    {
+      "source": "/catalogo.html",
+      "destination": "/frontend/html/catalogo.html"
     },
     {
       "source": "/html/(.*)",
