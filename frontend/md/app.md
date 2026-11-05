@@ -111,8 +111,10 @@ let criteriosOficialesIA = null;
 
 ## 5. Controles de Seguridad, Límites de Caracteres, Listas Cerradas y Validación ORCID (ISO 7064 MOD 11-2)
 
-1. **Límites de Caracteres (`obtenerLimiteCaracteres`)**:
-   - Todo campo de texto (`<input>` y `<textarea>`) incorpora el atributo `maxlength` correspondiente a las columnas de PostgreSQL y reglas institucionales VIE 2027 (ej. ORCID `19`, códigos/oficios `30`, correos `120`, nombres `120`, títulos `300`, resúmenes `2500`, secciones extensas `4000`) y trunca entradas excedentes en tiempo real.
+1. **Límites de Caracteres y Contadores Normativos (`obtenerLimiteCaracteres`, `debeMostrarContadorCaracteres` y `formatearTextoContador`)**:
+   - Todo campo textual incorpora el atributo `maxlength` alineado con la base de datos y la normativa oficial de la carpeta `Docs Proyecto`.
+   - **Exclusión del Login:** En la pantalla de inicio de sesión (`login:email` y `login:password`), se eliminan por completo los contadores visuales para preservar una interfaz institucional limpia.
+   - **Enfoque en Propuestas y Convocatorias:** Los contadores visuales en tiempo real se reservan estrictamente para las secciones de formulación de propuestas (Pantallas 08–18) y administración de convocatorias/rúbricas (Pantallas 31–32) con las restricciones oficiales: Resumen y Abstract (`3500` caracteres, máx. 500 palabras), Problema de investigación (`4000` caracteres, máx. 1 página), Estado del arte (`8000` caracteres, máx. 2 páginas), Palabras clave (`250` caracteres, 4 a 6 descriptores), Título (`300`), Metodología (`6000`), Actividades y Riesgos (`300`/`600`), Ética (`2000`) y ORCID (`19` caracteres bajo ISO 7064).
 2. **Protección contra Inyección SQL (`contieneInyeccionSQL` y `sql_injection_guard`)**:
    - En el cliente (`frontend/js/app.js`), la función `contieneInyeccionSQL(valor)` inspecciona todos los campos antes de guardar o enviar formularios.
    - En el servidor (`backend/app/main.py` y `backend/app/routers/auth.py`), el middleware HTTP `sql_injection_guard` analiza parámetros de consulta y cuerpos JSON rechazando patrones maliciosos con `400 Bad Request`, además del uso estricto de consultas parametrizadas (`%s`) en `psycopg` y escape de comodines en `ILIKE` (`_escape_ilike`).

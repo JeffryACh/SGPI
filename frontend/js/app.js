@@ -2304,32 +2304,203 @@ async function refrescarCatalogosFront() {
 }
 
 /**
- * Determinar el límite máximo de caracteres permitido (maxlength) para un campo de formulario según su semántica.
- * Evalúa la etiqueta, la clave de almacenamiento y el tipo de control para asignar topes coherentes con los modelos Pydantic del backend.
+ * Determinar el límite máximo de caracteres permitido (maxlength) para un campo según las plantillas oficiales de 'Docs Proyecto'.
+ * Establece los límites normativos de la Convocatoria Fondos VIE 2027 (Formulario de Proyecto, Plan de Acción y Gestión de Riesgos,
+ * Plantilla de Presupuesto, Acuerdos de Consejo e Instrumentos de Convocatoria aprobados mediante acuerdo CIE-237-2026).
+ *
  * parametros:
- *     - string : label Etiqueta visible del campo en la interfaz.
- *     - string : key Clave interna de almacenamiento o nombre del campo.
+ *     - string : label Etiqueta descriptiva del control visual.
+ *     - string : key Clave interna o identificador del campo.
  *     - string : kind Tipo de control ('text', 'textarea', 'email', 'password', 'search', etc.).
  * return:
  *     + number|null : limite Cantidad máxima de caracteres permitidos o null si el control no es textual.
  */
 function obtenerLimiteCaracteres(label = "", key = "", kind = "text") {
   if (kind === "select" || kind === "checkbox" || kind === "file" || kind === "date" || kind === "number") return null;
-  // [Línea clave]: ¿Por qué soy importante? Asigna el tope de caracteres por tipo semántico de campo. ¿Para qué? Impedir desbordamientos de texto en el navegador y alinear el cliente con los límites de Pydantic. ¿Dónde me usan? En field() y adminField().
+  // [Línea clave]: ¿Por qué soy importante? Asigna topes de longitud alineados con las restricciones documentales de Docs Proyecto y el esquema de base de datos. ¿Para qué? Proteger contra desbordamientos de datos y asegurar consistencia con los formularios oficiales VIE 2027. ¿Dónde me usan? En field() y adminField().
   const ref = `${label} ${key}`.toLowerCase();
-  if (ref.includes("orcid")) return 19;
+
+  // 1. Identificadores técnicos y credenciales
+  if (ref.includes("orcid")) return 19; // Norma ISO 7064 MOD 11-2 (0000-0000-0000-000X)
   if (ref.includes("siglas") || ref.includes("version") || ref.includes("versión")) return 20;
   if (ref.includes("oficio") || ref.includes("sesion") || ref.includes("sesión") || ref.includes("articulo") || ref.includes("artículo") || ref.includes("codigo") || ref.includes("código")) return 50;
   if (ref.includes("correo") || ref.includes("email") || kind === "email") return 255;
   if (ref.includes("password") || ref.includes("contraseña") || kind === "password") return 128;
   if (ref.includes("buscar") || ref.includes("query") || kind === "search") return 150;
-  if (ref.includes("nombre") || ref.includes("persona") || ref.includes("responsable")) return 150;
-  if (ref.includes("institucion") || ref.includes("institución") || ref.includes("entidad")) return 200;
-  if (ref.includes("titulo") || ref.includes("título") || ref.includes("palabras clave") || ref.includes("actividad") || ref.includes("resultado")) return 300;
-  if (ref.includes("objetivo") || ref.includes("riesgo") || ref.includes("mitigacion") || ref.includes("mitigación") || ref.includes("justificacion") || ref.includes("justificación") || ref.includes("responsabilidad")) return 1000;
-  if (ref.includes("resumen")) return 3000;
+
+  // 2. Metadatos de participantes y convocatorias (Docs Proyecto)
+  if (ref.includes("nombre") || ref.includes("persona") || ref.includes("responsable") || ref.includes("investigador") || ref.includes("colaborador")) return 120;
+  if (ref.includes("institucion") || ref.includes("institución") || ref.includes("empresa") || ref.includes("dependencia") || ref.includes("escuela")) return 150;
+  if (ref.includes("convocatoria") || ref.includes("etapa") || ref.includes("instrumento") || ref.includes("documento")) return 150;
+
+  // 3. Formulario Oficial de Propuesta Fondos VIE 2027 (Docs Proyecto / 4- Formulario...):
+  // - Título o Nombre del proyecto (cabecera oficial)
+  if (ref.includes("titulo") || ref.includes("título") || ref.includes("nombre del proyecto") || ref.includes("nombre de la propuesta")) return 300;
+  // - Palabras clave: 4 a 6 términos descriptores (Docs Proyecto)
+  if (ref.includes("palabras clave") || ref.includes("keywords") || ref.includes("descriptores")) return 250;
+  // - Resumen y Abstract: [Máximo 500 palabras] (~3500 caracteres)
+  if (ref.includes("resumen") || ref.includes("abstract")) return 3500;
+  // - Problema de investigación y su importancia: [Máximo una página] (~4000 caracteres)
+  if (ref.includes("problema")) return 4000;
+  // - Estado del arte y antecedentes: [Máximo dos páginas] con al menos 10 fuentes WoS/Scopus (~8000 caracteres)
+  if (ref.includes("estado del arte") || ref.includes("antecedentes")) return 8000;
+  // - Objetivos general y específicos
+  if (ref.includes("objetivo")) return 800;
+  // - Metodología, procedimientos y variables de estudio
+  if (ref.includes("metodolog") || ref.includes("diseño metodológico") || ref.includes("procedimiento")) return 6000;
+  // - Plan de acción: actividades y resultados esperados (Plantilla Excel Plan de Acción)
+  if (ref.includes("actividad") || ref.includes("resultado")) return 300;
+  // - Gestión de riesgos y medidas de mitigación (Plantilla Excel Riesgos)
+  if (ref.includes("riesgo")) return 300;
+  if (ref.includes("mitigaci")) return 600;
+  // - Estrategia de divulgación y socialización (Científica, institucional, socialización, medios)
+  if (ref.includes("divulgaci") || ref.includes("socializaci") || ref.includes("canales") || ref.includes("medios")) return 1500;
+  // - Aspectos éticos y declaración de exención de comités reguladores
+  if (ref.includes("etica") || ref.includes("ética") || ref.includes("exencion") || ref.includes("exención")) return 2000;
+  // - Hoja de ruta estratégica institucional
+  if (ref.includes("hoja de ruta")) return 3000;
+  // - Referencias bibliográficas especializadas
+  if (ref.includes("referencia")) return 6000;
+  // - Justificaciones y responsabilidades
+  if (ref.includes("justificaci") || ref.includes("responsabilidad") || ref.includes("tareas")) return 1000;
+  // - Criterios de rúbricas y catálogos de convocatoria (Pantallas 31 y 32)
+  if (ref.includes("criterio") || ref.includes("rubrica") || ref.includes("rúbrica")) return 1000;
+  // - Dictámenes de evaluación, acuerdos y resoluciones colegiadas
+  if (ref.includes("fundamentaci") || ref.includes("observacion") || ref.includes("dictamen") || ref.includes("acuerdo") || ref.includes("resolucion") || ref.includes("resolución") || ref.includes("condicion") || ref.includes("condición")) return 2500;
+
+  // Valor predeterminado para áreas de texto y entradas genéricas
   if (kind === "textarea") return 4000;
   return 250;
+}
+
+/**
+ * Determinar si un campo de formulario debe mostrar el contador visual de caracteres (X/Y caracteres).
+ * Se reserva estrictamente para las secciones de formulación de propuestas y administración de convocatorias
+ * conforme a los ejemplos y restricciones normativas de los documentos oficiales (carpeta 'Docs Proyecto':
+ * Formulario VIE 2027, Disposiciones y Acuerdos CIE-237-2026).
+ * Se excluye de manera categórica el formulario de inicio de sesión (Pantalla 01), credenciales, contraseñas,
+ * correos electrónicos institucionales, filtros de búsqueda y controles de selección.
+ *
+ * parametros:
+ *     - string : label Etiqueta descriptiva del control visual.
+ *     - string : key Clave única interna o identificador de campo (ej. 'login:email', 'modal:orcid', '08:Título').
+ *     - string : kind Tipo de control ('text', 'textarea', 'email', 'password', 'search', etc.).
+ * return:
+ *     + boolean : visible Verdadero si el control debe exhibir el contador de caracteres en la interfaz.
+ */
+function debeMostrarContadorCaracteres(label = "", key = "", kind = "text") {
+  // [Línea clave]: ¿Por qué soy importante? Impide la aparición de contadores visuales en el login o campos simples de acceso. ¿Para qué? Restringir los contadores en tiempo real a las secciones de propuestas y convocatorias donde la normativa oficial de Docs Proyecto impone topes estrictos. ¿Dónde me usan? En field(), adminField() y en el despachador de eventos de input.
+  if (!key && !label) return false;
+  const k = String(key || "").toLowerCase();
+  const lbl = String(label || "").toLowerCase();
+  const ref = `${lbl} ${k}`;
+
+  // 1. Exclusión categórica del login y credenciales institucionales
+  if (k.startsWith("login:") || current === "01") return false;
+  if (
+    kind === "password" ||
+    kind === "email" ||
+    kind === "search" ||
+    kind === "select" ||
+    kind === "checkbox" ||
+    kind === "file" ||
+    kind === "date" ||
+    kind === "number" ||
+    kind === "readonly"
+  ) {
+    return false;
+  }
+  if (
+    ref.includes("password") ||
+    ref.includes("contraseña") ||
+    ref.includes("correo") ||
+    ref.includes("email") ||
+    ref.includes("buscar") ||
+    ref.includes("query") ||
+    ref.includes("filtro")
+  ) {
+    return false;
+  }
+
+  // 2. Secciones narrativas y de justificación en propuestas y convocatorias (Docs Proyecto):
+  if (kind === "textarea") return true;
+
+  // 3. Entradas textuales con topes normativos explícitos de la Convocatoria VIE 2027:
+  // - ID ORCID institucional y externo (exactamente 19 caracteres bajo norma ISO 7064)
+  if (ref.includes("orcid")) return true;
+  // - Resumen y Abstract (máximo 500 palabras)
+  if (ref.includes("resumen") || ref.includes("abstract")) return true;
+  // - Palabras clave y Keywords (4 a 6 términos descriptores)
+  if (ref.includes("palabras clave") || ref.includes("keywords") || ref.includes("descriptores")) return true;
+  // - Título o nombre de la propuesta
+  if (
+    ref.includes("titulo") ||
+    ref.includes("título") ||
+    ref.includes("nombre del proyecto") ||
+    ref.includes("nombre de la propuesta")
+  ) {
+    return true;
+  }
+  // - Objetivos general y específicos
+  if (ref.includes("objetivo")) return true;
+  // - Plan de acción y riesgos (actividades, resultados, riesgos, mitigación)
+  if (ref.includes("actividad") || ref.includes("resultado") || ref.includes("riesgo") || ref.includes("mitigaci")) {
+    return true;
+  }
+  // - Convocatorias, etapas, instrumentos oficiales y rúbricas (Pantallas 31 y 32)
+  if (
+    ref.includes("convocatoria") ||
+    ref.includes("etapa") ||
+    ref.includes("instrumento") ||
+    ref.includes("criterio") ||
+    ref.includes("seccion") ||
+    ref.includes("sección")
+  ) {
+    return true;
+  }
+  // - Datos complementarios y responsabilidades
+  if (
+    ref.includes("responsabilidad") ||
+    ref.includes("oficio") ||
+    ref.includes("sesion") ||
+    ref.includes("sesión") ||
+    ref.includes("articulo") ||
+    ref.includes("artículo")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Formatear el texto descriptivo del contador de caracteres según la sección oficial de Docs Proyecto.
+ * Añade indicaciones contextuales como '(máx. 500 palabras)' o '(máx. 1 página)' cuando aplica.
+ *
+ * parametros:
+ *     - number : longitud Longitud actual del texto ingresado.
+ *     - number : maxLen Límite máximo permitido.
+ *     - string : label Etiqueta del campo.
+ *     - string : key Clave del campo.
+ * return:
+ *     + string : textoContador Cadena para mostrar en la interfaz.
+ */
+function formatearTextoContador(longitud = 0, maxLen = 0, label = "", key = "") {
+  // [Línea clave]: ¿Por qué soy importante? Genera una leyenda de conteo clara y explicativa acorde a Docs Proyecto. ¿Para qué? Orientar a la persona postulante con las restricciones normativas exactas. ¿Dónde me usan? En field(), adminField() y en el evento input.
+  const ref = `${label} ${key}`.toLowerCase();
+  let aclaracion = "";
+  if (ref.includes("resumen") || ref.includes("abstract")) {
+    aclaracion = " (máx. 500 palabras)";
+  } else if (ref.includes("problema")) {
+    aclaracion = " (máx. 1 página)";
+  } else if (ref.includes("estado del arte") || ref.includes("antecedentes")) {
+    aclaracion = " (máx. 2 páginas)";
+  } else if (ref.includes("palabras clave") || ref.includes("keywords")) {
+    aclaracion = " (4 a 6 descriptores)";
+  } else if (ref.includes("orcid")) {
+    aclaracion = " (ISO 7064)";
+  }
+  return `${longitud}/${maxLen} caracteres${aclaracion}`;
 }
 
 /**
@@ -2371,7 +2542,11 @@ function adminField(label, value = "", kind = "text", name = "", required = fals
       )
       .join("")}</select>`;
   else control = `<input ${attr} type="${["number", "date"].includes(kind) ? kind : "text"}" value="${esc(value)}">`;
-  const counterHtml = maxLen ? `<small class="char-counter micro muted" style="display:block;text-align:right;margin-top:2px">${String(value ?? "").length}/${maxLen} caracteres</small>` : "";
+  const mostrarContador = debeMostrarContadorCaracteres(label, name, kind);
+  const counterHtml =
+    mostrarContador && maxLen
+      ? `<small class="char-counter micro muted" style="display:block;text-align:right;margin-top:2px">${formatearTextoContador(String(value ?? "").length, maxLen, label, name)}</small>`
+      : "";
   return `<div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}${counterHtml}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>`;
 }
 
@@ -3290,9 +3465,10 @@ function field(
     control = `<div class="doc-row"><span class="doc-icon">PDF</span><div class="grow"><strong>${esc(val)}</strong></div>${act("Adjuntar", "upload", "secondary compact", "upload")}</div>`;
   else
     control = `<input ${attr} type="${["email", "number", "password", "date", "search"].includes(kind) ? kind : "text"}" value="${esc(val)}" ${kind === "readonly" ? "readonly" : ""}>`;
+  const mostrarContador = debeMostrarContadorCaracteres(label, k, kind);
   const counterHtml =
-    maxLen && kind !== "readonly"
-      ? `<small class="char-counter micro muted" style="display:block;text-align:right;margin-top:2px">${String(val ?? "").length}/${maxLen} caracteres</small>`
+    mostrarContador && maxLen && kind !== "readonly"
+      ? `<small class="char-counter micro muted" style="display:block;text-align:right;margin-top:2px">${formatearTextoContador(String(val ?? "").length, maxLen, label, k)}</small>`
       : "";
   return `<div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}${counterHtml}${help ? `<span class="help">${esc(help)}</span>` : ""}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>`;
 }
@@ -7162,7 +7338,7 @@ async function handleAction(action, el) {
             orcidInput.readOnly = Boolean(orcidRegistrado);
             state.saved["modal:orcid"] = orcidRegistrado;
             const counter = orcidInput.closest(".field")?.querySelector(".char-counter");
-            if (counter) counter.textContent = `${orcidRegistrado.length}/19 caracteres`;
+            if (counter) counter.textContent = formatearTextoContador(orcidRegistrado.length, 19, "ORCID", "modal:orcid");
           }
           results.innerHTML = "";
         };
@@ -7568,7 +7744,7 @@ async function handleAction(action, el) {
           orcidInput.value = registradoEnPerfil;
           state.saved["modal:ext-orcid"] = registradoEnPerfil;
           const counter = orcidInput.closest(".field")?.querySelector(".char-counter");
-          if (counter) counter.textContent = `${registradoEnPerfil.length}/19 caracteres`;
+          if (counter) counter.textContent = formatearTextoContador(registradoEnPerfil.length, 19, "ORCID", "modal:ext-orcid");
         });
       }, 80);
       modal(
@@ -9155,7 +9331,11 @@ document.addEventListener("input", (e) => {
   const el = e.target;
   if (el.maxLength && el.maxLength > 0) {
     const counter = el.closest(".field")?.querySelector(".char-counter");
-    if (counter) counter.textContent = `${String(el.value || "").length}/${el.maxLength} caracteres`;
+    if (counter) {
+      const fieldKey = el.dataset.field || el.dataset.adminField || "";
+      const fieldLabel = el.closest(".field")?.querySelector("label")?.textContent || "";
+      counter.textContent = formatearTextoContador(String(el.value || "").length, el.maxLength, fieldLabel, fieldKey);
+    }
   }
   if (el.dataset.field || el.dataset.adminField) {
     const sqli = el.type !== "checkbox" && contieneInyeccionSQL(el.value);
