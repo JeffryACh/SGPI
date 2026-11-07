@@ -1216,7 +1216,7 @@ async function errorDesdeRespuesta(res) {
     if (Array.isArray(data.detail)) return data.detail.map((d) => d.msg).join(" ");
     if (typeof data.error === "string") return data.error;
   } catch {}
-  return `El servidor respondió con código ${res.status}.`;
+  return `El sistema respondió con código ${res.status}.`;
 }
 
 /**
@@ -1698,7 +1698,7 @@ function payloadEvaluacionComite(decision = "favorable", observaciones = "", idD
       const criterio = mapa.get(nombre);
       if (!criterio)
         throw new Error(
-          `La rúbrica del servidor no coincide con el criterio «${nombre}». Recarga la pantalla e intenta de nuevo.`,
+          `La rúbrica del sistema no coincide con el criterio «${nombre}». Recarga la pantalla e intenta de nuevo.`,
         );
       puntajes.push({
         id_criterio_rubrica: criterio.id_criterio_rubrica,
@@ -5089,7 +5089,7 @@ function documentsForm() {
     .filter((tipo) => !archivosBorrador.some((d) => d.tipo === tipo))
     .map((tipo) => docPendiente(tipo, "Opcional"))
     .join("");
-  return `${adjuntos}<div class="action-row mt">${act("Adjuntar documento", "upload", "secondary", "plus")}</div><div class="mt">${pendientes}</div><div class="mt">${notice("Los archivos se envían con la propuesta", "Al confirmar el envío se registra la propuesta y se suben estos archivos reales a su expediente (PDF, DOCX, XLSX o PPTX, máximo 20 MB).")}</div><div class="mt">${notice("Dictámenes y acuerdos se agregan en su etapa", "El dictamen de Vinculación precede al Comité; los avales se requieren para el sometimiento formal. No se exige un documento antes de que pueda ser emitido.")}</div>`;
+  return `${adjuntos}<div class="action-row mt">${act("Adjuntar documento", "upload", "secondary", "plus")}</div><div class="mt">${pendientes}</div><div class="mt">${notice("Los archivos se envían con la propuesta", "Al confirmar el envío, los documentos adjuntos se incorporan a la propuesta (PDF, DOCX, XLSX o PPTX, máx. 20 MB).")}</div><div class="mt">${notice("Dictámenes y acuerdos se agregan en su etapa", "El dictamen de Vinculación precede al Comité; los avales se requieren para el sometimiento formal. No se exige un documento antes de que pueda ser emitido.")}</div>`;
 }
 
 /**
@@ -5123,7 +5123,7 @@ function reviewForm() {
     )
     .join(
       "",
-    )}</div><div class="mt">${notice("Próxima etapa: Vinculación", "La propuesta se registrará con estado «En revisión de Vinculación» y la evaluación preliminar IA se generará en el servidor.")}</div><label class="checkline mt"><input type="checkbox" id="reviewed" ${state.reviewed ? "checked" : ""}>He revisado la información y los documentos.</label>${!ok ? notice("Aún no puedes enviar", issues.map((i) => i.text).join(" · "), "warning") : ""}`;
+    )}</div><div class="mt">${notice("Próxima etapa: Vinculación", "La propuesta se registrará con estado «En revisión de Vinculación» y se generará la evaluación preliminar.")}</div><label class="checkline mt"><input type="checkbox" id="reviewed" ${state.reviewed ? "checked" : ""}>He revisado la información y los documentos.</label>${!ok ? notice("Aún no puedes enviar", issues.map((i) => i.text).join(" · "), "warning") : ""}`;
 }
 
 /**
@@ -5533,7 +5533,7 @@ function dossier() {
       ["Monto solicitado", money(p.amount)],
       ["Modalidad", esc(p.type)],
       ["Línea de investigación", esc(p.line)],
-    ])}<div class="mt"><h3>Resumen de la investigación</h3><p class="small muted" style="margin-top:10px">${esc(p.resumen || "Sin resumen registrado.")}</p></div><div class="mt">${notice(isClosed ? "Consulta de expediente cerrado o resuelto" : "Expediente digital sincronizado con el servidor", isClosed ? "La información se conserva para consulta. No se pueden modificar documentos ni decisiones." : "Propuesta, equipo, plan, presupuesto y decisiones conservan su versión y responsable con trazabilidad en el servidor.")}</div>`;
+    ])}<div class="mt"><h3>Resumen de la investigación</h3><p class="small muted" style="margin-top:10px">${esc(p.resumen || "Sin resumen registrado.")}</p></div><div class="mt">${notice(isClosed ? "Consulta de expediente cerrado o resuelto" : "Expediente digital sincronizado", isClosed ? "La información se conserva para consulta. No se pueden modificar documentos ni decisiones." : "Propuesta, equipo, plan, presupuesto y decisiones conservan su versión y responsable con trazabilidad completa.")}</div>`;
   else if (dossierTab === "Documentos") {
     const docs = d?.documentos || [];
     body = docs.length
@@ -8379,12 +8379,12 @@ async function handleAction(action, el) {
                 : id === "25"
                   ? notice(
                       "Registro en el sistema",
-                      "El acuerdo se guardará en «council_endorsements» con la escuela, el tipo de instancia, la sesión, el artículo, la fecha y el oficio. La propuesta solo pasará a «Avalada» cuando todas las escuelas relacionadas con ella registren su aval.",
+                      "El acuerdo de aval quedará registrado con la escuela, la sesión y el oficio correspondiente. La propuesta pasará a «Avalada» cuando todas las escuelas involucradas hayan emitido su aval.",
                     )
                   : id === "27"
                     ? notice(
                         "Registro en el sistema",
-                        "El acuerdo se guardará en «cie_resolution_evaluations» con la sesión, el artículo, la fecha, la fundamentación y las condiciones. La propuesta pasará a «Aprobada por CIE», «Con observaciones» o «Rechazada» según el tipo de acuerdo.",
+                        "El acuerdo del CIE quedará registrado con la sesión, el artículo, la fecha, la fundamentación y las condiciones. La propuesta pasará a «Aprobada por CIE», «Con observaciones» o «Rechazada» según el tipo de acuerdo.",
                       )
                     : "<p>Esta acción es una simulación y no emite un acuerdo institucional real.</p>"
           }`,
@@ -8428,7 +8428,7 @@ async function handleAction(action, el) {
           modal(
             "Decisión registrada",
             notice(
-              "Registro guardado y sincronizado con el servidor",
+              "Registro guardado y sincronizado",
               `Nuevo estado: ${resultado.nombre_estado}.${
                 resultado.decision === "favorable"
                   ? " Se notificó al Comité Técnico."
@@ -8474,7 +8474,7 @@ async function handleAction(action, el) {
           modal(
             "Decisión registrada",
             notice(
-              "Registro guardado y sincronizado con el servidor",
+              "Registro guardado y sincronizado",
               `Puntaje: ${Number(resultado.puntaje).toFixed(1)}/100. Nuevo estado: ${resultado.nombre_estado}.${
                 resultado.decision === "favorable"
                   ? " Se notificó al Consejo de Escuela."
@@ -8532,7 +8532,7 @@ async function handleAction(action, el) {
                 ? "Devolución registrada"
                 : "Rechazo registrado",
             notice(
-              "Registro guardado y sincronizado con el servidor",
+              "Registro guardado y sincronizado",
               decision === "favorable"
                 ? resultado.aval_completo
                   ? `Nuevo estado: ${resultado.nombre_estado}. ${resultado.mensaje}`
@@ -8588,7 +8588,7 @@ async function handleAction(action, el) {
           modal(
             "Dictamen registrado",
             notice(
-              "Registro guardado y sincronizado con el servidor",
+              "Registro guardado y sincronizado",
               `Dictamen: ${resultado.dictamen}. Nuevo estado: ${resultado.nombre_estado}.`,
             ),
             btn("Volver a la bandeja", "21", "secondary") +
@@ -8652,7 +8652,7 @@ async function handleAction(action, el) {
           modal(
             "Resolución registrada",
             notice(
-              "Registro guardado y sincronizado con el servidor",
+              "Registro guardado y sincronizado",
               `Acuerdo: ${resultado.resolucion}. Nuevo estado: ${resultado.nombre_estado}. Se notificó al investigador y el acuerdo quedó en el historial del expediente.`,
             ),
             btn("Volver a la bandeja", "21", "secondary") +
@@ -8688,10 +8688,10 @@ async function handleAction(action, el) {
       modal(
         "Decisión registrada",
         notice(
-          "Registro guardado y sincronizado con el servidor",
+          "Registro guardado y sincronizado",
           id === "25"
             ? "El investigador debe realizar el sometimiento formal. No se envió automáticamente a Dirección."
-            : `Nuevo estado registrado con trazabilidad en el servidor: ${state.stage}.`,
+            : `Nuevo estado registrado con trazabilidad completa: ${state.stage}.`,
         ),
         btn("Volver a la bandeja", "21", "secondary") +
           act(
@@ -8817,7 +8817,7 @@ async function handleAction(action, el) {
       );
       modal(
         "Eliminar convocatoria",
-        `<p>Se eliminará «${esc(convocatoria?.nombre || "la convocatoria")}», su cronograma y la publicación de sus instrumentos. Si ya tiene propuestas registradas el servidor la rechazará.</p>`,
+        `<p>Se eliminará «${esc(convocatoria?.nombre || "la convocatoria")}», su cronograma y la publicación de sus instrumentos. Si ya tiene propuestas registradas el sistema la rechazará.</p>`,
         `${act("Cancelar", "close", "text")}${act("Eliminar", "admin-call-delete-confirm", "secondary", "trash", `data-id="${el.dataset.id}"`)}`,
         false,
         "admin-confirmar",
@@ -9002,7 +9002,7 @@ async function handleAction(action, el) {
       const registro = registros.find((r) => r[definicion?.idField] === Number(el.dataset.id));
       modal(
         "Eliminar registro",
-        `<p>Se eliminará «${esc(registro ? Object.values(registro).find((v) => typeof v === "string") : "el registro")}». Si el servidor detecta que está en uso, la eliminación se rechazará.</p>`,
+        `<p>Se eliminará «${esc(registro ? Object.values(registro).find((v) => typeof v === "string") : "el registro")}». Si el sistema detecta que está en uso, la eliminación se rechazará.</p>`,
         `${act("Cancelar", "close", "text")}${act("Eliminar", "admin-catalogo-delete-confirm", "secondary", "trash", `data-clave="${clave}" data-id="${el.dataset.id}"`)}`,
         false,
         "admin-confirmar",
