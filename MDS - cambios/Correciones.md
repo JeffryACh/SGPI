@@ -1,7 +1,7 @@
 # Checklist de mejoras
 
 - [x] **Validaciones y seguridad:** límites de caracteres, máximos y muchas validaciones en todos los campos, y protección contra inyección de SQL, código y comandos
-- [ ] **Ocultar términos técnicos:** quitar de la interfaz las palabras relacionadas con Postgres y SQL
+- [X] **Ocultar términos técnicos:** quitar de la interfaz las palabras relacionadas con Postgres y SQL
 - [ ] **Reemplazar texto libre por opciones:** usar listas, desplegables o checkbox donde los datos son limitados (usuarios, roles, escuelas, modalidades con nombre en vez de número)
 - [ ] **Autocompletado y búsqueda:** al ingresar el nombre se carga la info (sin depender de la herramienta de autocompletado), búsqueda con LIKE, ORCID autocompletado por nombre y autocompletado con IA según el contexto y el tema
 - [ ] **Participantes nuevos:** permitir agregar uno que no esté en la base de datos, con aviso

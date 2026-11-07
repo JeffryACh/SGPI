@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 /**
  * ============================================================================
  * 2.1. OBJETIVO DEL ARCHIVO:
@@ -1485,7 +1485,7 @@ function payloadVinculacion(decision = "favorable", observaciones = "", idDocume
 }
 
 /**
- * Subir el oficio firmado de Vinculación a Supabase Storage.
+ * Subir el oficio firmado de Vinculación a la nube.
  * parametros:
  *     - number : idPropuesta Identificador de la propuesta.
  *     - File : archivo Archivo seleccionado en el formulario.
@@ -2622,7 +2622,7 @@ function modalEtapa(etapa = null) {
 function modalDocumento() {
   modal(
     "Subir instrumento oficial",
-    `<div class="stack">${adminField("Título del instrumento", "", "text", "nombre_documento", true)}${adminField("Tipo de instrumento", [{ value: "disposiciones", label: "Disposiciones" }, { value: "rubrica", label: "Rúbrica" }, { value: "formulario", label: "Formulario" }, { value: "plantilla", label: "Plantilla" }, { value: "otro", label: "Otro" }], "select", "tipo_instrumento")}<div class="field-row">${adminField("Orden", (adminDocumentos[adminDocumentos.length - 1]?.orden ?? 0) + 1, "number", "orden")}${adminField("Versión", "1.0", "text", "version")}</div><div class="field"><label for="adm-archivo">Archivo (PDF, DOCX, XLSX o PPTX)</label><input id="adm-archivo" type="file" accept=".pdf,.docx,.xlsx,.pptx"><span class="help">Máximo 20 MB. Se almacena en Supabase Storage.</span></div></div>`,
+    `<div class="stack">${adminField("Título del instrumento", "", "text", "nombre_documento", true)}${adminField("Tipo de instrumento", [{ value: "disposiciones", label: "Disposiciones" }, { value: "rubrica", label: "Rúbrica" }, { value: "formulario", label: "Formulario" }, { value: "plantilla", label: "Plantilla" }, { value: "otro", label: "Otro" }], "select", "tipo_instrumento")}<div class="field-row">${adminField("Orden", (adminDocumentos[adminDocumentos.length - 1]?.orden ?? 0) + 1, "number", "orden")}${adminField("Versión", "1.0", "text", "version")}</div><div class="field"><label for="adm-archivo">Archivo (PDF, DOCX, XLSX o PPTX)</label><input id="adm-archivo" type="file" accept=".pdf,.docx,.xlsx,.pptx"><span class="help">Máximo 20 MB. Se almacena en la nube.</span></div></div>`,
     `${act("Cancelar", "close", "text")}${act("Subir instrumento", "admin-doc-save", "secondary", "upload")}`,
     false,
     "admin-documento",
@@ -5512,7 +5512,7 @@ function dossier() {
       ["Monto solicitado", money(p.amount)],
       ["Modalidad", esc(p.type)],
       ["Línea de investigación", esc(p.line)],
-    ])}<div class="mt"><h3>Resumen de la investigación</h3><p class="small muted" style="margin-top:10px">${esc(p.resumen || "Sin resumen registrado.")}</p></div><div class="mt">${notice(isClosed ? "Consulta de expediente cerrado o resuelto" : "Expediente digital sincronizado con PostgreSQL", isClosed ? "La información se conserva para consulta. No se pueden modificar documentos ni decisiones." : "Propuesta, equipo, plan, presupuesto y decisiones conservan su versión y responsable con trazabilidad en base de datos.")}</div>`;
+    ])}<div class="mt"><h3>Resumen de la investigación</h3><p class="small muted" style="margin-top:10px">${esc(p.resumen || "Sin resumen registrado.")}</p></div><div class="mt">${notice(isClosed ? "Consulta de expediente cerrado o resuelto" : "Expediente digital sincronizado con el servidor", isClosed ? "La información se conserva para consulta. No se pueden modificar documentos ni decisiones." : "Propuesta, equipo, plan, presupuesto y decisiones conservan su versión y responsable con trazabilidad en el servidor.")}</div>`;
   else if (dossierTab === "Documentos") {
     const docs = d?.documentos || [];
     body = docs.length
@@ -6354,7 +6354,7 @@ function searchHistory() {
   const aniosOpts = ["2020", "2021", "2022", "2023", "2024", "2025", "2026", "2027", "2028", "2029", "2030"];
 
   return shell(
-    `<div class="two-col"><form class="card card-pad" id="history-search"><div class="section-head"><h2>Encuentra un expediente</h2>${badge("Consulta institucional en BD")}</div>${field("Código, título o persona investigadora", state.search, "search", "Puedes combinar la búsqueda con filtros institucionales.", false, "history:query")}<div class="field-row">${field("Escuela", escuelasOpts, "select", "", false, "history:school")}${field("Modalidad", modalidadesOpts, "select", "", false, "history:mode")}</div><div class="field-row">${field("Estado", estadosOpts, "select", "", false, "history:status")}${field("Línea de investigación", lineasOpts, "select", "", false, "history:line")}</div><div class="field-row">${field("Desde", aniosOpts, "select", "", false, "history:from", "", "2024")}${field("Hasta", aniosOpts, "select", "", false, "history:to", "", "2028")}</div>${field("Mostrar únicamente propuestas cerradas", false, "checkbox", "Excluye expedientes todavía en trámite.", false, "history:closed")}<div class="form-footer">${act("Limpiar filtros", "clear-search", "text")}${act("Buscar expedientes", "search-history", "", "search")}</div></form><div class="stack">${card("Consulta con trazabilidad", `<div class="list-item">${icon("folder")}<div><h3>Expediente completo</h3><p>Propuesta, recursos, documentos y productos.</p></div></div><div class="list-item">${icon("shield")}<div><h3>Decisiones y evidencia</h3><p>Evaluaciones, avales, dictámenes y resolución.</p></div></div><div class="list-item">${icon("clock")}<div><h3>Historial conservado</h3><p>Fechas, actores y versiones sincronizadas con PostgreSQL.</p></div></div>`)}</div></div>`,
+    `<div class="two-col"><form class="card card-pad" id="history-search"><div class="section-head"><h2>Encuentra un expediente</h2>${badge("Consulta institucional")}</div>${field("Código, título o persona investigadora", state.search, "search", "Puedes combinar la búsqueda con filtros institucionales.", false, "history:query")}<div class="field-row">${field("Escuela", escuelasOpts, "select", "", false, "history:school")}${field("Modalidad", modalidadesOpts, "select", "", false, "history:mode")}</div><div class="field-row">${field("Estado", estadosOpts, "select", "", false, "history:status")}${field("Línea de investigación", lineasOpts, "select", "", false, "history:line")}</div><div class="field-row">${field("Desde", aniosOpts, "select", "", false, "history:from", "", "2024")}${field("Hasta", aniosOpts, "select", "", false, "history:to", "", "2028")}</div>${field("Mostrar únicamente propuestas cerradas", false, "checkbox", "Excluye expedientes todavía en trámite.", false, "history:closed")}<div class="form-footer">${act("Limpiar filtros", "clear-search", "text")}${act("Buscar expedientes", "search-history", "", "search")}</div></form><div class="stack">${card("Consulta con trazabilidad", `<div class="list-item">${icon("folder")}<div><h3>Expediente completo</h3><p>Propuesta, recursos, documentos y productos.</p></div></div><div class="list-item">${icon("shield")}<div><h3>Decisiones y evidencia</h3><p>Evaluaciones, avales, dictámenes y resolución.</p></div></div><div class="list-item">${icon("clock")}<div><h3>Historial conservado</h3><p>Fechas, actores y versiones sincronizadas.</p></div></div>`)}</div></div>`,
     "Consulta histórica",
     "Busca iniciativas y recupera la evidencia de su recorrido.",
   );
@@ -8452,7 +8452,7 @@ async function handleAction(action, el) {
           modal(
             "Decisión registrada",
             notice(
-              "Registro guardado y sincronizado con PostgreSQL",
+              "Registro guardado y sincronizado con el servidor",
               `Nuevo estado: ${resultado.nombre_estado}.${
                 resultado.decision === "favorable"
                   ? " Se notificó al Comité Técnico."
@@ -8498,7 +8498,7 @@ async function handleAction(action, el) {
           modal(
             "Decisión registrada",
             notice(
-              "Registro guardado y sincronizado con PostgreSQL",
+              "Registro guardado y sincronizado con el servidor",
               `Puntaje: ${Number(resultado.puntaje).toFixed(1)}/100. Nuevo estado: ${resultado.nombre_estado}.${
                 resultado.decision === "favorable"
                   ? " Se notificó al Consejo de Escuela."
@@ -8556,7 +8556,7 @@ async function handleAction(action, el) {
                 ? "Devolución registrada"
                 : "Rechazo registrado",
             notice(
-              "Registro guardado y sincronizado con PostgreSQL",
+              "Registro guardado y sincronizado con el servidor",
               decision === "favorable"
                 ? resultado.aval_completo
                   ? `Nuevo estado: ${resultado.nombre_estado}. ${resultado.mensaje}`
@@ -8612,7 +8612,7 @@ async function handleAction(action, el) {
           modal(
             "Dictamen registrado",
             notice(
-              "Registro guardado y sincronizado con PostgreSQL",
+              "Registro guardado y sincronizado con el servidor",
               `Dictamen: ${resultado.dictamen}. Nuevo estado: ${resultado.nombre_estado}.`,
             ),
             btn("Volver a la bandeja", "21", "secondary") +
@@ -8676,7 +8676,7 @@ async function handleAction(action, el) {
           modal(
             "Resolución registrada",
             notice(
-              "Registro guardado y sincronizado con PostgreSQL",
+              "Registro guardado y sincronizado con el servidor",
               `Acuerdo: ${resultado.resolucion}. Nuevo estado: ${resultado.nombre_estado}. Se notificó al investigador y el acuerdo quedó en el historial del expediente.`,
             ),
             btn("Volver a la bandeja", "21", "secondary") +
@@ -8712,10 +8712,10 @@ async function handleAction(action, el) {
       modal(
         "Decisión registrada",
         notice(
-          "Registro guardado y sincronizado con PostgreSQL",
+          "Registro guardado y sincronizado con el servidor",
           id === "25"
             ? "El investigador debe realizar el sometimiento formal. No se envió automáticamente a Dirección."
-            : `Nuevo estado registrado con trazabilidad en base de datos: ${state.stage}.`,
+            : `Nuevo estado registrado con trazabilidad en el servidor: ${state.stage}.`,
         ),
         btn("Volver a la bandeja", "21", "secondary") +
           act(
