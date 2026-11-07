@@ -8,5 +8,5 @@
 - [ ] **Presupuesto:** que funcione como tabla de cálculo y simplificar el proceso para que no tenga que ingresar tanta info
 - [ ] **Cambios sin guardar:** ventana de confirmación antes de salir de una pantalla
 - [ ] **Orden de la interfaz:** organizar los buckets, los botones de editar/eliminar de rúbricas y catálogos, y el texto de horas por semana
-- [ ] **Estados de propuestas:** diferenciar entre propuestas cerradas y rechazadas
+- [X] **Estados de propuestas:** diferenciar entre propuestas cerradas y rechazadas
 - [ ] **Módulo de administrador:** para personalizar las calificaciones
