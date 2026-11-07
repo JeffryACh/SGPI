@@ -7437,10 +7437,10 @@ async function handleAction(action, el) {
             } else {
               items[0].click();
             }
-          }, 150);
+          }, 200);
         });
         input.addEventListener("focus", () => buscar(input.value));
-        document.addEventListener("click", (e) => {
+        document.addEventListener("mousedown", (e) => {
           if (!results.contains(e.target) && e.target !== input) results.innerHTML = "";
         });
       }, 100);
