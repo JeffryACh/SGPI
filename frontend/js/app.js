@@ -6846,7 +6846,7 @@ function modal(title, body, actions = "", wide = false, name = "dialog") {
   previousFocus = document.activeElement;
   modalName = name;
   $("#modal-root").innerHTML =
-    `<div class="modal-backdrop" data-backdrop><section class="modal ${wide ? "wide" : ""}" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-modal="${name}"><header class="modal-head"><h2 id="modal-title">${title}</h2><button data-action="close" aria-label="Cerrar">${icon("close")}</button></header>${body}${actions ? `<div class="actions">${actions}</div>` : ""}</section></div>`;
+    `<div class="modal-backdrop"><section class="modal ${wide ? "wide" : ""}" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-modal="${name}"><header class="modal-head"><h2 id="modal-title">${title}</h2><button data-action="close" aria-label="Cerrar">${icon("close")}</button></header>${body}${actions ? `<div class="actions">${actions}</div>` : ""}</section></div>`;
   document.body.style.overflow = "hidden";
   $(".modal button,.modal input,.modal select")?.focus();
 }
@@ -9301,7 +9301,6 @@ document.addEventListener("click", (e) => {
     render();
     return;
   }
-  if (e.target.hasAttribute("data-backdrop")) closeModal();
 });
 document.addEventListener("input", (e) => {
   const el = e.target;

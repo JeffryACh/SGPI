@@ -6,7 +6,7 @@
 - [ ] **Autocompletado y búsqueda:** al ingresar el nombre se carga la info (sin depender de la herramienta de autocompletado), búsqueda con LIKE, ORCID autocompletado por nombre y autocompletado con IA según el contexto y el tema
 - [ ] **Participantes nuevos:** permitir agregar uno que no esté en la base de datos, con aviso
 - [X] **Presupuesto:** que funcione como tabla de cálculo y simplificar el proceso para que no tenga que ingresar tanta info
-- [ ] **Cambios sin guardar:** ventana de confirmación antes de salir de una pantalla
+- [X] **Cambios sin guardar:** ventana de confirmación antes de salir de una pantalla
 - [ ] **Orden de la interfaz:** organizar los buckets, los botones de editar/eliminar de rúbricas y catálogos, y el texto de horas por semana
 - [X] **Estados de propuestas:** diferenciar entre propuestas cerradas y rechazadas
 - [ ] **Módulo de administrador:** para personalizar las calificaciones
