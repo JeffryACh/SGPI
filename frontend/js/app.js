@@ -1220,7 +1220,7 @@ async function errorDesdeRespuesta(res) {
 }
 
 /**
- * Descargar las propuestas del investigador autenticado desde PostgreSQL (Pantalla 06).
+ * Descargar las propuestas del investigador autenticado del sistema (Pantalla 06).
  * parametros:
  *     (ninguno)
  * return:
@@ -1254,7 +1254,7 @@ async function cargarMisPropuestas() {
 const esPendienteVinculacion = (p) => /revisi[oó]n de vinculaci/i.test((p && p.status) || "");
 
 /**
- * Descargar la bandeja de Vinculación desde PostgreSQL y conservar la propuesta activa.
+ * Descargar la bandeja de Vinculación del sistema y conservar la propuesta activa.
  * parametros:
  *     (ninguno)
  * return:
@@ -1521,7 +1521,7 @@ async function subirDocumentoPropuesta(idPropuesta, archivo, tipoDocumento = "Di
 const esPendienteComite = (p) => /evaluaci[oó]n del comit[eé]/i.test((p && p.status) || "");
 
 /**
- * Descargar la bandeja del Comité Técnico desde PostgreSQL y conservar la propuesta activa.
+ * Descargar la bandeja del Comité Técnico del sistema y conservar la propuesta activa.
  * parametros:
  *     (ninguno)
  * return:
@@ -1753,7 +1753,7 @@ const esPendienteCie = (p) =>
   /dictaminada por direcci/i.test((p && p.status) || "") && !(p && p.resolucionCie);
 
 /**
- * Descargar la bandeja del Consejo de Escuela desde PostgreSQL y conservar la propuesta activa.
+ * Descargar la bandeja del Consejo de Escuela del sistema y conservar la propuesta activa.
  * parametros:
  *     (ninguno)
  * return:
@@ -1852,7 +1852,7 @@ async function guardarAvalConsejo(idPropuesta, payload) {
 }
 
 /**
- * Descargar la bandeja de Dirección de Investigación desde PostgreSQL.
+ * Descargar la bandeja de Dirección de Investigación del sistema.
  * parametros:
  *     (ninguno)
  * return:
@@ -2000,7 +2000,7 @@ async function guardarDictamenDireccion(idPropuesta, payload) {
 // =====================================================================
 
 /**
- * Descargar la bandeja del Comité de Ética en Investigación desde PostgreSQL.
+ * Descargar la bandeja del Comité de Ética en Investigación del sistema.
  * parametro:
  *     (ninguno)
  * return:
@@ -4195,7 +4195,7 @@ function myProposals() {
     `${tabs(["Todas", "En formulación", "En ejecución", "Cerradas"], activeFilter, "data-filter")}<div class="card">${table(
       ["Propuesta", "Período", "Estado", "Monto", ""],
       projectRows(filtered),
-      `<span>${filtered.length} propuesta${filtered.length === 1 ? "" : "s"} sincronizada${filtered.length === 1 ? "" : "s"} con PostgreSQL</span><span>Página 1 de 1</span>`,
+      `<span>${filtered.length} propuesta${filtered.length === 1 ? "" : "s"} sincronizada${filtered.length === 1 ? "" : "s"} con el sistema</span><span>Página 1 de 1</span>`,
     )}</div>`,
     "Mis propuestas",
     "Organiza tus borradores y consulta el avance de tus investigaciones.",
@@ -5486,7 +5486,7 @@ function inbox() {
  *     + string : dossierHtml Marcado estructurado del expediente digital.
  */
 function dossier() {
-  // [Línea clave]: ¿Por qué soy importante? Resuelve el expediente activo desde PostgreSQL o desde el escenario local. ¿Para qué? Mostrar metadatos y decisiones reales de la propuesta seleccionada en la bandeja. ¿Dónde me usan? Al inicio de dossier().
+  // [Línea clave]: ¿Por qué soy importante? Resuelve el expediente activo del sistema o desde el escenario local. ¿Para qué? Mostrar metadatos y decisiones reales de la propuesta seleccionada en la bandeja. ¿Dónde me usan? Al inicio de dossier().
   const idActivo = propuestaActivaId();
   const d = dossierActual && Number(dossierActual.id_propuesta) === Number(idActivo) ? dossierActual : null;
   const code = d?.codigo || state.created?.code || state.viewProposal || "SI-2027-014";
@@ -5622,7 +5622,7 @@ function dossier() {
   } else if (dossierTab === "Resolución") {
     const cie = (d?.evaluaciones || []).find((e) => e.rol_evaluador === "CIE");
     const docs = (d?.documentos || []).filter((doc) => /resoluc|acuerdo|cie|cierre/i.test(`${doc.tipo_documento} ${doc.nombre_archivo}`));
-    body = `${notice(isClosed ? "Resolución y cierre registrados" : "Decisión del CIE", isClosed ? "Acuerdo favorable y certificación de cierre conservados en PostgreSQL." : cie ? `Resolución registrada: ${cie.observaciones || "sin detalle adicional"}` : "La resolución se agrega cuando el CIE concluye su revisión.")}${docs.length ? docs.map(docPropuesta).join("") : docPendiente("Acuerdo del CIE", "Pendiente de emisión")}${isClosed ? docPendiente("Certificación de cierre", "Pendiente de adjuntar") : ""}`;
+    body = `${notice(isClosed ? "Resolución y cierre registrados" : "Decisión del CIE", isClosed ? "Acuerdo favorable y certificación de cierre conservados en el sistema." : cie ? `Resolución registrada: ${cie.observaciones || "sin detalle adicional"}` : "La resolución se agrega cuando el CIE concluye su revisión.")}${docs.length ? docs.map(docPropuesta).join("") : docPendiente("Acuerdo del CIE", "Pendiente de emisión")}${isClosed ? docPendiente("Certificación de cierre", "Pendiente de adjuntar") : ""}`;
   } else {
     body = historyContent(d);
   }
@@ -5643,7 +5643,7 @@ function dossier() {
           )}`;
 
   return shell(
-    `<div class="card card-pad mb"><span class="project-code">${esc(p.code)} · ${esc(p.type)}</span><div class="section-head" style="margin:10px 0 0"><h2 style="font-size:26px">${esc(p.title)}</h2>${badge(p.status, "solid")}</div></div>${tabs(["Resumen", "Documentos", "Evaluaciones", "Resolución", "Historial"], dossierTab)}<div class="two-col">${card("", body)}<div class="stack">${card("Acción disponible", accion)}${renderizarPanelReferenciaIA("22")}${card("Trazabilidad", `<p class="small muted mb">Cada decisión conserva fecha, actor, documento y versión en PostgreSQL.</p>${btn("Ver historial completo", "28", "text", "arrow")}`)}${["direccion", "cie"].includes(state.role) ? notice("Verificación restringida", "Responsabilidades institucionales: al día.") : ""}</div></div>`,
+    `<div class="card card-pad mb"><span class="project-code">${esc(p.code)} · ${esc(p.type)}</span><div class="section-head" style="margin:10px 0 0"><h2 style="font-size:26px">${esc(p.title)}</h2>${badge(p.status, "solid")}</div></div>${tabs(["Resumen", "Documentos", "Evaluaciones", "Resolución", "Historial"], dossierTab)}<div class="two-col">${card("", body)}<div class="stack">${card("Acción disponible", accion)}${renderizarPanelReferenciaIA("22")}${card("Trazabilidad", `<p class="small muted mb">Cada decisión conserva fecha, actor, documento y versión en el sistema.</p>${btn("Ver historial completo", "28", "text", "arrow")}`)}${["direccion", "cie"].includes(state.role) ? notice("Verificación restringida", "Responsabilidades institucionales: al día.") : ""}</div></div>`,
     "Expediente de propuesta",
     "Toda la información y las decisiones en un mismo lugar.",
     btn(
@@ -5825,7 +5825,7 @@ function evaluation(id) {
       (detalleComite?.puntajes || []).map((p) => [p.nombre_criterio, p]),
     );
     const fuente = rubricaComite?.secciones?.length
-      ? `Rúbrica desde PostgreSQL · ${rubricaComite.total_criterios} criterios · ${rubricaComite.total_peso} puntos`
+      ? `Rúbrica del sistema · ${rubricaComite.total_criterios} criterios · ${rubricaComite.total_peso} puntos`
       : "Rúbrica local de respaldo · aplica la migración V12 para persistirla";
     const resumenDictamen = yaDictaminado
       ? notice(
@@ -6393,7 +6393,7 @@ function historyResults() {
   const q = (state.search || "").toLowerCase(),
     list = historialPropuestas ?? [];
   return shell(
-    `<div class="section-head"><span class="result-count">${list.length} expedientes encontrados en base de datos ${q ? "para «" + esc(state.search) + "»" : ""}</span>${btn("Modificar filtros", "29", "secondary", "settings")}</div>${list.length ? `<div class="card">${table(["Expediente", "Período", "Estado", "Monto", ""], projectRows(list), `<span>${list.length} resultado${list.length === 1 ? "" : "s"} desde PostgreSQL</span><span>Página 1 de 1</span>`)}</div>` : `<div class="card empty">${icon("search")}<h2>No encontramos coincidencias</h2><p>Prueba con una palabra más general o elimina un filtro para ampliar los resultados.</p>${act("Limpiar y volver a buscar", "clear-results", "secondary")}</div>`}`,
+    `<div class="section-head"><span class="result-count">${list.length} expedientes encontrados en el sistema ${q ? "para «" + esc(state.search) + "»" : ""}</span>${btn("Modificar filtros", "29", "secondary", "settings")}</div>${list.length ? `<div class="card">${table(["Expediente", "Período", "Estado", "Monto", ""], projectRows(list), `<span>${list.length} resultado${list.length === 1 ? "" : "s"} del sistema</span><span>Página 1 de 1</span>`)}</div>` : `<div class="card empty">${icon("search")}<h2>No encontramos coincidencias</h2><p>Prueba con una palabra más general o elimina un filtro para ampliar los resultados.</p>${act("Limpiar y volver a buscar", "clear-results", "secondary")}</div>`}`,
     "Resultados de consulta",
     "Abre un expediente para consultar sus documentos y decisiones.",
   );
@@ -6610,7 +6610,7 @@ function adminCatalogs() {
                     { id: "id_rubro" },
                   )
                 : selected === "Roles y permisos"
-                  ? `<div class="two-col"><section class="card"><div class="card-pad"><h2>Orden de roles</h2><p class="small muted">Este orden define la ruta operativa institucional y se guarda en PostgreSQL.</p></div><div class="role-order">${rolesOrden || `<p class="muted">Sin roles registrados.</p>`}</div></section>${card("Criterio de orden", `<p class="small muted">La administración puede priorizar la ruta operativa: proponente, revisiones, aval, dictamen y resolución.</p>${notice("Cambio reversible", "Usa las flechas para ajustar el orden. Los permisos de cada rol no cambian.")}`)}</div>`
+                  ? `<div class="two-col"><section class="card"><div class="card-pad"><h2>Orden de roles</h2><p class="small muted">Este orden define la ruta operativa institucional y se guarda en el sistema.</p></div><div class="role-order">${rolesOrden || `<p class="muted">Sin roles registrados.</p>`}</div></section>${card("Criterio de orden", `<p class="small muted">La administración puede priorizar la ruta operativa: proponente, revisiones, aval, dictamen y resolución.</p>${notice("Cambio reversible", "Usa las flechas para ajustar el orden. Los permisos de cada rol no cambian.")}`)}</div>`
                   : renderCatalogo(
                       "criterios_vie",
                       "Criterios de verificación VIE",
@@ -7219,7 +7219,7 @@ async function handleAction(action, el) {
       const codigoActivo = dossierActual?.codigo || state.viewProposal || "";
       modal(
         "Vista previa de documento",
-        `<span class="badge">Sin archivo adjunto</span><h3 style="margin-top:22px">${esc(el.dataset.doc || "Documento del expediente")}</h3>${codigoActivo ? `<p>Expediente ${esc(codigoActivo)}.</p>` : ""}<div class="notice mt">${icon("file")}<div><strong>Archivo no disponible</strong><p>Este documento no tiene un archivo real asociado en Storage. Adjúntalo desde el expediente para habilitar el visor.</p></div></div>`,
+        `<span class="badge">Sin archivo adjunto</span><h3 style="margin-top:22px">${esc(el.dataset.doc || "Documento del expediente")}</h3>${codigoActivo ? `<p>Expediente ${esc(codigoActivo)}.</p>` : ""}<div class="notice mt">${icon("file")}<div><strong>Archivo no disponible</strong><p>Este documento no tiene un archivo real asociado en el sistema. Adjúntalo desde el expediente para habilitar el visor.</p></div></div>`,
         act("Cerrar visor", "close", "secondary"),
         false,
         "document",
@@ -7952,7 +7952,7 @@ async function handleAction(action, el) {
       toast("Consultando a Google Gemini (Free Tier)...");
       await generarEvaluacionPreliminarIA();
       render();
-      toast("Evaluación preliminar IA actualizada en Supabase.");
+      toast("Evaluación preliminar IA actualizada en el sistema.");
       break;
     case "apply-ai-scores":
       if (evaluacionPreliminarIA?.criterios_sugeridos) {
@@ -8370,20 +8370,20 @@ async function handleAction(action, el) {
               : ""
           }${
             id === "23"
-              ? notice("Registro en PostgreSQL", "El dictamen cambiará el estado de la propuesta según la decisión seleccionada y notificará a quien debe continuar el trámite.")
+              ? notice("Registro en el sistema", "El dictamen cambiará el estado de la propuesta según la decisión seleccionada y notificará a quien debe continuar el trámite.")
               : id === "24"
                 ? notice(
-                    "Registro en PostgreSQL",
+                    "Registro en el sistema",
                     `${gruposRubrica().reduce((total, [, cs]) => total + cs.length, 0)} puntajes, la justificación y el resultado ponderado se guardarán en el expediente. El estado seguirá la decisión seleccionada.`,
                   )
                 : id === "25"
                   ? notice(
-                      "Registro en PostgreSQL",
+                      "Registro en el sistema",
                       "El acuerdo se guardará en «council_endorsements» con la escuela, el tipo de instancia, la sesión, el artículo, la fecha y el oficio. La propuesta solo pasará a «Avalada» cuando todas las escuelas relacionadas con ella registren su aval.",
                     )
                   : id === "27"
                     ? notice(
-                        "Registro en PostgreSQL",
+                        "Registro en el sistema",
                         "El acuerdo se guardará en «cie_resolution_evaluations» con la sesión, el artículo, la fecha, la fundamentación y las condiciones. La propuesta pasará a «Aprobada por CIE», «Con observaciones» o «Rechazada» según el tipo de acuerdo.",
                       )
                     : "<p>Esta acción es una simulación y no emite un acuerdo institucional real.</p>"
@@ -8602,7 +8602,7 @@ async function handleAction(action, el) {
         break;
       }
       if (id === "27") {
-        // [Línea clave]: El acuerdo del CIE se guarda en PostgreSQL con la evaluación, la
+        // [Línea clave]: El acuerdo del CIE se guarda en el sistema con la evaluación, la
         // tabla «cie_resolution_evaluations» y el documento firmado; el backend ejecuta la
         // transición de estado y notifica al investigador.
         const idPropuesta = propuestaActivaId();
@@ -9431,7 +9431,7 @@ window.addEventListener("hashchange", () => {
   loadScreenData();
 });
 
-// [Línea clave]: ¿Por qué soy importante? Punto de arranque del ciclo de vida del Frontend. ¿Para qué? Renderizar la vista inicial y sincronizar catálogos y datos desde PostgreSQL asíncronamente. ¿Dónde me usan? Al pie del archivo app.js autoejecutándose como IIFE.
+// [Línea clave]: ¿Por qué soy importante? Punto de arranque del ciclo de vida del Frontend. ¿Para qué? Renderizar la vista inicial y sincronizar catálogos y datos del sistema asíncronamente. ¿Dónde me usan? Al pie del archivo app.js autoejecutándose como IIFE.
 (async function initApp() {
   render();
   if (!session?.user) return;
