@@ -365,6 +365,7 @@ def buscar_usuarios(
 
     q_clean = _escape_ilike(q.strip())
     patron = f"%{q_clean}%"
+    q_normalizado = q.strip().lower()
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -384,7 +385,7 @@ def buscar_usuarios(
                   u.correo ILIKE %s ESCAPE '\\'
                   OR u.nombre ILIKE %s ESCAPE '\\'
                   OR u.lastname ILIKE %s ESCAPE '\\'
-                  OR (u.nombre || ' ' || u.lastname || ' ' || COALESCE(u.second_lastname, '')) ILIKE %s ESCAPE '\\'
+                  OR CONCAT_WS(' ', u.nombre, u.lastname, u.second_lastname) ILIKE %s ESCAPE '\\'
               )
             ORDER BY u.nombre ASC
             LIMIT %s
@@ -392,7 +393,7 @@ def buscar_usuarios(
             (patron, patron, patron, patron, limit),
         )
         filas = cur.fetchall()
-        # [Línea clave]: Adjunta el ORCID validado que tiene registrado cada investigador en su perfil.
+        # [Línea clave]: Adjunta el ORCID validado y flag de coincidencia exacta.
         return [
             {
                 **dict(f),
@@ -402,6 +403,8 @@ def buscar_usuarios(
                     nombre=f["nombre"],
                     conn=conn,
                 ),
+                "is_exact_match": f["nombre"].strip().lower() == q_normalizado
+                                   or f["correo"].strip().lower() == q_normalizado,
             }
             for f in filas
         ]

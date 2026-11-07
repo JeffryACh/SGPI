@@ -7386,7 +7386,7 @@ async function handleAction(action, el) {
             // Siempre mostrar lista - el usuario elige con click, Enter, o blur
             results.innerHTML = usuarios.map((u) => {
               const orc = u.orcid || obtenerOrcidDePerfil(u.correo, u.nombre);
-              const isExactMatch = normalizarTexto(u.nombre) === normalizarTexto(textoLimpio) || normalizarTexto(u.correo) === normalizarTexto(textoLimpio);
+              const isExactMatch = u.is_exact_match === true;
               return `<div class="user-result${isExactMatch ? ' exact-match' : ''}" style="padding:8px;border-bottom:1px solid var(--line);cursor:pointer;" data-id="${u.id_usuario}" data-nombre="${esc(u.nombre)}" data-correo="${esc(u.correo)}" data-orcid="${esc(orc)}" data-escuela="${esc(u.escuela || '')}" data-siglas="${esc(u.siglas_escuela || '')}">
                 <strong>${esc(u.nombre)}${isExactMatch ? ' <span class="badge" style="font-size:10px;">coincidencia exacta</span>' : ''}</strong> ${orc ? `<code class="micro">${esc(orc)}</code>` : `<span class="micro muted">(solicitar ORCID)</span>`}<br><span class="micro muted">${esc(u.correo)}${u.escuela ? ` · ${esc(u.escuela)}` : ""}</span>
               </div>`;
