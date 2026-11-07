@@ -7376,7 +7376,7 @@ async function handleAction(action, el) {
               results.innerHTML = `<div class="user-result" style="padding:12px;text-align:center;color:var(--muted);"><span class="micro">Usuario no encontrado en el directorio institucional</span></div>`;
               return;
             }
-            // Siempre mostrar lista - no autocompletar automáticamente
+            // Siempre mostrar lista - el usuario elige con click, Enter, o blur
             results.innerHTML = usuarios.map((u) => {
               const orc = u.orcid || obtenerOrcidDePerfil(u.correo, u.nombre);
               const isExactMatch = normalizarTexto(u.nombre) === normalizarTexto(texto) || normalizarTexto(u.correo) === normalizarTexto(texto);
@@ -7403,15 +7403,14 @@ async function handleAction(action, el) {
         let timer;
         input.addEventListener("input", (e) => {
           const val = e.target.value;
-          if (orcidInput && (!state.selectedTeamUser || state.selectedTeamUser.nombre !== val)) {
-            state.selectedTeamUser = null;
-            const orcidDePerfil = obtenerOrcidDePerfil(val, val);
-            orcidInput.value = orcidDePerfil;
-            orcidInput.readOnly = Boolean(orcidDePerfil);
-            state.saved["modal:orcid"] = orcidDePerfil;
-          }
           if (!val) {
             results.innerHTML = "";
+            if (orcidInput) {
+              orcidInput.value = "";
+              orcidInput.readOnly = false;
+              state.saved["modal:orcid"] = "";
+            }
+            state.selectedTeamUser = null;
           }
           clearTimeout(timer);
           timer = setTimeout(() => buscar(val), 250);
@@ -7426,16 +7425,19 @@ async function handleAction(action, el) {
           }
         });
         input.addEventListener("blur", () => {
-          // Autocompletar al hacer click fuera (blur) - solo si hay 1 resultado o coincidencia exacta
+          // Autocompletar al hacer click fuera (blur) - selecciona el primer resultado
+          // Delay para permitir click en resultado antes de cerrar
           setTimeout(() => {
             const items = results.querySelectorAll(".user-result[data-id]");
-            if (items.length === 1) {
-              items[0].click();
+            if (items.length === 0) return;
+            // Preferir coincidencia exacta si existe, sino el primero
+            const exactMatch = results.querySelector(".user-result.exact-match[data-id]");
+            if (exactMatch) {
+              exactMatch.click();
             } else {
-              const exactMatch = results.querySelector(".user-result.exact-match[data-id]");
-              if (exactMatch) exactMatch.click();
+              items[0].click();
             }
-          }, 150); // delay para permitir click en resultado
+          }, 150);
         });
         input.addEventListener("focus", () => buscar(input.value));
         document.addEventListener("click", (e) => {
