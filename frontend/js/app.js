@@ -7363,23 +7363,30 @@ async function handleAction(action, el) {
           }
           results.innerHTML = "";
         };
+        // Guardar últimos resultados de búsqueda para autocomplete en blur
+        let lastSearchResults = [];
         const buscar = async (texto) => {
-          if (!texto || texto.length < 2 || contieneInyeccionSQL(texto)) {
+          const textoLimpio = (texto || "").trim();
+          if (!textoLimpio || textoLimpio.length < 2 || contieneInyeccionSQL(textoLimpio)) {
             results.innerHTML = "";
+            lastSearchResults = [];
             return;
           }
           try {
-            const resp = await fetch(`${API_URL}/auth/usuarios?q=${encodeURIComponent(texto)}&limit=10`);
+            const resp = await fetch(`${API_URL}/auth/usuarios?q=${encodeURIComponent(textoLimpio)}&limit=10`);
             if (!resp.ok) return;
             const usuarios = await resp.json();
             if (usuarios.length === 0) {
               results.innerHTML = `<div class="user-result" style="padding:12px;text-align:center;color:var(--muted);"><span class="micro">Usuario no encontrado en el directorio institucional</span></div>`;
+              lastSearchResults = [];
               return;
             }
+            // Guardar resultados para uso en blur/enter
+            lastSearchResults = usuarios;
             // Siempre mostrar lista - el usuario elige con click, Enter, o blur
             results.innerHTML = usuarios.map((u) => {
               const orc = u.orcid || obtenerOrcidDePerfil(u.correo, u.nombre);
-              const isExactMatch = normalizarTexto(u.nombre) === normalizarTexto(texto) || normalizarTexto(u.correo) === normalizarTexto(texto);
+              const isExactMatch = normalizarTexto(u.nombre) === normalizarTexto(textoLimpio) || normalizarTexto(u.correo) === normalizarTexto(textoLimpio);
               return `<div class="user-result${isExactMatch ? ' exact-match' : ''}" style="padding:8px;border-bottom:1px solid var(--line);cursor:pointer;" data-id="${u.id_usuario}" data-nombre="${esc(u.nombre)}" data-correo="${esc(u.correo)}" data-orcid="${esc(orc)}" data-escuela="${esc(u.escuela || '')}" data-siglas="${esc(u.siglas_escuela || '')}">
                 <strong>${esc(u.nombre)}${isExactMatch ? ' <span class="badge" style="font-size:10px;">coincidencia exacta</span>' : ''}</strong> ${orc ? `<code class="micro">${esc(orc)}</code>` : `<span class="micro muted">(solicitar ORCID)</span>`}<br><span class="micro muted">${esc(u.correo)}${u.escuela ? ` · ${esc(u.escuela)}` : ""}</span>
               </div>`;
@@ -7398,6 +7405,7 @@ async function handleAction(action, el) {
             });
           } catch (e) {
             console.error(e);
+            lastSearchResults = [];
           }
         };
         let timer;
@@ -7418,9 +7426,8 @@ async function handleAction(action, el) {
         input.addEventListener("keydown", (e) => {
           if (e.key === "Enter") {
             e.preventDefault();
-            const items = results.querySelectorAll(".user-result[data-id]");
-            if (items.length > 0) {
-              items[0].click();
+            if (lastSearchResults.length > 0) {
+              aplicarUsuarioSeleccionado(lastSearchResults[0]);
             }
           }
         });
@@ -7428,14 +7435,16 @@ async function handleAction(action, el) {
           // Autocompletar al hacer click fuera (blur) - selecciona el primer resultado
           // Delay para permitir click en resultado antes de cerrar
           setTimeout(() => {
-            const items = results.querySelectorAll(".user-result[data-id]");
-            if (items.length === 0) return;
+            if (lastSearchResults.length === 0) return;
             // Preferir coincidencia exacta si existe, sino el primero
-            const exactMatch = results.querySelector(".user-result.exact-match[data-id]");
+            const exactMatch = lastSearchResults.find(u =>
+              normalizarTexto(u.nombre) === normalizarTexto(input.value.trim()) ||
+              normalizarTexto(u.correo) === normalizarTexto(input.value.trim())
+            );
             if (exactMatch) {
-              exactMatch.click();
+              aplicarUsuarioSeleccionado(exactMatch);
             } else {
-              items[0].click();
+              aplicarUsuarioSeleccionado(lastSearchResults[0]);
             }
           }, 200);
         });
