@@ -308,6 +308,7 @@ class UsuarioBuscarOut(BaseModel):
         * str : escuela Nombre de la escuela/dependencia (puede ser null).
         * str : siglas_escuela Siglas de la escuela (puede ser null).
         * bool : estado_activo Indica si el usuario está activo.
+        * bool : is_exact_match Indica si el nombre completo o el correo coinciden exactamente con la búsqueda.
     """
 
     id_usuario: int
@@ -317,6 +318,7 @@ class UsuarioBuscarOut(BaseModel):
     escuela: Optional[str] = None
     siglas_escuela: Optional[str] = None
     estado_activo: bool
+    is_exact_match: bool = False
 
 
 # [Línea clave]: Hash ficticio para mitigar ataques de temporización cuando el correo no existe en la BD.
@@ -347,10 +349,11 @@ def buscar_usuarios(
     conn: Connection = Depends(get_conn),
 ):
     """
-    Buscar usuarios institucionales activos por correo o nombre para autocompletado en formularios.
+    Buscar usuarios institucionales activos por nombre, apellidos o correo para autocompletado.
 
-    Realiza búsqueda ILIKE en correo y nombre concatenado, filtrando solo usuarios activos.
-    Limitado a 'limit' resultados para autocompletado eficiente.
+    Divide el texto en palabras y exige que cada una aparezca (ILIKE) en el nombre completo o el
+    correo, en cualquier orden. Permite buscar por nombre, nombre + apellido, nombre + apellido1 +
+    apellido2, segundo nombre o correo parcial. Solo devuelve investigadores activos.
 
     parametros:
         - str : q Texto de búsqueda (mínimo 2 caracteres).
@@ -363,17 +366,17 @@ def buscar_usuarios(
     if contiene_inyeccion_sql(q):
         raise HTTPException(status_code=400, detail="Entrada inválida: se detectó un patrón no permitido.")
 
-    q_clean = _escape_ilike(q.strip())
     q_normalizado = q.strip().lower()
     with conn.cursor() as cur:
+        # [Línea clave]: El escape de %, _ y \ se hace en el SQL; los '%%' son literales para psycopg.
         cur.execute(
             r"""
             WITH params AS (
-                SELECT %s AS termino, %s AS limite
+                SELECT %s::text AS termino, %s::int AS limite
             ),
             palabras AS (
                 SELECT DISTINCT
-                       replace(replace(replace(p, '\', '\\'), '%', '\%'), '_', '\_') AS palabra
+                       replace(replace(replace(p, '\', '\\'), '%%', '\%%'), '_', '\_') AS palabra
                 FROM params,
                      unnest(regexp_split_to_array(trim(termino), '\s+')) AS p
                 WHERE p <> ''
@@ -395,12 +398,12 @@ def buscar_usuarios(
                   SELECT 1
                   FROM palabras pa
                   WHERE CONCAT_WS(' ', u.nombre, u.lastname, u.second_lastname, u.correo)
-                        NOT ILIKE '%' || pa.palabra || '%' ESCAPE '\'
+                        NOT ILIKE '%%' || pa.palabra || '%%' ESCAPE '\'
               )
             ORDER BY u.nombre ASC
             LIMIT (SELECT limite FROM params)
             """,
-            (q_clean, limit),
+            (q.strip(), limit),
         )
         filas = cur.fetchall()
         # [Línea clave]: Adjunta el ORCID validado y flag de coincidencia exacta.
