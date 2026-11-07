@@ -3236,8 +3236,8 @@ const totalA = () => state.budget.reduce((a, r) => a + Number(r.a), 0),
  *     + boolean : esValido Verdadero si cumple todas las reglas financieras.
  */
 const budgetValid = () => {
-  // [Línea clave]: Presupuesto vacío es válido (el usuario aún no ha agregado rubros).
-  if (!state.budget.length) return true;
+  // [Línea clave]: El presupuesto siempre tiene todos los rubros del catálogo (iniciados en 0).
+  // Validamos solo reglas de negocio: topes, equipo solo año 1, beca mínima.
 
   const rubros = catalogos?.rubros_presupuesto ?? [];
   const idEquipo = 6;  // "Equipo y bienes duraderos"
@@ -4599,7 +4599,18 @@ function clearProposalDraft() {
         key.startsWith("modal:"),
     )
     .forEach((key) => delete state.saved[key]);
-  state.budget = structuredClone(defaultState.budget);
+  // Re-poblar budget desde catálogo (iniciado en 0)
+  const rubrosCat = catalogos?.rubros_presupuesto ?? [];
+  state.budget = rubrosCat.length
+    ? rubrosCat.map(r => ({
+        id_rubro: r.id_rubro,
+        name: r.nombre_rubro,
+        code: String(r.id_rubro),
+        a: 0,
+        b: 0,
+        detail: ""
+      }))
+    : structuredClone(defaultState.budget);
   state.teamAdded = false;
   state.extraPerson = null;
   state.extraObjective = null;
@@ -4979,6 +4990,19 @@ function riskForm() {
 function budgetForm() {
   // [Línea clave]: ¿Por qué soy importante? Valida en tiempo real los topes de convocatoria VIE. ¿Para qué? Advertir al usuario si el presupuesto excede los ₡5M/año o carece de la beca reglamentaria. ¿Dónde me usan? En la cabecera de budgetForm().
   const valid = budgetValid();
+  const rubros = catalogos?.rubros_presupuesto ?? [];
+  // Asegurar que state.budget tenga todos los rubros del catálogo (inicialización perezosa)
+  if (!state.budget.length && rubros.length) {
+    state.budget = rubros.map(r => ({
+      id_rubro: r.id_rubro,
+      name: r.nombre_rubro,
+      code: String(r.id_rubro),
+      a: 0,
+      b: 0,
+      detail: ""
+    }));
+    save();
+  }
   return `<div class="grid three mb">${[
     ["2027", totalA()],
     ["2028", totalB()],
@@ -4991,17 +5015,15 @@ function budgetForm() {
     .join(
       "",
     )}</div>${valid ? notice("Presupuesto dentro del límite anual", "Equipo en el primer año y beca estudiantil de 10 h/semana incorporada.") : notice("Revisa el presupuesto para continuar", "El monto supera el tope anual, hay equipo en el segundo año o falta la beca mínima.", "warning")}<div class="mt">${table(
-    ["Objeto de gasto", "2027", "2028", ""],
-    state.budget.map((r, i) => {
-      // [Línea clave]: Usar id_rubro y name guardados directamente, sin matching heurístico.
-      return [
-        `<span class="project-code">${r.id_rubro ? `R-${r.id_rubro}` : r.code}</span><strong>${esc(r.name)}</strong>`,
-        money(r.a),
-        money(r.b),
-        `${act("Editar", "budget-edit", "text compact", "edit", `data-index="${i}"`)} ${act("Quitar", "budget-remove", "text compact danger", "trash", `data-index="${i}"`)}`,
-      ];
-    }),
-  )}</div><div class="action-row mt">${act("Agregar rubro", "budget-add", "secondary", "plus")}${act("Ver reglas de presupuesto", "budget-rules", "text")}</div><details class="accordion"><summary>Justificaciones y otras fuentes</summary>${state.budget.map((r) => `<p><strong>${r.name}.</strong> ${r.detail}</p>`).join("")}${field("Financiamiento externo / contrapartida", "", "textarea", "Indica fuentes externas, contrapartidas o co-financiamiento.", false, "", "Sin aportes externos.")}</details>`;
+    ["Rubro", "2027", "2028", "Justificación (máx. 500 car.)", ""],
+    state.budget.map((r, i) => [
+      `<span class="project-code">${r.id_rubro ? `R-${r.id_rubro}` : r.code}</span><strong>${esc(r.name)}</strong>`,
+      `<input type="number" min="0" step="1000" value="${r.a}" data-budget-index="${i}" data-budget-field="a" class="budget-input" style="width:140px" aria-label="Monto 2027 para ${esc(r.name)}">`,
+      `<input type="number" min="0" step="1000" value="${r.b}" data-budget-index="${i}" data-budget-field="b" class="budget-input" style="width:140px" aria-label="Monto 2028 para ${esc(r.name)}">`,
+      `<textarea data-budget-index="${i}" data-budget-field="detail" class="budget-textarea" maxlength="500" style="width:280px;min-height:36px" aria-label="Justificación para ${esc(r.name)}">${esc(r.detail)}</textarea>`,
+      ``,
+    ]),
+  )}</div><div class="action-row mt">${act("Ver reglas de presupuesto", "budget-rules", "text")}</div><details class="accordion"><summary>Justificaciones y otras fuentes</summary>${state.budget.map((r) => `<p><strong>${r.name}.</strong> ${r.detail}</p>`).join("")}${field("Financiamiento externo / contrapartida", "", "textarea", "Indica fuentes externas, contrapartidas o co-financiamiento.", false, "", "Sin aportes externos.")}</details>`;
 }
 
 /**
@@ -7606,51 +7628,6 @@ async function handleAction(action, el) {
       );
       break;
     }
-    case "budget-add": {
-      // [Línea clave]: Los rubros vienen del catálogo institucional (GET /catalogos),
-      // no se hardcodean. El select se popula dinámicamente con rubros_presupuesto.
-      const rubrosOpts = (catalogos?.rubros_presupuesto ?? []).map((r) => ({
-        value: r.id_rubro,
-        label: `${r.id_rubro} · ${r.nombre_rubro}`,
-      }));
-      modal(
-        "Agregar rubro",
-        `${field("Rubro presupuestario", rubrosOpts, "select", "Selecciona el rubro institucional correspondiente.", true, "modal:new-rubro")}${field("Monto 2027", "0", "number", "", true, "modal:new-a")}${field("Monto 2028", "0", "number", "", true, "modal:new-b")}${field("Justificación", "Relaciona el gasto con el plan de acción.", "textarea", "", true, "modal:new-detail")}`,
-        act("Cancelar", "close", "secondary") +
-          confirmBtn("Guardar rubro", "budget-add-save"),
-      );
-      break;
-    }
-    case "budget-add-save": {
-      const idRubro = Number($('[data-field="modal:new-rubro"]').value);
-      const rubroSel = (catalogos?.rubros_presupuesto ?? []).find((r) => r.id_rubro === idRubro);
-      if (!rubroSel) {
-        toast("Selecciona un rubro válido del catálogo institucional.");
-        break;
-      }
-      state.budget.push({
-        id_rubro: idRubro,
-        name: rubroSel.nombre_rubro,
-        code: String(idRubro),
-        a: Number($('[data-field="modal:new-a"]').value),
-        b: Number($('[data-field="modal:new-b"]').value),
-        detail: $('[data-field="modal:new-detail"]').value,
-      });
-      save();
-      closeModal();
-      render();
-      break;
-    }
-    case "budget-remove": {
-      const i = Number(el.dataset.index);
-      if (Number.isInteger(i) && i >= 0 && i < state.budget.length) {
-        state.budget.splice(i, 1);
-        save();
-        render();
-        toast("Rubro quitado del presupuesto.");
-      }
-      break;
-    }
     case "team-remove": {
       const i = Number(el.dataset.index);
       if (Number.isInteger(i) && i >= 0 && i < (state.teamMembers || []).length) {
@@ -9359,6 +9336,41 @@ document.addEventListener("input", (e) => {
     if (priv) {
       const lb = $("#login-error");
       if (lb) lb.innerHTML = "";
+    }
+  }
+  // Manejo de edición inline en tabla de presupuesto
+  if (el.dataset.budgetIndex !== undefined && el.dataset.budgetField) {
+    const i = Number(el.dataset.budgetIndex);
+    const field = el.dataset.budgetField;
+    if (Number.isInteger(i) && i >= 0 && i < state.budget.length) {
+      let value = el.value;
+      if (field === "a" || field === "b") {
+        value = Number(value) || 0;
+        if (value < 0) value = 0;
+      } else if (field === "detail") {
+        value = String(value).slice(0, 500);
+      }
+      state.budget[i][field] = value;
+      save();
+      // Actualizar totales en la UI sin re-render completo
+      const totalAEl = $(".metric:nth-child(1) .value");
+      const totalBEl = $(".metric:nth-child(2) .value");
+      const totalAllEl = $(".metric:nth-child(3) .value");
+      if (totalAEl) totalAEl.textContent = money(totalA());
+      if (totalBEl) totalBEl.textContent = money(totalB());
+      if (totalAllEl) totalAllEl.textContent = money(totalA() + totalB());
+      // Actualizar estado de validación
+      const valid = budgetValid();
+      const noticeEl = $(".notice");
+      if (noticeEl) {
+        if (valid) {
+          noticeEl.className = "notice";
+          noticeEl.innerHTML = `<div><strong>Presupuesto dentro del límite anual</strong><p>Equipo en el primer año y beca estudiantil de 10 h/semana incorporada.</p></div>`;
+        } else {
+          noticeEl.className = "notice warning";
+          noticeEl.innerHTML = `<div><strong>Revisa el presupuesto para continuar</strong><p>El monto supera el tope anual, hay equipo en el segundo año o falta la beca mínima.</p></div>`;
+        }
+      }
     }
   }
 });

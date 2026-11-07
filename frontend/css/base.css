@@ -620,6 +620,38 @@
       color: var(--muted)
     }
 
+    /* Estilos para tabla de presupuesto (inline editing) */
+    .budget-input,
+    .budget-textarea {
+      box-sizing: border-box;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      background: var(--bg);
+      color: var(--fg);
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .budget-input:focus,
+    .budget-textarea:focus {
+      outline: none;
+      border-color: var(--brand);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent);
+    }
+    .budget-input {
+      text-align: right;
+    }
+    .budget-textarea {
+      resize: vertical;
+      min-height: 44px;
+      line-height: 1.4;
+    }
+    .budget-textarea::placeholder {
+      color: var(--muted);
+      font-style: italic;
+    }
+
     .list-item {
       display: flex;
       gap: 16px;
