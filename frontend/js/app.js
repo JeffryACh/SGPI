@@ -7379,6 +7379,14 @@ async function handleAction(action, el) {
               aplicarUsuarioSeleccionado(matchExacto);
               return;
             }
+            if (usuarios.length === 0) {
+              results.innerHTML = `<div class="user-result" style="padding:12px;text-align:center;color:var(--muted);"><span class="micro">Usuario no encontrado en el directorio institucional</span></div>`;
+              return;
+            }
+            if (usuarios.length === 1) {
+              aplicarUsuarioSeleccionado(usuarios[0]);
+              return;
+            }
             results.innerHTML = usuarios.map((u) => {
               const orc = u.orcid || obtenerOrcidDePerfil(u.correo, u.nombre);
               return `<div class="user-result" style="padding:8px;border-bottom:1px solid var(--line);cursor:pointer;" data-id="${u.id_usuario}" data-nombre="${esc(u.nombre)}" data-correo="${esc(u.correo)}" data-orcid="${esc(orc)}" data-escuela="${esc(u.escuela || '')}" data-siglas="${esc(u.siglas_escuela || '')}">
@@ -7411,8 +7419,20 @@ async function handleAction(action, el) {
             orcidInput.readOnly = Boolean(orcidDePerfil);
             state.saved["modal:orcid"] = orcidDePerfil;
           }
+          if (!val) {
+            results.innerHTML = "";
+          }
           clearTimeout(timer);
           timer = setTimeout(() => buscar(val), 250);
+        });
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            const items = results.querySelectorAll(".user-result[data-id]");
+            if (items.length > 0) {
+              items[0].click();
+            }
+          }
         });
         input.addEventListener("focus", () => buscar(input.value));
         document.addEventListener("click", (e) => {
