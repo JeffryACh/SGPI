@@ -364,11 +364,20 @@ def buscar_usuarios(
         raise HTTPException(status_code=400, detail="Entrada inválida: se detectó un patrón no permitido.")
 
     q_clean = _escape_ilike(q.strip())
-    patron = f"%{q_clean}%"
     q_normalizado = q.strip().lower()
     with conn.cursor() as cur:
         cur.execute(
-            """
+            r"""
+            WITH params AS (
+                SELECT %s AS termino, %s AS limite
+            ),
+            palabras AS (
+                SELECT DISTINCT
+                       replace(replace(replace(p, '\', '\\'), '%', '\%'), '_', '\_') AS palabra
+                FROM params,
+                     unnest(regexp_split_to_array(trim(termino), '\s+')) AS p
+                WHERE p <> ''
+            )
             SELECT u.id_usuario,
                    TRIM(u.nombre || ' ' || u.lastname || ' ' || COALESCE(u.second_lastname, '')) AS nombre,
                    u.correo,
@@ -381,16 +390,17 @@ def buscar_usuarios(
             JOIN public.roles r ON r.id_rol = ur.id_rol
             WHERE u.estado_activo
               AND r.nombre_rol = 'Investigador'
-              AND (
-                  u.correo ILIKE %s ESCAPE '\\'
-                  OR u.nombre ILIKE %s ESCAPE '\\'
-                  OR u.lastname ILIKE %s ESCAPE '\\'
-                  OR CONCAT_WS(' ', u.nombre, u.lastname, u.second_lastname) ILIKE %s ESCAPE '\\'
+              AND EXISTS (SELECT 1 FROM palabras)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM palabras pa
+                  WHERE CONCAT_WS(' ', u.nombre, u.lastname, u.second_lastname, u.correo)
+                        NOT ILIKE '%' || pa.palabra || '%' ESCAPE '\'
               )
             ORDER BY u.nombre ASC
-            LIMIT %s
+            LIMIT (SELECT limite FROM params)
             """,
-            (patron, patron, patron, patron, limit),
+            (q_clean, limit),
         )
         filas = cur.fetchall()
         # [Línea clave]: Adjunta el ORCID validado y flag de coincidencia exacta.
