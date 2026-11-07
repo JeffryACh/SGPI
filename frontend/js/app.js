@@ -7372,25 +7372,16 @@ async function handleAction(action, el) {
             const resp = await fetch(`${API_URL}/auth/usuarios?q=${encodeURIComponent(texto)}&limit=10`);
             if (!resp.ok) return;
             const usuarios = await resp.json();
-            const matchExacto = usuarios.find(
-              (u) => normalizarTexto(u.nombre) === normalizarTexto(texto) || normalizarTexto(u.correo) === normalizarTexto(texto),
-            );
-            if (matchExacto) {
-              aplicarUsuarioSeleccionado(matchExacto);
-              return;
-            }
             if (usuarios.length === 0) {
               results.innerHTML = `<div class="user-result" style="padding:12px;text-align:center;color:var(--muted);"><span class="micro">Usuario no encontrado en el directorio institucional</span></div>`;
               return;
             }
-            if (usuarios.length === 1) {
-              aplicarUsuarioSeleccionado(usuarios[0]);
-              return;
-            }
+            // Siempre mostrar lista - no autocompletar automáticamente
             results.innerHTML = usuarios.map((u) => {
               const orc = u.orcid || obtenerOrcidDePerfil(u.correo, u.nombre);
-              return `<div class="user-result" style="padding:8px;border-bottom:1px solid var(--line);cursor:pointer;" data-id="${u.id_usuario}" data-nombre="${esc(u.nombre)}" data-correo="${esc(u.correo)}" data-orcid="${esc(orc)}" data-escuela="${esc(u.escuela || '')}" data-siglas="${esc(u.siglas_escuela || '')}">
-                <strong>${esc(u.nombre)}</strong> ${orc ? `<code class="micro">${esc(orc)}</code>` : `<span class="micro muted">(solicitar ORCID)</span>`}<br><span class="micro muted">${esc(u.correo)}${u.escuela ? ` · ${esc(u.escuela)}` : ""}</span>
+              const isExactMatch = normalizarTexto(u.nombre) === normalizarTexto(texto) || normalizarTexto(u.correo) === normalizarTexto(texto);
+              return `<div class="user-result${isExactMatch ? ' exact-match' : ''}" style="padding:8px;border-bottom:1px solid var(--line);cursor:pointer;" data-id="${u.id_usuario}" data-nombre="${esc(u.nombre)}" data-correo="${esc(u.correo)}" data-orcid="${esc(orc)}" data-escuela="${esc(u.escuela || '')}" data-siglas="${esc(u.siglas_escuela || '')}">
+                <strong>${esc(u.nombre)}${isExactMatch ? ' <span class="badge" style="font-size:10px;">coincidencia exacta</span>' : ''}</strong> ${orc ? `<code class="micro">${esc(orc)}</code>` : `<span class="micro muted">(solicitar ORCID)</span>`}<br><span class="micro muted">${esc(u.correo)}${u.escuela ? ` · ${esc(u.escuela)}` : ""}</span>
               </div>`;
             }).join("");
             results.querySelectorAll(".user-result").forEach((elItem) => {
@@ -7433,6 +7424,18 @@ async function handleAction(action, el) {
               items[0].click();
             }
           }
+        });
+        input.addEventListener("blur", () => {
+          // Autocompletar al hacer click fuera (blur) - solo si hay 1 resultado o coincidencia exacta
+          setTimeout(() => {
+            const items = results.querySelectorAll(".user-result[data-id]");
+            if (items.length === 1) {
+              items[0].click();
+            } else {
+              const exactMatch = results.querySelector(".user-result.exact-match[data-id]");
+              if (exactMatch) exactMatch.click();
+            }
+          }, 150); // delay para permitir click en resultado
         });
         input.addEventListener("focus", () => buscar(input.value));
         document.addEventListener("click", (e) => {
