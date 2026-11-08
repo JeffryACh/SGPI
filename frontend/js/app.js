@@ -39,15 +39,28 @@
    Autenticación y configuración de API
    ===================================================================== */
 
-// [Línea clave]: ¿Por qué soy importante? Define la URL base de comunicación con la API del Backend soportando entorno local y nube (Vercel -> Render). ¿Para qué? Enrutar todas las solicitudes HTTP fetch hacia localhost:3001 en desarrollo o hacia el servicio de Render en producción. ¿Dónde me usan? En todas las funciones cliente de la API (apiLogin, numsPropuestas, obtenerEvaluacionPreliminarIA, etc.).
+// [Línea clave]: ¿Por qué soy importante? Define la URL base de comunicación con la API del Backend soportando entorno local, Docker/nginx y nube (Vercel -> Render). ¿Para qué? Enrutar todas las solicitudes HTTP fetch hacia localhost:3001 en desarrollo local, rutas relativas detrás de proxy (nginx/Vercel) o hacia el servicio de Render en producción. ¿Dónde me usan? En todas las funciones cliente de la API (apiLogin, numsPropuestas, obtenerEvaluacionPreliminarIA, etc.).
 const API_URL =
     window.SGPI_API_URL ||
     localStorage.getItem("sgpi-api-url") ||
-    (window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1" ||
-    window.location.protocol === "file:"
-      ? "http://localhost:3001"
-      : "https://sgpi-backend-api.onrender.com"),
+    (() => {
+      const isLocalFile = window.location.protocol === "file:";
+      const isLocalHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+      const isDockerNginx = window.location.port === "8080" || window.location.port === "80";
+      const isVercel = window.location.hostname.includes(".vercel.app");
+      
+      // Si está detrás de un proxy (Vercel, nginx en puerto 8080/80), usar rutas relativas
+      // para que las peticiones pasen por los rewrites de Vercel o el proxy de nginx
+      if (isDockerNginx || isVercel || (window.location.port && window.location.port !== "80" && window.location.port !== "443")) {
+        return ""; // Rutas relativas -> el proxy/rewrites manejan el enrutamiento
+      }
+      // Desarrollo local con backend en 3001
+      if (isLocalHost && !window.location.port) {
+        return "http://localhost:3001";
+      }
+      // Producción (Vercel + Render)
+      return "https://sgpi-backend-api.onrender.com";
+    })(),
   SESSION_KEY = "sgpi-session";
 
 /**

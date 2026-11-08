@@ -10,17 +10,27 @@
   <link rel="stylesheet" href="../css/branding.css">
   <link rel="stylesheet" href="../css/notifications.css">
   <link rel="stylesheet" href="../css/dark-mode.css">
-  <!-- API URL configuration - set via environment variable in Vercel/Render -->
-  <meta name="sgpi-api-url" content="https://sgpi-backend-api.onrender.com">
+  <!-- API URL configuration - set via environment variable in Vercel/Render.
+       In Docker/nginx (port 8080), we use relative paths so nginx proxy handles routing. -->
   <script>
-    // Set API URL from meta tag or environment variable
+    // Set API URL from meta tag or environment variable, but only for Vercel/Render
+    // In Docker/nginx (port 8080), we use relative paths so nginx proxy handles routing
     (function() {
-      var meta = document.querySelector('meta[name="sgpi-api-url"]');
-      window.SGPI_API_URL = meta ? meta.content : 'https://sgpi-backend-api.onrender.com';
-      // Also check for environment variable injected at build time
-      if (typeof __SGPI_API_URL__ !== 'undefined') {
-        window.SGPI_API_URL = __SGPI_API_URL__;
+      var isDockerNginx = window.location.port === "8080" || window.location.port === "80";
+      var isVercel = window.location.hostname.includes(".vercel.app");
+      
+      if (!isDockerNginx && !isVercel) {
+        // Local development - use local backend
+        window.SGPI_API_URL = "http://localhost:3001";
+      } else if (isVercel) {
+        // Vercel - use meta tag or env var for Render backend
+        var meta = document.querySelector('meta[name="sgpi-api-url"]');
+        window.SGPI_API_URL = meta ? meta.content : 'https://sgpi-backend-api.onrender.com';
+        if (typeof __SGPI_API_URL__ !== 'undefined') {
+          window.SGPI_API_URL = __SGPI_API_URL__;
+        }
       }
+      // In Docker/nginx, we use relative paths (empty string) so nginx proxy handles routing
     })();
   </script>
 </head>
