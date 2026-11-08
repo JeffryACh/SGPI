@@ -1363,7 +1363,7 @@ def _construir_prompt_sugerencia(campo: str, contexto: dict, texto_parcial: str)
     return prompt
 
 
-async def _generar_sugerencias_gemini(campo: str, contexto: dict, texto_parcial: str) -> tuple[Optional[list[str]], str, str]:
+def _generar_sugerencias_gemini(campo: str, contexto: dict, texto_parcial: str) -> tuple[Optional[list[str]], str, str]:
     """
     Invocar Gemini API para generar sugerencias para un campo específico.
 
@@ -1388,12 +1388,9 @@ async def _generar_sugerencias_gemini(campo: str, contexto: dict, texto_parcial:
     body_bytes = json.dumps(payload_gemini).encode("utf-8")
 
     modelos = [os.getenv("GEMINI_MODEL", "gemini-3.5-flash"), *FREE_TIER_MODELS[:2]]
-    for model_name in dict.fromkeys(m.strip() for m in modelos if m and m.strip())[:2]:
+    for model_name in list(dict.fromkeys(m.strip() for m in modelos if m and m.strip()))[:2]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-        req = urllib.request.Request(url, data=json.dumps({
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json", "maxOutputTokens": 512}
-        }).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+        req = urllib.request.Request(url, data=body_bytes, headers={"Content-Type": "application/json"}, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -1470,10 +1467,7 @@ def _sugerencias_fallback(campo: str, contexto: dict) -> list[str]:
 
 
 @router.post("/sugerencias", response_model=SugerenciaCampoOut)
-async def generar_sugerencias_campo(
-    payload: SugerenciaCampoIn,
-    conn: Connection = Depends(get_conn),
-):
+def generar_sugerencias_campo(payload: SugerenciaCampoIn):
     """
     Generar sugerencias de IA para un campo de formulario específico.
 
@@ -1488,7 +1482,7 @@ async def generar_sugerencias_campo(
 
     parametros:
         - SugerenciaCampoIn : payload Campo objetivo, contexto del formulario, texto parcial.
-        - Connection : conn Conexión transaccional a Supabase (para historial opcional).
+        # - Connection : conn Conexión transaccional a Supabase (para historial opcional).
 
     return:
         + SugerenciaCampoOut : sugerencias Lista de textos, placeholder de ejemplo, metadata.
@@ -1502,7 +1496,7 @@ async def generar_sugerencias_campo(
         return SugerenciaCampoOut()
 
     # Intentar con Gemini (timeout corto: 3s)
-    sugerencias, modelo_usado, modo_gen = await _generar_sugerencias_gemini(campo, contexto, texto_parcial)
+    sugerencias, modelo_usado, modo_gen = _generar_sugerencias_gemini(campo, contexto, texto_parcial)
 
     # Fallback determinista si Gemini falla o no hay API key
     if not sugerencias:

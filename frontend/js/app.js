@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 /**
  * ============================================================================
  * 2.1. OBJETIVO DEL ARCHIVO:
@@ -26,7 +26,7 @@
  *   - Al DOM del navegador (inyección en #app, gestión de modales, alertas y breadcrumbs).
  *   - A localStorage para persistir la sesión y estado de demostración.
  *
- * 2.3. A GROSO MODO ¿QUÉ HACE EL ARCHIVO?:
+ * 2.3. A GROSO MODO QUÉ HACE EL ARCHIVO?:
  * Implementa la lógica reactiva integral de la aplicación: valida sesiones,
  * consulta catálogos en paralelo al inicializar, procesa formularios de propuesta
  * por etapas, renderiza vistas según el rol activo (Investigador, Vinculación,
@@ -39,7 +39,7 @@
    Autenticación y configuración de API
    ===================================================================== */
 
-// [Línea clave]: ¿Por qué soy importante? Define la URL base de comunicación con la API del Backend soportando entorno local, Docker/nginx y nube (Vercel -> Render). ¿Para qué? Enrutar todas las solicitudes HTTP fetch hacia localhost:3001 en desarrollo local, rutas relativas detrás de proxy (nginx/Vercel) o hacia el servicio de Render en producción. ¿Dónde me usan? En todas las funciones cliente de la API (apiLogin, numsPropuestas, obtenerEvaluacionPreliminarIA, etc.).
+// [Línea clave]: Por qué soy importante? Define la URL base de comunicación con la API del Backend soportando entorno local, Docker/nginx y nube (Vercel -> Render). Para qué? Enrutar todas las solicitudes HTTP fetch hacia localhost:3001 en desarrollo local, rutas relativas detrás de proxy (nginx/Vercel) o hacia el servicio de Render en producción. Dónde me usan? En todas las funciones cliente de la API (apiLogin, numsPropuestas, obtenerEvaluacionPreliminarIA, etc.).
 const API_URL =
     window.SGPI_API_URL ||
     localStorage.getItem("sgpi-api-url") ||
@@ -122,7 +122,7 @@ const ORCID_PERFILES_INSTITUCIONALES = {
  *     + string : orcidFormateado Cadena con guiones intercalados hasta 19 caracteres.
  */
 function formatearOrcidInput(valor) {
-  // [Línea clave]: ¿Por qué soy importante? Normaliza la entrada del usuario en tiempo real. ¿Para qué? Facilitar la captura del ORCID solicitado sin errores de guiones. ¿Dónde me usan? En los listeners de input de los modales de equipo, colaborador externo y perfil.
+  // [Línea clave]: Por qué soy importante? Normaliza la entrada del usuario en tiempo real. Para qué? Facilitar la captura del ORCID solicitado sin errores de guiones. Dónde me usan? En los listeners de input de los modales de equipo, colaborador externo y perfil.
   const limpio = String(valor || "")
     .toUpperCase()
     .replace(/[^0-9X]/g, "")
@@ -145,7 +145,7 @@ function formatearOrcidInput(valor) {
  */
 function esOrcidValido(valor) {
   const limpio = String(valor || "").trim().toUpperCase();
-  // [Línea clave]: ¿Por qué soy importante? Valida el formato estructural de 4 bloques de 4 caracteres. ¿Para qué? Rechazar cadenas mal formadas antes del cálculo modular. ¿Dónde me usan? En team-save, external-add-save y guardado de perfil.
+  // [Línea clave]: Por qué soy importante? Valida el formato estructural de 4 bloques de 4 caracteres. Para qué? Rechazar cadenas mal formadas antes del cálculo modular. Dónde me usan? En team-save, external-add-save y guardado de perfil.
   if (!/^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/.test(limpio)) return false;
   const compacto = limpio.replace(/-/g, "");
   if (compacto.slice(0, 15) === "000000000000000") return false;
@@ -170,7 +170,7 @@ function esOrcidValido(valor) {
  *     + string : orcid Identificador ORCID validado vinculado al perfil o cadena vacía si debe solicitarse.
  */
 function obtenerOrcidDePerfil(correo = "", nombre = "") {
-  // [Línea clave]: ¿Por qué soy importante? Recupera el ORCID vinculado al perfil del investigador. ¿Para qué? Autocompletar el ORCID al seleccionar su nombre sin generarlo sintéticamente. ¿Dónde me usan? En el buscador de equipo, colaboradores externos y perfil.
+  // [Línea clave]: Por qué soy importante? Recupera el ORCID vinculado al perfil del investigador. Para qué? Autocompletar el ORCID al seleccionar su nombre sin generarlo sintéticamente. Dónde me usan? En el buscador de equipo, colaboradores externos y perfil.
   const reg = state?.orcidRegistry || {};
   const c = String(correo || "").trim().toLowerCase();
   const n = String(nombre || "").trim().toLowerCase();
@@ -226,7 +226,7 @@ function registrarOrcidEnPerfil(correo = "", nombre = "", orcid = "") {
  *     + Set<string> : ocupados Conjunto de cadenas ORCID en uso por otros investigadores.
  */
 function obtenerOrcidsOcupados(excluirCorreo = "", excluirNombre = "") {
-  // [Línea clave]: ¿Por qué soy importante? Garantiza la unicidad estricta de cada ORCID en el sistema. ¿Para qué? Impedir que dos investigadores o colaboradores compartan el mismo ORCID. ¿Dónde me usan? En team-save, external-add-save y actualización de perfil.
+  // [Línea clave]: Por qué soy importante? Garantiza la unicidad estricta de cada ORCID en el sistema. Para qué? Impedir que dos investigadores o colaboradores compartan el mismo ORCID. Dónde me usan? En team-save, external-add-save y actualización de perfil.
   const ocupados = new Set();
   const correoEx = String(excluirCorreo || "").trim().toLowerCase();
   const nombreEx = String(excluirNombre || "").trim().toLowerCase();
@@ -286,7 +286,7 @@ const _SQLI_CLIENT_REGEX = /(\b(UNION\s+ALL\s+SELECT|UNION\s+SELECT|DROP\s+TABLE
  */
 function contieneInyeccionSQL(valor) {
   if (typeof valor !== "string" || !valor) return false;
-  // [Línea clave]: ¿Por qué soy importante? Filtro preventivo de seguridad en el cliente. ¿Para qué? Rechazar payloads de inyección SQL en tiempo real en cualquier input o textarea. ¿Dónde me usan? En validate(), listener global 'input' y guardado de modales.
+  // [Línea clave]: Por qué soy importante? Filtro preventivo de seguridad en el cliente. Para qué? Rechazar payloads de inyección SQL en tiempo real en cualquier input o textarea. Dónde me usan? En validate(), listener global 'input' y guardado de modales.
   return _SQLI_CLIENT_REGEX.test(valor);
 }
 
@@ -371,7 +371,7 @@ class AuthError extends Error {
 async function apiLogin(correo, password) {
   let res;
   try {
-    // [Línea clave]: ¿Por qué soy importante? Petición de validación de identidad. ¿Para qué? Transmitir correo y contraseña al backend FastAPI. ¿Dónde me usan? Dentro del flujo asíncrono de apiLogin().
+    // [Línea clave]: Por qué soy importante? Petición de validación de identidad. Para qué? Transmitir correo y contraseña al backend FastAPI. Dónde me usan? Dentro del flujo asíncrono de apiLogin().
     res = await fetch(`${API_URL}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -583,7 +583,7 @@ async function numsPropuestas() {
   const idUsuario = session?.user?.id_usuario;
   if (!idUsuario) return null;
   try {
-    // [Línea clave]: ¿Por qué soy importante? Consulta las métricas globales del investigador. ¿Para qué? Alimentar las 4 tarjetas estadísticas del panel principal. ¿Dónde me usan? En dashboard() y precarga.
+    // [Línea clave]: Por qué soy importante? Consulta las métricas globales del investigador. Para qué? Alimentar las 4 tarjetas estadísticas del panel principal. Dónde me usan? En dashboard() y precarga.
     const res = await fetch(`${API_URL}/propuestas/dashboardpropuestas?id_usuario=${idUsuario}`);
     if (res.ok) numspropuestas = await res.json(); // { total, formulacion, ejecucion, cerradas }
   } catch (err) {
@@ -628,7 +628,7 @@ async function top3PropuestasMasRecientes() {
   const idUsuario = session?.user?.id_usuario;
   if (!idUsuario) return null;
   try {
-    // [Línea clave]: ¿Por qué soy importante? Obtiene los últimos proyectos en trabajo. ¿Para qué? Desplegar el listado de acceso rápido en el inicio del investigador. ¿Dónde me usan? En dashboard() y projectRows().
+    // [Línea clave]: Por qué soy importante? Obtiene los últimos proyectos en trabajo. Para qué? Desplegar el listado de acceso rápido en el inicio del investigador. Dónde me usan? En dashboard() y projectRows().
     const res = await fetch(`${API_URL}/propuestas/top3PropuestaMasReciente?id_usuario=${idUsuario}`);
     if (res.ok) {
       const data = await res.json();
@@ -895,7 +895,7 @@ let evaluacionPreliminarIA = null;
  */
 async function obtenerEvaluacionPreliminarIA(idPropuesta = 1) {
   try {
-    // [Línea clave]: ¿Por qué soy importante? Descarga el dictamen preliminar ya guardado desde el Backend. ¿Para qué? Mostrar a cada nivel evaluador su guía de referencia sin bloquear la lectura generando IA. ¿Dónde me usan? En dossier() y evaluation().
+    // [Línea clave]: Por qué soy importante? Descarga el dictamen preliminar ya guardado desde el Backend. Para qué? Mostrar a cada nivel evaluador su guía de referencia sin bloquear la lectura generando IA. Dónde me usan? En dossier() y evaluation().
     const res = await fetch(`${API_URL}/ia/evaluacion-preliminar/${idPropuesta}`);
     evaluacionPreliminarIA = res.ok ? await res.json() : null;
   } catch (err) {
@@ -942,7 +942,7 @@ async function generarEvaluacionPreliminarIA() {
       cantidad_productos: 3,
       declaraciones_eticas_completas: true,
     };
-    // [Línea clave]: ¿Por qué soy importante? Dispara la evaluación online con Gemini al enviar la propuesta a revisión. ¿Para qué? Evaluar con IA los criterios y parámetros VIE 2027 y guardarlos en Supabase. ¿Dónde me usan? En handleAction('send-confirm') y handleAction('refresh-ai-eval').
+    // [Línea clave]: Por qué soy importante? Dispara la evaluación online con Gemini al enviar la propuesta a revisión. Para qué? Evaluar con IA los criterios y parámetros VIE 2027 y guardarlos en Supabase. Dónde me usan? En handleAction('send-confirm') y handleAction('refresh-ai-eval').
     const res = await fetch(`${API_URL}/ia/evaluar-borrador`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1084,6 +1084,32 @@ const AI_SUGERENCIAS_CONFIG = {
   etica: { campo: "etica", minChars: 5 },
 };
 
+// Campos de las pantallas 08/10/11/12 que reciben IA (clave de state.saved -> campo IA).
+// Se resuelve dentro de field(), porque dataForm/foundationForm/objectiveForm/methodologyForm
+// llaman a field() directamente (fieldsFor() no se usa en ningún render).
+const AI_CAMPO_POR_KEY = {
+  "08:Título de la propuesta": "titulo",
+  "10:Problema e importancia": "planteamiento",
+  "10:Justificación": "planteamiento",
+  "10:Estado del arte y vacío identificado": "planteamiento",
+  "10:Antecedentes": "planteamiento",
+  "11:Objetivo general": "objetivo_general",
+  "11:OE1": "objetivos_especificos",
+  "11:OE2": "objetivos_especificos",
+  "11:OE3": "objetivos_especificos",
+  "11:OE4": "objetivos_especificos",
+  "12:Enfoque y diseño metodológico": "actividades",
+  "12:Procedimientos y técnicas": "actividades",
+  "12:Usuarios y validación": "actividades",
+  "12:Análisis de resultados": "actividades",
+};
+
+function aiEnvolverCampo(html, key, kind) {
+  const campo = AI_CAMPO_POR_KEY[key];
+  if (!campo || !["text", "textarea"].includes(kind)) return html;
+  return `<div class="field-wrapper" data-ai-campo="${campo}">${html}<div class="ai-sugerencias" role="listbox"></div></div>`;
+}
+
 // Cache en memoria para evitar llamadas repetidas
 const aiSugerenciasCache = new Map();
 
@@ -1115,7 +1141,7 @@ function generarCacheKey(campo, textoParcial) {
 }
 
 // Llamar al endpoint /ia/sugerencias
-async function fetchAISugerencias(campo, textoParcial) {
+async function fetchAISugerencias(campo, textoParcial, signal) {
   const config = AI_SUGERENCIAS_CONFIG[campo];
   if (!config) return null;
 
@@ -1138,6 +1164,7 @@ async function fetchAISugerencias(campo, textoParcial) {
         contexto: ctx,
         texto_parcial: textoParcial,
       }),
+      signal,
     });
     if (!resp.ok) {
       registrarFallbackIA(campo);
@@ -1147,8 +1174,11 @@ async function fetchAISugerencias(campo, textoParcial) {
     // Cache por 5 minutos
     aiSugerenciasCache.set(cacheKey, data);
     setTimeout(() => aiSugerenciasCache.delete(cacheKey), 5 * 60 * 1000);
+    // Éxito: resetear contador de fallos
+    aiFallbackCounters.delete(campo);
     return data;
   } catch (e) {
+    if (e.name === "AbortError") return null; // cancelada a propósito, no es un fallo
     console.warn("AI sugerencias error:", e);
     registrarFallbackIA(campo);
     return null;
@@ -1231,87 +1261,6 @@ function setupAISugerenciasKeyboard(campo, input, sugerenciasData) {
   });
 }
 
-// Mostrar sugerencias al hacer focus o al escribir (debounced)
-function setupAISugerencias(campo, input) {
-    const config = AI_SUGERENCIAS_CONFIG[campo];
-    if (!config) return;
-
-    let fetchTimer = null;
-    let currentAbort = null;
-
-    async function fetchAndShow(textoParcial) {
-      if (currentAbort) currentAbort.abort();
-      currentAbort = new AbortController();
-
-      // Limpiar timer anterior
-      clearTimeout(fetchTimer);
-
-      // Callback async function for setTimeout
-      async function fetchCallback() {
-        if (textoParcial.length < config.minChars) {
-          cerrarAISugerencias(campo);
-          return;
-        }
-        // Verificar si debe usar fallback (3 fallos consecutivos)
-        if (debeUsarFallback(campo)) {
-          const placeholder = obtenerPlaceholderInteligente(config.campo, null);
-          if (placeholder) {
-            input.placeholder = placeholder;
-          }
-          cerrarAISugerencias(campo);
-          return;
-        }
-        const data = await fetchAISugerencias(campo, textoParcial);
-        if (data?.sugerencias?.length) {
-          const dropdown = $(`#ai-sugerencias-${campo}`);
-          if (dropdown) {
-            dropdown.innerHTML = renderAISugerenciasDropdown(data, data.placeholder, campo);
-            dropdown.classList.add("open");
-            setupAISugerenciasKeyboard(campo, input, data);
-            // Actualizar placeholder inteligente
-            const placeholder = obtenerPlaceholderInteligente(config.campo, data);
-            if (placeholder) input.placeholder = placeholder;
-          } else {
-            registrarFallbackIA(campo);
-            const placeholder = obtenerPlaceholderInteligente(config.campo, null);
-            if (placeholder) input.placeholder = placeholder;
-            cerrarAISugerencias(campo);
-          }
-        }
-
-      fetchTimer = setTimeout(fetchCallback, 250);
-    }
-  }
-
-    // Focus: buscar si ya hay texto
-    input.addEventListener("focus", () => {
-      fetchAndShow(input.value);
-    });
-
-    // Input: debounced search
-    input.addEventListener("input", (e) => {
-      fetchAndShow(e.target.value);
-    });
-
-    // Blur: cerrar después de un delay (permite click en sugerencia)
-    input.addEventListener("blur", () => {
-      setTimeout(() => cerrarAISugerencias(campo), 200);
-    });
-
-    // Click en sugerencia
-    document.addEventListener("click", (e) => {
-      const item = e.target.closest(".sugerencia-item");
-      if (item && item.dataset.campo === campo) {
-        const idx = parseInt(item.dataset.idx, 10);
-        // Obtener datos del dropdown
-        const dropdown = $(`#ai-sugerencias-${campo}`);
-        // Buscar en cache
-        const cacheKey = generarCacheKey(campo, input.value);
-        const data = aiSugerenciasCache.get(cacheKey);
-        if (data) aplicarAISugerencia(campo, idx, data, "click");
-      }
-    });
-  }
 
   /**
    * Wrapper de field() que añade soporte de sugerencias IA.
@@ -2870,7 +2819,7 @@ async function refrescarCatalogosFront() {
  */
 function obtenerLimiteCaracteres(label = "", key = "", kind = "text") {
   if (kind === "select" || kind === "checkbox" || kind === "file" || kind === "date" || kind === "number") return null;
-  // [Línea clave]: ¿Por qué soy importante? Asigna topes de longitud alineados con las restricciones documentales de Docs Proyecto y el esquema de base de datos. ¿Para qué? Proteger contra desbordamientos de datos y asegurar consistencia con los formularios oficiales VIE 2027. ¿Dónde me usan? En field() y adminField().
+  // [Línea clave]: Por qué soy importante? Asigna topes de longitud alineados con las restricciones documentales de Docs Proyecto y el esquema de base de datos. Para qué? Proteger contra desbordamientos de datos y asegurar consistencia con los formularios oficiales VIE 2027. Dónde me usan? En field() y adminField().
   const ref = `${label} ${key}`.toLowerCase();
 
   // 1. Identificadores técnicos y credenciales
@@ -2942,7 +2891,7 @@ function obtenerLimiteCaracteres(label = "", key = "", kind = "text") {
  *     + boolean : visible Verdadero si el control debe exhibir el contador de caracteres en la interfaz.
  */
 function debeMostrarContadorCaracteres(label = "", key = "", kind = "text") {
-  // [Línea clave]: ¿Por qué soy importante? Impide la aparición de contadores visuales en el login o campos simples de acceso. ¿Para qué? Restringir los contadores en tiempo real a las secciones de propuestas y convocatorias donde la normativa oficial de Docs Proyecto impone topes estrictos. ¿Dónde me usan? En field(), adminField() y en el despachador de eventos de input.
+  // [Línea clave]: Por qué soy importante? Impide la aparición de contadores visuales en el login o campos simples de acceso. Para qué? Restringir los contadores en tiempo real a las secciones de propuestas y convocatorias donde la normativa oficial de Docs Proyecto impone topes estrictos. Dónde me usan? En field(), adminField() y en el despachador de eventos de input.
   if (!key && !label) return false;
   const k = String(key || "").toLowerCase();
   const lbl = String(label || "").toLowerCase();
@@ -3039,7 +2988,7 @@ function debeMostrarContadorCaracteres(label = "", key = "", kind = "text") {
  *     + string : textoContador Cadena para mostrar en la interfaz.
  */
 function formatearTextoContador(longitud = 0, maxLen = 0, label = "", key = "") {
-  // [Línea clave]: ¿Por qué soy importante? Genera una leyenda de conteo clara y explicativa acorde a Docs Proyecto. ¿Para qué? Orientar a la persona postulante con las restricciones normativas exactas. ¿Dónde me usan? En field(), adminField() y en el evento input.
+  // [Línea clave]: Por qué soy importante? Genera una leyenda de conteo clara y explicativa acorde a Docs Proyecto. Para qué? Orientar a la persona postulante con las restricciones normativas exactas. Dónde me usan? En field(), adminField() y en el evento input.
   const ref = `${label} ${key}`.toLowerCase();
   let aclaracion = "";
   if (ref.includes("resumen") || ref.includes("abstract")) {
@@ -3656,7 +3605,7 @@ const defaultState = {
   resolution: "Aprobada",
 };
 
-// [Línea clave]: ¿Por qué soy importante? Es el almacén de estado reactivo global en el frontend. ¿Para qué? Mantener sincronizados formularios, tema, rol y progreso entre pantallas. ¿Dónde me usan? Leído y mutado en toda la aplicación.
+// [Línea clave]: Por qué soy importante? Es el almacén de estado reactivo global en el frontend. Para qué? Mantener sincronizados formularios, tema, rol y progreso entre pantallas. Dónde me usan? Leído y mutado en toda la aplicación.
 let state = structuredClone(defaultState);
 try {
   state = {
@@ -3975,7 +3924,7 @@ function field(
   placeholder = "",
   defaultValue = undefined,
 ) {
-  // [Línea clave]: ¿Por qué soy importante? Genera una clave persistente única para el campo. ¿Para qué? Recuperar y almacenar borradores parciales en state.saved. ¿Dónde me usan? En el binding de valores de todos los formularios.
+  // [Línea clave]: Por qué soy importante? Genera una clave persistente única para el campo. Para qué? Recuperar y almacenar borradores parciales en state.saved. Dónde me usan? En el binding de valores de todos los formularios.
   const k = key || `${current}:${label}`,
     opts =
       kind === "select"
@@ -4022,7 +3971,11 @@ function field(
     mostrarContador && maxLen && kind !== "readonly"
       ? `<small class="char-counter micro muted" style="display:block;text-align:right;margin-top:2px">${formatearTextoContador(String(val ?? "").length, maxLen, label, k)}</small>`
       : "";
-  return `<div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}${counterHtml}${help ? `<span class="help">${esc(help)}</span>` : ""}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>`;
+  return aiEnvolverCampo(
+    `<div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}${counterHtml}${help ? `<span class="help">${esc(help)}</span>` : ""}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>`,
+    k,
+    kind
+  );
 }
 
 /**
@@ -4209,7 +4162,7 @@ function navItem(label, id, ic, active) {
  *     + string : shellHtml Estructura completa de página lista para inyección en el DOM.
  */
 function shell(body, title, description = "", headingActions = "") {
-  // [Línea clave]: ¿Por qué soy importante? Resuelve dinámicamente la identidad y rol visible del usuario. ¿Para qué? Ajustar las opciones del menú lateral a sus facultades (investigador vs evaluador vs superadmin). ¿Dónde me usan? Al armar el layout principal en shell().
+  // [Línea clave]: Por qué soy importante? Resuelve dinámicamente la identidad y rol visible del usuario. Para qué? Ajustar las opciones del menú lateral a sus facultades (investigador vs evaluador vs superadmin). Dónde me usan? Al armar el layout principal en shell().
   const r = person(),
     research = state.role === "investigador",
     // [Línea clave]: Dirección, Funcionarios VIE y Administración administran las pantallas 31 y 32.
@@ -4594,7 +4547,7 @@ function login() {
  *     + string : dashboardHtml Marcado estructurado del panel de inicio.
  */
 function dashboard() {
-  // [Línea clave]: ¿Por qué soy importante? Bifurcación condicional de interfaz según privilegios de rol. ¿Para qué? Mostrar métricas de evaluación a comités o panel de formulación a investigadores. ¿Dónde me usan? Al inicio de dashboard().
+  // [Línea clave]: Por qué soy importante? Bifurcación condicional de interfaz según privilegios de rol. Para qué? Mostrar métricas de evaluación a comités o panel de formulación a investigadores. Dónde me usan? Al inicio de dashboard().
   if (state.role !== "investigador") {
     // [Línea clave]: Vinculación y Comité Técnico muestran la propuesta real más reciente
     // que espera su dictamen; el resto de roles conserva el escenario demo.
@@ -5193,7 +5146,7 @@ function rubroParaPartida(partida) {
  *     + Array<Object> : equipo Lista de integrantes con id_usuario, nombre, correo, orcid, tipo, horas y rol.
  */
 function proposalTeamMembers() {
-  // [Línea clave]: ¿Por qué soy importante? Resuelve los integrantes del equipo y sincroniza su ORCID de perfil. ¿Para qué? Mantener consistente la tabla de la Pantalla 09 y el payload de creación. ¿Dónde me usan? En teamForm(), buildProposalPayload() y selectores de responsables.
+  // [Línea clave]: Por qué soy importante? Resuelve los integrantes del equipo y sincroniza su ORCID de perfil. Para qué? Mantener consistente la tabla de la Pantalla 09 y el payload de creación. Dónde me usan? En teamForm(), buildProposalPayload() y selectores de responsables.
   if (state.teamMembers && state.teamMembers.length > 0) {
     return state.teamMembers.map((m) => ({
       ...m,
@@ -5522,7 +5475,7 @@ function newProposal() {
  *     + string : dataFormHtml Marcado HTML interno de la sección de datos generales.
  */
 function dataForm() {
-  // [Línea clave]: ¿Por qué soy importante? Mapea los catálogos asíncronos de la base de datos a listas de opciones. ¿Para qué? Alimentar los selectores de escuela y línea de investigación del formulario. ¿Dónde me usan? Al construir dataForm().
+  // [Línea clave]: Por qué soy importante? Mapea los catálogos asíncronos de la base de datos a listas de opciones. Para qué? Alimentar los selectores de escuela y línea de investigación del formulario. Dónde me usan? Al construir dataForm().
   const escuelasOpts = (escuelas ?? []).map((e) => ({ value: e.id, label: e.nombre }));
   const lineasOpts = (lineas_investigacion ?? []).map((l) => ({ value: l.id, label: l.nombre }));
   return `
@@ -5861,7 +5814,7 @@ function riskForm() {
  *     + string : budgetFormHtml Marcado HTML del presupuesto.
  */
 function budgetForm() {
-  // [Línea clave]: ¿Por qué soy importante? Valida en tiempo real los topes de convocatoria VIE. ¿Para qué? Advertir al usuario si el presupuesto excede los ₡5M/año o carece de la beca reglamentaria. ¿Dónde me usan? En la cabecera de budgetForm().
+  // [Línea clave]: Por qué soy importante? Valida en tiempo real los topes de convocatoria VIE. Para qué? Advertir al usuario si el presupuesto excede los ₡5M/año o carece de la beca reglamentaria. Dónde me usan? En la cabecera de budgetForm().
   const valid = budgetValid();
   const rubros = catalogos?.rubros_presupuesto ?? [];
   // Asegurar que state.budget tenga todos los rubros del catálogo (inicialización perezosa)
@@ -5935,7 +5888,7 @@ function complementaryForm() {
     value: String(t.nivel),
     label: t.nombre,
   }));
-  return `<h3 class="mb">Madurez tecnológica y propiedad intelectual</h3><div class="field-row">${field("TRL actual", trlOpts, "select", "Rango de referencia DT: 4–7.", true, "", "", "4")}${field("TRL esperado", trlOpts, "select", "Coherente con objetivos y validación.", true, "", "", "6")}</div>${field("Potencial de propiedad intelectual", ["Sí", "No"], "select", "En desarrollo tecnológico el dictamen de Vinculación es obligatorio.", true, "", "", "Sí")}${field("Activo previsto", "", "textarea", "Evitar divulgación previa a la valoración institucional.", true, "", "Software de integración y registro de mediciones ambientales.")}<details class="accordion" open><summary>Declaraciones éticas individuales</summary><p class="small muted" style="margin-top:14px">Cada aspecto se declara y justifica por separado; no se admite una respuesta general.</p><div class="ethics-grid">${ethics.map(([label, reason], i) => `<section class="ethics-item"><h3>${label}</h3>${field("¿Aplica?", ["No", "Sí"], "select", "Selecciona Sí si la actividad requiere revisión o permisos.", true, `ethics:${i}:applies`, "", "No")}${fieldConIAEspecial(`Justificación específica`, "", "textarea", "Indica entidad, estado, mitigación y plazo si corresponde.", true, `ethics:${i}:reason`, reason, "etica")}</section>`).join("")}</div></details><details class="accordion"><summary>Producción, difusión y hoja de ruta</summary><p><strong>${totalHoras} h/semana:</strong> software + artículo sometido WoS/Scopus + manual técnico. Se asocian a OE2 y OE3.</p>${field("Difusión y socialización", "", "textarea", "Plan de difusión de resultados (seminarios, publicaciones, transferencia).", false, "", "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.")}${field("Hoja de ruta", "", "textarea", "Hitos para avanzar del TRL actual al esperado.", false, "", "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.")}</details>`;
+  return `<h3 class="mb">Madurez tecnológica y propiedad intelectual</h3><div class="field-row">${field("TRL actual", trlOpts, "select", "Rango de referencia DT: 4–7.", true, "", "", "4")}${field("TRL esperado", trlOpts, "select", "Coherente con objetivos y validación.", true, "", "", "6")}</div>${field("Potencial de propiedad intelectual", ["Sí", "No"], "select", "En desarrollo tecnológico el dictamen de Vinculación es obligatorio.", true, "", "", "Sí")}${field("Activo previsto", "", "textarea", "Evitar divulgación previa a la valoración institucional.", true, "", "Software de integración y registro de mediciones ambientales.")}<details class="accordion" open><summary>Declaraciones éticas individuales</summary><p class="small muted" style="margin-top:14px">Cada aspecto se declara y justifica por separado; no se admite una respuesta general.</p><div class="ethics-grid">${ethics.map(([label, reason], i) => `<section class="ethics-item"><h3>${label}</h3>${field("Aplica?", ["No", "Sí"], "select", "Selecciona Sí si la actividad requiere revisión o permisos.", true, `ethics:${i}:applies`, "", "No")}${fieldConIAEspecial(`Justificación específica`, "", "textarea", "Indica entidad, estado, mitigación y plazo si corresponde.", true, `ethics:${i}:reason`, reason, undefined, "etica")}</section>`).join("")}</div></details><details class="accordion"><summary>Producción, difusión y hoja de ruta</summary><p><strong>${totalHoras} h/semana:</strong> software + artículo sometido WoS/Scopus + manual técnico. Se asocian a OE2 y OE3.</p>${field("Difusión y socialización", "", "textarea", "Plan de difusión de resultados (seminarios, publicaciones, transferencia).", false, "", "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.")}${field("Hoja de ruta", "", "textarea", "Hitos para avanzar del TRL actual al esperado.", false, "", "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.")}</details>`;
 }
 
 /**
@@ -6062,9 +6015,9 @@ const stageList = [
   "Cerrada",
 ];
 
-// [Línea clave]: ¿Por qué soy importante? Traduce los nombres oficiales de estado de PostgreSQL
-// a las etapas que usa la línea de tiempo del seguimiento. ¿Para qué? Que la pantalla 20 refleje el
-// estado real del expediente. ¿Dónde me usan? En tracking() y en los paneles de estado del frontend.
+// [Línea clave]: Por qué soy importante? Traduce los nombres oficiales de estado de PostgreSQL
+// a las etapas que usa la línea de tiempo del seguimiento. Para qué? Que la pantalla 20 refleje el
+// estado real del expediente. Dónde me usan? En tracking() y en los paneles de estado del frontend.
 const ESTADOS_BACKEND_A_ETAPA = {
   "En formulación": "En formulación",
   "En revisión de Vinculación": "En revisión de Vinculación",
@@ -6094,9 +6047,9 @@ function normalizarEstado(nombre) {
  *     + string : trackingHtml Marcado HTML de la vista de seguimiento.
  */
 function tracking() {
-  // [Línea clave]: ¿Por qué soy importante? Consulta el expediente real de la propuesta activa.
-  // ¿Para qué? Mostrar la etapa actual, documentos y ruta del proceso según PostgreSQL y no solo el estado local.
-  // ¿Dónde me usan? En la pantalla 20 al entrar desde el menú o desde la confirmación de envío.
+  // [Línea clave]: Por qué soy importante? Consulta el expediente real de la propuesta activa.
+  // Para qué? Mostrar la etapa actual, documentos y ruta del proceso según PostgreSQL y no solo el estado local.
+  // Dónde me usan? En la pantalla 20 al entrar desde el menú o desde la confirmación de envío.
   const idActivo = propuestaActivaId();
   const d = dossierActual && Number(dossierActual.id_propuesta) === Number(idActivo) ? dossierActual : null;
   const stage = normalizarEstado(d?.nombre_estado || state.stage);
@@ -6359,7 +6312,7 @@ function inbox() {
  *     + string : dossierHtml Marcado estructurado del expediente digital.
  */
 function dossier() {
-  // [Línea clave]: ¿Por qué soy importante? Resuelve el expediente activo del sistema o desde el escenario local. ¿Para qué? Mostrar metadatos y decisiones reales de la propuesta seleccionada en la bandeja. ¿Dónde me usan? Al inicio de dossier().
+  // [Línea clave]: Por qué soy importante? Resuelve el expediente activo del sistema o desde el escenario local. Para qué? Mostrar metadatos y decisiones reales de la propuesta seleccionada en la bandeja. Dónde me usan? Al inicio de dossier().
   const idActivo = propuestaActivaId();
   const d = dossierActual && Number(dossierActual.id_propuesta) === Number(idActivo) ? dossierActual : null;
   const code = d?.codigo || state.created?.code || state.viewProposal || "SI-2027-014";
@@ -6636,7 +6589,7 @@ function scoreResult() {
     for (const [name, w, mandatory] of cs) {
       const val = Number(scoreValue(name));
       sum += (w * val) / 10;
-      // [Línea clave]: ¿Por qué soy importante? Regla de oro de la VIE: criterios obligatorios requieren nivel Bueno (8) o Excelente (10). ¿Para qué? Impedir recomendación si falla un requisito de fondo aunque la nota supere 70. ¿Dónde me usan? En el cálculo de scoreResult().
+      // [Línea clave]: Por qué soy importante? Regla de oro de la VIE: criterios obligatorios requieren nivel Bueno (8) o Excelente (10). Para qué? Impedir recomendación si falla un requisito de fondo aunque la nota supere 70. Dónde me usan? En el cálculo de scoreResult().
       if (mandatory && val < 8) blocked = true;
     }
   return {
@@ -7552,7 +7505,7 @@ function profile() {
  *     + boolean : autorizado Verdadero si el rol activo tiene autorización para acceder.
  */
 function guardRoute(id) {
-  // [Línea clave]: ¿Por qué soy importante? Protección client-side de rutas por perfil de usuario. ¿Para qué? Evitar que un rol acceda a formularios de dictamen que no le competen institucionalmente. ¿Dónde me usan? Evaluado en render() antes de inyectar la vista.
+  // [Línea clave]: Por qué soy importante? Protección client-side de rutas por perfil de usuario. Para qué? Evitar que un rol acceda a formularios de dictamen que no le competen institucionalmente. Dónde me usan? Evaluado en render() antes de inyectar la vista.
   const roleByScreen = {
     23: "vinculacion",
     24: "comite",
@@ -7584,7 +7537,7 @@ function guardRoute(id) {
 function render() {
   document.documentElement.dataset.theme = state.theme || "light";
   document.documentElement.classList.toggle("large-text", !!state.largeText);
-  // [Línea clave]: ¿Por qué soy importante? Resuelve la pantalla actual del hash en la URL. ¿Para qué? Coordinar el enrutador cliente de la SPA. ¿Dónde me usan? Al inicio de render().
+  // [Línea clave]: Por qué soy importante? Resuelve la pantalla actual del hash en la URL. Para qué? Coordinar el enrutador cliente de la SPA. Dónde me usan? Al inicio de render().
   current = (location.hash.slice(1) || "01").split("?")[0];
   if (!screen(current)) current = "01";
   // Guarda de sesión: sin sesión solo existe el login; con sesión, el login redirige al inicio del rol.
@@ -7858,7 +7811,7 @@ async function doLogin() {
     password = pwEl.value;
 
   await conCarga(b, async () => {
-    // [Línea clave]: ¿Por qué soy importante? Petición de login contra el backend FastAPI. ¿Para qué? Verificar credenciales en la base de datos Supabase Postgres. ¿Dónde me usan? En el flujo de login en doLogin().
+    // [Línea clave]: Por qué soy importante? Petición de login contra el backend FastAPI. Para qué? Verificar credenciales en la base de datos Supabase Postgres. Dónde me usan? En el flujo de login en doLogin().
     const user = await apiLogin(correo, password);
     const key =
       user && Array.isArray(user.roles) && user.roles.length
@@ -8013,7 +7966,7 @@ async function handleAction(action, el) {
       break;
     }
     case "save":
-      // [Línea clave]: ¿Por qué soy importante? Persistencia reactiva del borrador. ¿Para qué? Guardar el progreso parcial del formulario sin enviarlo aún a evaluación. ¿Dónde me usan? En handleAction bajo la acción 'save'.
+      // [Línea clave]: Por qué soy importante? Persistencia reactiva del borrador. Para qué? Guardar el progreso parcial del formulario sin enviarlo aún a evaluación. Dónde me usan? En handleAction bajo la acción 'save'.
       save();
       toast("Borrador guardado en este navegador.");
       break;
@@ -8023,7 +7976,7 @@ async function handleAction(action, el) {
           toast("Corrige el presupuesto antes de continuar.");
           break;
         }
-        // [Línea clave]: ¿Por qué soy importante? Validación y avance de paso. ¿Para qué? Guardar los datos del paso actual y avanzar a la siguiente sección del wizard de formulación. ¿Dónde me usan? En handleAction bajo la acción 'next'.
+        // [Línea clave]: Por qué soy importante? Validación y avance de paso. Para qué? Guardar los datos del paso actual y avanzar a la siguiente sección del wizard de formulación. Dónde me usan? En handleAction bajo la acción 'next'.
         save();
         go(el.dataset.next);
       }
@@ -8215,7 +8168,7 @@ async function handleAction(action, el) {
           });
         }
         const aplicarUsuarioSeleccionado = (u) => {
-          // [Línea clave]: ¿Por qué soy importante? Autocompleta el ORCID desde el perfil del investigador seleccionado. ¿Para qué? Mantener la relación 1 a 1 entre investigador y su ORCID validado o solicitarlo si aún no lo tiene registrado. ¿Dónde me usan? Al elegir un investigador en el modal de equipo.
+          // [Línea clave]: Por qué soy importante? Autocompleta el ORCID desde el perfil del investigador seleccionado. Para qué? Mantener la relación 1 a 1 entre investigador y su ORCID validado o solicitarlo si aún no lo tiene registrado. Dónde me usan? Al elegir un investigador en el modal de equipo.
           const orcidRegistrado = u.orcid || obtenerOrcidDePerfil(u.correo, u.nombre);
           state.selectedTeamUser = {
             id_usuario: Number(u.id_usuario),
@@ -8447,7 +8400,7 @@ async function handleAction(action, el) {
         : ["Bajo", "Medio", "Alto"].map((n) => ({ value: n, label: n })));
       modal(
         "Agregar riesgo",
-        `${field("Actividad", ["Definir requerimientos", "Integrar y calibrar", "Validar en campo", "Evaluar y documentar"], "select", "", true, "modal:riskactivity")}${fieldConIAEspecial("Riesgo", "Indisponibilidad temporal de un sitio piloto.", "textarea", "", true, "modal:risk", "", undefined, "riesgos")}<div class="field-row">${field("Probabilidad", nivelesRiesgoOpts, "select", "", true, "modal:riskprob", "", "Medio")}${field("Impacto", nivelesRiesgoOpts, "select", "", true, "modal:riskimpact", "", "Medio")}</div>${fieldConIAEspecial("Mitigación", "Acordar un sitio alternativo antes del inicio de la validación.", "textarea", "", true, "modal:mitigation", "", "riesgos")}${field("Responsable", miembrosRiesgoOpts.length ? miembrosRiesgoOpts : [nombreResponsableActual()], "select", "Persona encargada del monitoreo.", true, "modal:riskowner")}`,
+        `${field("Actividad", ["Definir requerimientos", "Integrar y calibrar", "Validar en campo", "Evaluar y documentar"], "select", "", true, "modal:riskactivity")}${fieldConIAEspecial("Riesgo", "Indisponibilidad temporal de un sitio piloto.", "textarea", "", true, "modal:risk", "", undefined, "riesgos")}<div class="field-row">${field("Probabilidad", nivelesRiesgoOpts, "select", "", true, "modal:riskprob", "", "Medio")}${field("Impacto", nivelesRiesgoOpts, "select", "", true, "modal:riskimpact", "", "Medio")}</div>${fieldConIAEspecial("Mitigación", "Acordar un sitio alternativo antes del inicio de la validación.", "textarea", "", true, "modal:mitigation", "", undefined, "riesgos")}${field("Responsable", miembrosRiesgoOpts.length ? miembrosRiesgoOpts : [nombreResponsableActual()], "select", "Persona encargada del monitoreo.", true, "modal:riskowner")}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar riesgo", "save-extra", 'data-kind="risk"'),
         false,
@@ -8622,7 +8575,7 @@ async function handleAction(action, el) {
         });
         nameInput.addEventListener("input", () => {
           if (orcidEditadoManualmente && orcidInput.value.trim()) return;
-          // [Línea clave]: ¿Por qué soy importante? Autocompleta el ORCID únicamente si el colaborador ya tiene uno validado en su perfil. ¿Para qué? Solicitar un ORCID real cuando la persona es nueva en lugar de generarlo sintéticamente. ¿Dónde me usan? En el listener de nombre del modal external-add.
+          // [Línea clave]: Por qué soy importante? Autocompleta el ORCID únicamente si el colaborador ya tiene uno validado en su perfil. Para qué? Solicitar un ORCID real cuando la persona es nueva en lugar de generarlo sintéticamente. Dónde me usan? En el listener de nombre del modal external-add.
           const registradoEnPerfil = obtenerOrcidDePerfil("", nameInput.value);
           orcidInput.value = registradoEnPerfil;
           state.saved["modal:ext-orcid"] = registradoEnPerfil;
@@ -8767,7 +8720,7 @@ async function handleAction(action, el) {
       break;
     }
     case "send": {
-      // [Línea clave]: ¿Por qué soy importante? Envío formal a evaluación técnica y Vinculación. ¿Para qué? Validar y registrar la propuesta completa en PostgreSQL. ¿Dónde me usan? En handleAction bajo la acción 'send'.
+      // [Línea clave]: Por qué soy importante? Envío formal a evaluación técnica y Vinculación. Para qué? Validar y registrar la propuesta completa en PostgreSQL. Dónde me usan? En handleAction bajo la acción 'send'.
       const issues = proposalValidationIssues();
       if (issues.length) {
         modal(
@@ -8784,7 +8737,7 @@ async function handleAction(action, el) {
       }
       const titulo = draftValue("08:Título de la propuesta", screenDefault("08", "Título de la propuesta"));
       modal(
-        "¿Enviar a revisión de Vinculación?",
+        "Enviar a revisión de Vinculación?",
         `<p>Se registrará la versión 1.0 de <strong>${esc(titulo)}</strong> y quedará disponible para la instancia revisora.</p><div class="mt">${notice("Todavía no es el sometimiento formal", "El sometimiento ante VIE ocurre después de la evaluación técnica y los avales.")}</div>`,
         act("Seguir revisando", "close", "secondary") +
           confirmBtn("Confirmar envío", "send-confirm"),
@@ -9234,7 +9187,7 @@ async function handleAction(action, el) {
       break;
     }
     case "decision":
-      // [Línea clave]: ¿Por qué soy importante? Registro de dictamen de evaluadores colegiados. ¿Para qué? Avanzar el expediente en el flujo institucional guardando la evidencia. ¿Dónde me usan? En handleAction bajo la acción 'decision'.
+      // [Línea clave]: Por qué soy importante? Registro de dictamen de evaluadores colegiados. Para qué? Avanzar el expediente en el flujo institucional guardando la evidencia. Dónde me usan? En handleAction bajo la acción 'decision'.
       if (!validate("#evaluation-form")) break;
       {
         const id = el.dataset.step,
@@ -10312,29 +10265,7 @@ document.addEventListener("submit", (e) => {
   e.preventDefault();
   if (e.target.id === "login-form") handleAction("login", e.target);
 });
-// [Línea clave]: ¿Por qué soy importante? Maneja accesibilidad WCAG y trampas de foco. ¿Para qué? Cerrar modales con Escape y ciclar navegación con Tab dentro de diálogos modales. ¿Dónde me usan? En el listener global keydown del documento.
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeModal();
-  if (e.key === "Tab" && modalName) {
-    const f = $$(
-      'button,input,select,textarea,[tabindex="0"]',
-      $(".modal"),
-    ).filter((x) => !x.disabled);
-    if (!f.length) return;
-    if (e.shiftKey && document.activeElement === f[0]) {
-      e.preventDefault();
-      f.at(-1).focus();
-    } else if (!e.shiftKey && document.activeElement === f.at(-1)) {
-      e.preventDefault();
-      f[0].focus();
-    }
-  }
-});
-
-// [Línea clave]: ¿Por qué soy importante? Enrutador cliente SPA basado en hash. ¿Para qué? Detectar cambios de ruta en la URL y actualizar la pantalla sin recargar la página. ¿Dónde me usan? En el listener global hashchange de window.
-
-
-// [Línea clave]: ¿Por qué soy importante? Maneja accesibilidad WCAG y trampas de foco. ¿Para qué? Cerrar modales con Escape y ciclar navegación con Tab dentro de diálogos modales. ¿Dónde me usan? En el listener global keydown del documento.
+// [Línea clave]: Por qué soy importante? Maneja accesibilidad WCAG y trampas de foco. Para qué? Cerrar modales con Escape y ciclar navegación con Tab dentro de diálogos modales. Dónde me usan? En el listener global keydown del documento.
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeModal();
   if (e.key === "Tab" && modalName) {
@@ -10355,13 +10286,14 @@ document.addEventListener("keydown", (e) => {
 
 
 
+
+
+// [Línea clave]: Por qué soy importante? Enrutador cliente SPA basado en hash. Para qué? Detectar cambios de ruta en la URL y actualizar la pantalla sin recargar la página. Dónde me usan? En el listener global hashchange de window.
 window.addEventListener("hashchange", () => {
   render();
   loadScreenData();
 });
 
-
-// [Línea clave]: ¿Por qué soy importante? Punto de arranque del ciclo de vida del Frontend. ¿Para qué? Renderizar la vista inicial y sincronizar catálogos y datos del sistema asíncronamente. ¿Dónde me usan? Al pie del archivo app.js autoejecutándose como IIFE.
 (async function initApp() {
   render();
   if (!session?.user) return;
