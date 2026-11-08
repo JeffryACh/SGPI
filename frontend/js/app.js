@@ -1185,213 +1185,184 @@ async function fetchAISugerencias(campo, textoParcial, signal) {
   }
 }
 
-// Renderizar dropdown de sugerencias
-function renderAISugerenciasDropdown(sugerencias, placeholder, campo) {
-  if (!sugerencias || !sugerencias.sugerencias?.length) {
-    return "";
-  }
-  const items = sugerencias.sugerencias
-    .map((s, i) => `
-      <div class="sugerencia-item" data-idx="${i}" data-campo="${campo}" role="option">
+// Render de los items del dropdown (solo el contenido; el contenedor ya existe en el campo)
+function renderAISugerenciasDropdown(sugerencias) {
+  if (!sugerencias?.sugerencias?.length) return "";
+  return sugerencias.sugerencias
+    .map(
+      (s, i) => `
+      <div class="sugerencia-item" data-idx="${i}" role="option">
         <span class="sugerencia-texto">${esc(s)}</span>
-        ${i === 0 && sugerencias.placeholder ? `<span class="sugerencia-hint">Tab para autocompletar</span>` : ""}
-      </div>
-    `).join("");
-  return `<div class="ai-sugerencias" id="ai-sugerencias-${campo}" data-campo="${campo}">${items}</div>`;
+        ${i === 0 ? `<span class="sugerencia-hint">Tab para autocompletar</span>` : ""}
+      </div>`,
+    )
+    .join("");
 }
 
-// Aplicar sugerencia seleccionada al input
-function aplicarAISugerencia(campo, idx, sugerenciasData, metodo = "click") {
-  const s = sugerenciasData?.sugerencias?.[idx];
-  if (!s) return;
-  const key = `08:${campo === "titulo" ? "Título de la propuesta" : campo === "planteamiento" ? "Planteamiento del problema" : campo === "objetivo_general" ? "Objetivo general" : campo === "objetivos_especificos" ? "Objetivos específicos" : campo === "hipotesis" ? "Hipótesis" : campo === "actividades" ? "Actividades" : campo === "riesgos" ? "Riesgos" : campo === "justificacion_presupuesto" ? "Justificación presupuesto" : "Ética"}`;
-  const input = $(`[data-field="${key}"]`);
-  if (input) {
-    input.value = s;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.focus();
+/* ---------------------------------------------------------------------
+   UI de sugerencias con DELEGACIÓN de eventos: se registran listeners
+   globales UNA sola vez (no por campo ni por render), y cada campo se
+   identifica por su .field-wrapper[data-ai-campo].
+   --------------------------------------------------------------------- */
+const AI_DEBOUNCE_MS = 400;
+const aiUI = { timer: null, abort: null, wrapper: null, data: null, idx: -1, suppress: false };
+
+function aiWrapperDe(el) {
+  return el?.closest?.(".field-wrapper[data-ai-campo]") || null;
+}
+
+function cerrarAISugerencias(wrapper = aiUI.wrapper) {
+  const dd = wrapper?.querySelector(".ai-sugerencias");
+  if (dd) {
+    dd.classList.remove("open");
+    dd.innerHTML = "";
   }
-  cerrarAISugerencias(campo);
-  // Registrar aceptación para analytics
+  if (wrapper === aiUI.wrapper) {
+    aiUI.data = null;
+    aiUI.idx = -1;
+  }
+}
+
+function aplicarAISugerencia(idx, metodo = "click") {
+  const wrapper = aiUI.wrapper;
+  const s = aiUI.data?.sugerencias?.[idx];
+  const input = wrapper?.querySelector("[data-field]");
+  if (!s || !input) return;
+  const campo = wrapper.dataset.aiCampo;
+  aiUI.suppress = true; // evita volver a pedir sugerencias por el "input" sintético
+  input.value = input.maxLength > 0 ? s.slice(0, input.maxLength) : s;
+  input.dispatchEvent(new Event("input", { bubbles: true })); // el listener global guarda en state.saved
+  aiUI.suppress = false;
+  cerrarAISugerencias(wrapper);
+  input.focus();
   registrarAceptacionSugerencia(campo, s, metodo);
 }
 
-// Cerrar dropdown
-function cerrarAISugerencias(campo) {
-  const dropdown = $(`#ai-sugerencias-${campo}`);
-  if (dropdown) {
-    dropdown.classList.remove("open");
-    dropdown.innerHTML = "";
+async function pedirAISugerencias(wrapper, input) {
+  const campo = wrapper.dataset.aiCampo;
+  const config = AI_SUGERENCIAS_CONFIG[campo];
+  const texto = input.value.trim();
+  if (!config || !aiAssistConfig.enabled || texto.length < config.minChars) {
+    cerrarAISugerencias(wrapper);
+    return;
   }
+  if (debeUsarFallback(campo)) {
+    const ph = obtenerPlaceholderInteligente(campo, null);
+    if (ph) input.placeholder = ph;
+    cerrarAISugerencias(wrapper);
+    return;
+  }
+  if (aiUI.abort) aiUI.abort.abort();
+  aiUI.abort = new AbortController();
+  const data = await fetchAISugerencias(campo, texto, aiUI.abort.signal);
+  // Descartar respuestas obsoletas (el usuario cambió de campo o siguió escribiendo)
+  if (!data || aiUI.wrapper !== wrapper || input.value.trim() !== texto) return;
+  const dd = wrapper.querySelector(".ai-sugerencias");
+  if (!dd || !data.sugerencias?.length) {
+    cerrarAISugerencias(wrapper);
+    return;
+  }
+  aiUI.data = data;
+  aiUI.idx = -1;
+  dd.innerHTML = renderAISugerenciasDropdown(data);
+  dd.classList.add("open");
+  const ph = obtenerPlaceholderInteligente(campo, data);
+  if (ph) input.placeholder = ph;
 }
 
-// Manejar eventos de teclado para navegación y Tab
-function setupAISugerenciasKeyboard(campo, input, sugerenciasData) {
-  const dropdown = $(`#ai-sugerencias-${campo}`);
-  if (!dropdown) return;
+function programarAISugerencias(wrapper, input) {
+  clearTimeout(aiUI.timer);
+  aiUI.timer = setTimeout(() => pedirAISugerencias(wrapper, input), AI_DEBOUNCE_MS);
+}
 
-  let selectedIdx = -1;
-  const items = dropdown.querySelectorAll(".sugerencia-item");
+document.addEventListener("focusin", (e) => {
+  const wrapper = aiWrapperDe(e.target);
+  if (!wrapper || !e.target.matches("[data-field]")) return;
+  aiUI.wrapper = wrapper;
+  programarAISugerencias(wrapper, e.target);
+});
 
-  input.addEventListener("keydown", (e) => {
+document.addEventListener("input", (e) => {
+  const wrapper = aiWrapperDe(e.target);
+  if (!wrapper || aiUI.suppress || !e.target.matches("[data-field]")) return;
+  aiUI.wrapper = wrapper;
+  programarAISugerencias(wrapper, e.target);
+});
+
+document.addEventListener("focusout", (e) => {
+  const wrapper = aiWrapperDe(e.target);
+  if (!wrapper) return;
+  clearTimeout(aiUI.timer);
+  setTimeout(() => {
+    if (!wrapper.contains(document.activeElement)) cerrarAISugerencias(wrapper);
+  }, 150);
+});
+
+// mousedown (no click) para actuar antes del blur del input
+document.addEventListener("mousedown", (e) => {
+  const item = e.target.closest?.(".sugerencia-item");
+  if (!item || aiWrapperDe(item) !== aiUI.wrapper) return;
+  e.preventDefault();
+  aplicarAISugerencia(parseInt(item.dataset.idx, 10), "click");
+});
+
+// Teclado (fase de captura para que Escape no cierre además el modal)
+document.addEventListener(
+  "keydown",
+  (e) => {
+    const wrapper = aiWrapperDe(e.target);
+    if (!wrapper || wrapper !== aiUI.wrapper || !aiUI.data) return;
+    const items = wrapper.querySelectorAll(".sugerencia-item");
+    if (!items.length) return;
+    const marcar = () => {
+      items.forEach((it, i) => it.classList.toggle("focus", i === aiUI.idx));
+      items[aiUI.idx]?.scrollIntoView({ block: "nearest" });
+    };
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      selectedIdx = Math.min(selectedIdx + 1, items.length - 1);
-      items.forEach((it, i) => it.classList.toggle("focus", i === selectedIdx));
-      items[selectedIdx]?.scrollIntoView({ block: "nearest" });
+      aiUI.idx = Math.min(aiUI.idx + 1, items.length - 1);
+      marcar();
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      selectedIdx = Math.max(selectedIdx - 1, 0);
-      items.forEach((it, i) => it.classList.toggle("focus", i === selectedIdx));
-      items[selectedIdx]?.scrollIntoView({ block: "nearest" });
-    } else if (e.key === "Enter") {
+      aiUI.idx = Math.max(aiUI.idx - 1, 0);
+      marcar();
+    } else if (e.key === "Enter" && aiUI.idx >= 0) {
       e.preventDefault();
-      if (selectedIdx >= 0) {
-        aplicarAISugerencia(campo, selectedIdx, sugerenciasData, "enter");
-      }
+      aplicarAISugerencia(aiUI.idx, "enter");
     } else if (e.key === "Tab" && !e.shiftKey) {
-      // Tab para autocompletar con la primera sugerencia
-      if (items.length > 0) {
-        e.preventDefault();
-        aplicarAISugerencia(campo, 0, sugerenciasData, "tab");
-      }
+      e.preventDefault();
+      aplicarAISugerencia(Math.max(aiUI.idx, 0), "tab");
     } else if (e.key === "Escape") {
-      cerrarAISugerencias(campo);
+      e.stopPropagation();
+      cerrarAISugerencias(wrapper);
     }
-  });
-}
-
-
-  /**
-   * Wrapper de field() que añade soporte de sugerencias IA.
-   * Uso: fieldConIA(label, value, kind, help, required, key, placeholder, defaultValue, campoIA)
-   * campoIA: uno de los keys de AI_SUGERENCIAS_CONFIG (ej: "titulo", "objetivo_general")
-   */
-  function fieldConIA(
-    label,
-    value = "",
-    kind = "text",
-    help = "",
-    required = false,
-    key = "",
-    placeholder = "",
-    defaultValue = undefined,
-    campoIA = null
-  ) {
-    const html = field(label, value, kind, help, required, key, placeholder, defaultValue);
-    if (!campoIA || !AI_SUGERENCIAS_CONFIG[campoIA]) return html;
-
-    // Envolver en .field-wrapper y añadir dropdown
-    const config = AI_SUGERENCIAS_CONFIG[campoIA];
-    const keyAttr = key || `${current}:${label}`;
-    const id = "f-" + keyAttr.replace(/[^\w]/g, "-");
-
-    // Inyectar script de inicialización diferida
-    setTimeout(() => {
-      const input = $(`#${id}`);
-      if (input) setupAISugerencias(config.campo, input);
-    }, 0);
-
-    return `
-      <div class="field-wrapper">
-        ${html}
-        <div class="ai-sugerencias" id="ai-sugerencias-${config.campo}" data-campo="${config.campo}"></div>
-      </div>
-    `;
-  }
-
-  /**
-   * Helper para crear un campo con sugerencias IA para formularios especiales (planForm, riskForm, budgetForm, complementaryForm).
-   * Retorna HTML del campo envuelto en .field-wrapper con dropdown de IA.
-   * Uso: fieldConIAEspecial(label, value, kind, help, required, key, placeholder, defaultValue, campoIA)
-   */
-  function fieldConIAEspecial(
-    label,
-    value = "",
-    kind = "text",
-    help = "",
-    required = false,
-    key = "",
-    placeholder = "",
-    defaultValue = undefined,
-    campoIA = null
-  ) {
-    if (!campoIA || !AI_SUGERENCIAS_CONFIG[campoIA]) {
-      return field(label, value, kind, help, required, key, placeholder, defaultValue);
-    }
-
-    const config = AI_SUGERENCIAS_CONFIG[campoIA];
-    const k = key || `${current}:${label}`;
-    const opts =
-      kind === "select"
-        ? (Array.isArray(value) ? value : [value]).map((v) =>
-            v && typeof v === "object"
-              ? { value: String(v.value), label: String(v.label ?? v.value) }
-              : { value: String(v), label: String(v) },
-          )
-        : [],
-      val =
-        state.saved[k] ??
-        (defaultValue !== undefined
-          ? defaultValue
-          : kind === "select"
-            ? opts[0]?.value ?? ""
-            : value),
-      id = "f-" + k.replace(/[^\w]/g, "-"),
-      req = required ? "required" : "",
-      placeholderAttr = placeholder ? ` placeholder="${esc(placeholder)}"` : "",
-      maxLen = obtenerLimiteCaracteres(label, k, kind),
-      maxAttr = maxLen ? ` maxlength="${maxLen}"` : "",
-      numBounds =
-        kind === "number"
-          ? /hours|horas|dedicaci/i.test(`${label} ${k}`)
-            ? ' min="1" max="40"'
-            : /budget|monto/i.test(`${label} ${k}`)
-              ? ' min="0" max="50000000"'
-              : ' min="0" max="9999"'
-          : "",
-      attr = `id="${id}" data-field="${esc(k)}" ${req}${placeholderAttr}${maxAttr}${numBounds}`;
-    let control;
-    if (kind === "textarea")
-      control = `<textarea ${attr} rows="3">${esc(val)}</textarea>`;
-    else if (kind === "select") {
-      control = `<select ${attr}>${opts.map((o) => `<option value="${esc(o.value)}" ${o.value === String(val) || o.label === String(val) ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
-    } else if (kind === "checkbox")
-      return `<label class="checkline"><input type="checkbox" ${attr} ${val === true ? "checked" : ""}>${esc(label)}</label>`;
-    else if (kind === "file")
-      control = `<div class="doc-row"><span class="doc-icon">PDF</span><div class="grow"><strong>${esc(val)}</strong></div>${act("Adjuntar", "upload", "secondary compact", "upload")}</div>`;
-    else
-      control = `<input ${attr} type="${["email", "number", "password", "date", "search"].includes(kind) ? kind : "text"}" value="${esc(val)}" ${kind === "readonly" ? "readonly" : ""}>`;
-    const mostrarContador = debeMostrarContadorCaracteres(label, k, kind);
-    const counterHtml =
-      mostrarContador && maxLen && kind !== "readonly"
-        ? `<small class="char-counter micro muted" style="display:block;text-align:right;margin-top:2px">${formatearTextoContador(String(val ?? "").length, maxLen, label, k)}</small>`
-        : "";
-
-    // Inyectar script de inicialización diferida
-    setTimeout(() => {
-      const input = $(`#${id}`);
-      if (input) setupAISugerencias(config.campo, input);
-    }, 0);
-
-    return `
-      <div class="field-wrapper">
-        <div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}${counterHtml}${help ? `<span class="help">${esc(help)}</span>` : ""}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>
-        <div class="ai-sugerencias" id="ai-sugerencias-${config.campo}" data-campo="${config.campo}"></div>
-      </div>
-    `;
-  }
-
-  /**
-   * Ejecutar la precarga paralela de todos los catálogos y métricas iniciales del sistema.
-
+  },
+  true,
+);
 
 /**
- * Helper para crear un campo con sugerencias IA para formularios especiales (planForm, riskForm, budgetForm, complementaryForm).
- * Retorna HTML del campo envuelto en .field-wrapper con dropdown de IA.
- * Uso: fieldConIAEspecial(label, value, kind, help, required, key, placeholder, defaultValue, campoIA)
+ * Wrapper de field() con sugerencias IA. Sirve tanto para fieldsFor() como para
+ * los formularios especiales (modales, presupuesto, ética): no se duplica field().
  */
-
+function fieldConIA(
+  label,
+  value = "",
+  kind = "text",
+  help = "",
+  required = false,
+  key = "",
+  placeholder = "",
+  defaultValue = undefined,
+  campoIA = null,
+) {
+  const html = field(label, value, kind, help, required, key, placeholder, defaultValue);
+  const config = campoIA && AI_SUGERENCIAS_CONFIG[campoIA];
+  if (!config || !["text", "textarea"].includes(kind)) return html;
+  return `<div class="field-wrapper" data-ai-campo="${config.campo}">${html}<div class="ai-sugerencias" role="listbox"></div></div>`;
+}
+function fieldConIAEspecial(...args) {
+  return fieldConIA(...args);
+}
 
 /**
  * =====================================================================
