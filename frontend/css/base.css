@@ -620,6 +620,14 @@
       color: var(--muted)
     }
 
+    /* Contenedor de acciones en tablas (Editar/Eliminar) */
+    .row-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
     /* Estilos para tabla de presupuesto (inline editing) */
     .budget-input,
     .budget-textarea {

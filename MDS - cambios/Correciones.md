@@ -7,6 +7,6 @@
 - [ ] **Participantes nuevos:** permitir agregar uno que no esté en la base de datos, con aviso
 - [X] **Presupuesto:** que funcione como tabla de cálculo y simplificar el proceso para que no tenga que ingresar tanta info
 - [X] **Cambios sin guardar:** ventana de confirmación antes de salir de una pantalla
-- [ ] **Orden de la interfaz:** organizar los buckets, los botones de editar/eliminar de rúbricas y catálogos, y el texto de horas por semana
+- [ ] **Orden de la interfaz (Parcial, falta organizar los buckets):** organizar los buckets, los botones de editar/eliminar de rúbricas y catálogos, y el texto de horas por semana
 - [X] **Estados de propuestas:** diferenciar entre propuestas cerradas y rechazadas
-- [ ] **Módulo de administrador:** para personalizar las calificaciones
+- [X] **Módulo de administrador:** para personalizar las calificaciones
