@@ -660,6 +660,66 @@
       font-style: italic;
     }
 
+    /* Sugerencias IA en campos de formulario */
+    .field-wrapper {
+      position: relative;
+    }
+    .ai-sugerencias {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      z-index: 50;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,.15);
+      min-width: 280px;
+      max-width: 500px;
+      margin-top: 4px;
+      display: none;
+    }
+    .ai-sugerencias:empty {
+      display: none;
+    }
+    .ai-sugerencias.open {
+      display: block;
+      animation: ai-sugerencias-in .12s ease-out;
+    }
+    @keyframes ai-sugerencias-in {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .sugerencia-item {
+      padding: 10px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1.4;
+      border-bottom: 1px solid var(--line);
+      transition: background .1s;
+    }
+    .sugerencia-item:last-child {
+      border-bottom: none;
+    }
+    .sugerencia-item:hover,
+    .sugerencia-item.focus {
+      background: var(--soft);
+    }
+    .sugerencia-item .sugerencia-texto {
+      display: block;
+    }
+    .sugerencia-item .sugerencia-hint {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .ai-sugerencias .sugerencia-vacia {
+      padding: 16px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
     .list-item {
       display: flex;
       gap: 16px;

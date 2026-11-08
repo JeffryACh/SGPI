@@ -1228,3 +1228,300 @@ def evaluar_borrador_en_vivo(
             pass
 
     return resultado
+
+
+# =====================================================================
+# MODELOS PARA SUGERENCIAS IA EN CAMPOS DE FORMULARIO
+# =====================================================================
+
+class SugerenciaCampoIn(BaseModel):
+    """
+    Modelo de entrada para solicitar sugerencias de IA para un campo de formulario.
+
+    Se usa cuando el investigador enfoca un campo (focus) o escribe texto parcial
+    y quiere sugerencias contextuales basadas en lo que ya ha completado.
+    """
+    campo: str = Field(..., description="Identificador del campo (ej: 'titulo', 'objetivo_general', 'planteamiento')")
+    contexto: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Datos ya completados en el formulario (titulo, modalidad, linea_investigacion, etc.)"
+    )
+    texto_parcial: str = Field(
+        default="",
+        description="Texto que el usuario ya ha escrito en el campo (para sugerencias continuativas)"
+    )
+    historial_ids: Optional[list[int]] = Field(
+        default=None,
+        description="IDs de propuestas previas del usuario para personalizar sugerencias"
+    )
+
+
+class SugerenciaCampoOut(BaseModel):
+    """
+    Modelo de salida con las sugerencias generadas por IA.
+    """
+    sugerencias: list[str] = Field(
+        default_factory=list,
+        description="Lista de textos sugeridos (máx. 3) para autocompletar o inspirar"
+    )
+    placeholder: str = Field(
+        default="",
+        description="Texto de ejemplo para el placeholder del campo (ej: 'Ej: Diseñar un sistema...')"
+    )
+    modelo_usado: str = Field(
+        default="gemini-3.5-flash",
+        description="Modelo Gemini que generó la sugerencia"
+    )
+    modo_generacion: str = Field(
+        default="gemini_online",
+        description="'gemini_online' o 'motor_normativo_respaldo'"
+    )
+
+
+# =====================================================================
+# HELPER: GENERAR SUGERENCIAS CON GEMINI
+# =====================================================================
+
+PROMPTS_SUGERENCIAS: dict[str, str] = {
+    "titulo": (
+        "Genera 3 títulos académicos concisos (máx. 15 palabras) para una propuesta de investigación "
+        "en la modalidad {modalidad}, línea {linea_investigacion}. "
+        "Los títulos deben ser específicos, medibles y alineados con Fondos VIE 2027. "
+        "Devuelve SOLO un array JSON de strings: [\"titulo 1\", \"titulo 2\", \"titulo 3\"]."
+    ),
+    "planteamiento": (
+        "Redacta 3 opciones de planteamiento del problema (2-3 oraciones cada una) para una propuesta "
+        "titulada '{titulo}' en {modalidad}. Debe identificar el problema real, su impacto y la brecha de conocimiento. "
+        "Devuelve SOLO un array JSON de strings: [\"planteamiento 1\", \"planteamiento 2\", \"planteamiento 3\"]."
+    ),
+    "objetivo_general": (
+        "Formula 3 objetivos generales (iniciando con verbo infinitivo: Diseñar, Desarrollar, Evaluar, Implementar) "
+        "para una propuesta '{titulo}' en {modalidad}. Deben ser alcanzables, medibles y coherentes con el planteamiento. "
+        "Devuelve SOLO un array JSON de strings: [\"objetivo 1\", \"objetivo 2\", \"objetivo 3\"]."
+    ),
+    "objetivos_especificos": (
+        "Desglosa 3 objetivos específicos derivados del objetivo general: '{objetivo_general}'. "
+        "Cada uno debe ser una acción concreta, medible y secuencial. "
+        "Devuelve SOLO un array JSON de strings: [\"obj. espec. 1\", \"obj. espec. 2\", \"obj. espec. 3\"]."
+    ),
+    "hipotesis": (
+        "Formula 3 hipótesis de trabajo (formato: 'Si... entonces... porque...') para el objetivo: '{objetivo_general}'. "
+        "Deben ser falsables, claras y relacionar variables independientes/dependientes. "
+        "Devuelve SOLO un array JSON de strings: [\"hipotesis 1\", \"hipotesis 2\", \"hipotesis 3\"]."
+    ),
+    "actividades": (
+        "Propón 3 actividades clave (con verbo de acción, responsable implícito y entregable) "
+        "para cumplir el objetivo: '{objetivo_general}'. Cada actividad debe ser realizable en el plan de acción. "
+        "Devuelve SOLO un array JSON de strings: [\"actividad 1\", \"actividad 2\", \"actividad 3\"]."
+    ),
+    "riesgos": (
+        "Identifica 3 riesgos técnicos/metodológicos (formato: 'Riesgo: [descripción]. Mitigación: [acción].') "
+        "para el plan de actividades: {actividades}. Enfócate en riesgos realistas y mitigaciones concretas. "
+        "Devuelve SOLO un array JSON de strings: [\"riesgo 1\", \"riesgo 2\", \"riesgo 3\"]."
+    ),
+    "justificacion_presupuesto": (
+        "Redacta 3 justificaciones presupuesto-actividad (formato: 'Rubro: [nombre]. Monto: [monto]. Justificación: [relación con actividad/objetivo].') "
+        "para un presupuesto total de {monto_total} en modalidad {modalidad}. "
+        "Devuelve SOLO un array JSON de strings: [\"justif. 1\", \"justif. 2\", \"justif. 3\"]."
+    ),
+    "etica": (
+        "Redacta 3 declaraciones éticas (formato: 'Eje: [nombre]. Aplica: Sí/No. Justificación: [razón o medida].') "
+        "para una propuesta de {modalidad} con metodología: {metodologia}. Considera: humanos, biodiversidad, animales, pueblos indígenas. "
+        "Devuelve SOLO un array JSON de strings: [\"etica 1\", \"etica 2\", \"etica 3\"]."
+    ),
+}
+
+
+def _construir_prompt_sugerencia(campo: str, contexto: dict, texto_parcial: str) -> str:
+    """
+    Construir el prompt específico para el campo solicitado usando templates predefinidos.
+    """
+    template = PROMPTS_SUGERENCIAS.get(campo)
+    if not template:
+        return ""
+
+    # Rellenar template con contexto disponible
+    try:
+        prompt = template.format(
+            titulo=contexto.get("titulo", "Propuesta de investigación"),
+            modalidad=contexto.get("modalidad", "Desarrollo tecnológico"),
+            linea_investigacion=contexto.get("linea_investigacion", "investigación"),
+            planteamiento=contexto.get("planteamiento", "En definición"),
+            objetivo_general=contexto.get("objetivo_general", "En definición"),
+            actividades=contexto.get("actividades", "En planificación"),
+            metodologia=contexto.get("metodologia", "Metodología mixta"),
+            monto_total=contexto.get("monto_total", "₡5.000.000"),
+        )
+    except KeyError:
+        # Si faltan keys, usar template base
+        prompt = f"Genera 3 sugerencias para el campo '{campo}' en contexto de propuesta VIE 2027. Devuelve array JSON de 3 strings."
+
+    if texto_parcial:
+        prompt += f"\n\nEl usuario ya ha escrito: '{texto_parcial}'. Continúa o sugiere completaciones coherentes."
+
+    prompt += "\n\nIMPORTANTE: Responde ÚNICAMENTE con un array JSON válido de exactamente 3 strings. Sin texto adicional."
+    return prompt
+
+
+async def _generar_sugerencias_gemini(campo: str, contexto: dict, texto_parcial: str) -> tuple[Optional[list[str]], str, str]:
+    """
+    Invocar Gemini API para generar sugerencias para un campo específico.
+
+    Retorna: (lista_sugerencias_o_None, modelo_usado, modo_generacion)
+    """
+    api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    if not api_key or api_key.startswith("TU_") or api_key == "reemplazar_con_tu_api_key":
+        return None, "gemini-3.5-flash (respaldo)", "motor_normativo_respaldo"
+
+    prompt = _construir_prompt_sugerencia(campo, contexto, texto_parcial)
+    if not prompt:
+        return None, "", ""
+
+    payload_gemini = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.4,
+            "responseMimeType": "application/json",
+            "maxOutputTokens": 512,
+        },
+    }
+    body_bytes = json.dumps(payload_gemini).encode("utf-8")
+
+    modelos = [os.getenv("GEMINI_MODEL", "gemini-3.5-flash"), *FREE_TIER_MODELS[:2]]
+    for model_name in dict.fromkeys(m.strip() for m in modelos if m and m.strip())[:2]:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        req = urllib.request.Request(url, data=json.dumps({
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json", "maxOutputTokens": 512}
+        }).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                if text:
+                    cleaned = text.strip()
+                    if cleaned.startswith("```"):
+                        cleaned = cleaned.strip("`").strip()
+                        if cleaned.lower().startswith("json"):
+                            cleaned = cleaned[4:].strip()
+                    parsed = json.loads(cleaned)
+                    if isinstance(parsed, list) and all(isinstance(s, str) for s in parsed):
+                        return parsed[:3], model_name, "gemini_online"
+        except Exception:
+            continue
+
+    return None, "gemini-3.5-flash (fallback)", "motor_normativo_respaldo"
+
+
+def _sugerencias_fallback(campo: str, contexto: dict) -> list[str]:
+    """Sugerencias deterministas de respaldo cuando Gemini no está disponible."""
+    fallbacks = {
+        "titulo": [
+            f"Diseño e implementación de {contexto.get('titulo', 'solución')} para {contexto.get('linea_investigacion', 'el sector')}",
+            f"Desarrollo de {contexto.get('titulo', 'propuesta')} aplicada a {contexto.get('modalidad', 'investigación')}",
+            f"Optimización y validación de {contexto.get('titulo', 'sistema')} en entorno relevante"
+        ],
+        "planteamiento": [
+            "A pesar de los avances en el área, persiste una brecha significativa en la capacidad de...",
+            "El problema central radica en la falta de soluciones integradas que permitan...",
+            "Los enfoques actuales no resuelven adecuadamente la necesidad de..."
+        ],
+        "objetivo_general": [
+            f"Diseñar e implementar {contexto.get('titulo', 'una solución')} que permita...",
+            f"Desarrollar una metodología para {contexto.get('titulo', 'el problema')} que garantice...",
+            f"Evaluar la efectividad de {contexto.get('titulo', 'la solución propuesta')} mediante..."
+        ],
+        "objetivos_especificos": [
+            "Diagnosticar el estado actual de...",
+            "Diseñar la arquitectura/estrategia de...",
+            "Validar y transferir los resultados a..."
+        ],
+        "hipotesis": [
+            "Si se implementa [tecnología/método], entonces se mejorará [variable], porque [fundamento teórico].",
+            "Si se optimiza [parámetro], entonces se reducirá [problema], porque [mecanismo causal].",
+            "Si se integra [componente], entonces se aumentará [indicador], porque [evidencia previa]."
+        ],
+        "actividades": [
+            "Revisión de literatura y diagnóstico inicial del problema.",
+            "Diseño y desarrollo de la solución propuesta (prototipo/modelo).",
+            "Validación experimental y documentación de resultados."
+        ],
+        "riesgos": [
+            "Riesgo: Retraso en adquisición de equipos. Mitigación: Compra anticipada y proveedores alternativos.",
+            "Riesgo: Datos insuficientes para validación. Mitigación: Fuentes de datos secundarias y simulaciones.",
+            "Riesgo: Baja adopción de resultados. Mitigación: Talleres de transferencia con stakeholders tempranos."
+        ],
+        "justificacion_presupuesto": [
+            "Rubro: Personal investigador. Justificación: Horas VIE/CONS para ejecución técnica según plan.",
+            "Rubro: Servicios profesionales. Justificación: Validación externa y asesoría metodológica especializada.",
+            "Rubro: Materiales y suministros. Justificación: Insumos para experimentación y prototipado."
+        ],
+        "etica": [
+            "Eje: Participación de seres humanos. Aplica: No. Justificación: No se recolectan datos de personas.",
+            "Eje: Biodiversidad. Aplica: No. Justificación: No hay recolección de especímenes ni material genético.",
+            "Eje: Uso de animales. Aplica: No. Justificación: No se utilizan animales en la investigación."
+        ],
+    }
+    return fallbacks.get(campo, [
+        f"Sugerencia 1 para {campo}",
+        f"Sugerencia 2 para {campo}",
+        f"Sugerencia 3 para {campo}"
+    ])
+
+
+@router.post("/sugerencias", response_model=SugerenciaCampoOut)
+async def generar_sugerencias_campo(
+    payload: SugerenciaCampoIn,
+    conn: Connection = Depends(get_conn),
+):
+    """
+    Generar sugerencias de IA para un campo de formulario específico.
+
+    Recibe el identificador del campo, el contexto ya completado y el texto parcial actual.
+    Retorna hasta 3 sugerencias de texto y un placeholder de ejemplo.
+
+    Si Gemini está disponible (GEMINI_API_KEY configurada), usa el modelo gratuito.
+    Si no, retorna sugerencias deterministas de respaldo (fallback).
+
+    La respuesta vacía (sugerencias=[], placeholder="") indica que no hay sugerencias disponibles;
+    el Frontend debe no mostrar UI en ese caso.
+
+    parametros:
+        - SugerenciaCampoIn : payload Campo objetivo, contexto del formulario, texto parcial.
+        - Connection : conn Conexión transaccional a Supabase (para historial opcional).
+
+    return:
+        + SugerenciaCampoOut : sugerencias Lista de textos, placeholder de ejemplo, metadata.
+    """
+    campo = payload.campo
+    contexto = payload.contexto or {}
+    texto_parcial = (payload.texto_parcial or "").strip()
+
+    # Si el texto parcial es muy corto y no hay contexto, no sugerir
+    if not texto_parcial and not contexto:
+        return SugerenciaCampoOut()
+
+    # Intentar con Gemini (timeout corto: 3s)
+    sugerencias, modelo_usado, modo_gen = await _generar_sugerencias_gemini(campo, contexto, texto_parcial)
+
+    # Fallback determinista si Gemini falla o no hay API key
+    if not sugerencias:
+        sugerencias = _sugerencias_fallback(campo, contexto)
+        modelo_usado = modelo_usado or "motor_normativo_respaldo"
+        modo_gen = modo_gen or "motor_normativo_respaldo"
+
+    # Construir placeholder a partir de la primera sugerencia (truncado)
+    placeholder = ""
+    if sugerencias:
+        primera = sugerencias[0]
+        if len(primera) > 80:
+            placeholder = f"Ej: {primera[:77]}..."
+        else:
+            placeholder = f"Ej: {primera}"
+
+    return SugerenciaCampoOut(
+        sugerencias=sugerencias[:3],
+        placeholder=placeholder,
+        modelo_usado=modelo_usado,
+        modo_generacion=modo_gen,
+    )

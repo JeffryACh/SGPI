@@ -90,6 +90,7 @@ window.SGPI_CONTENT = {
           value: "Agua Inteligente: monitoreo de cuencas",
           kind: "text",
           required: true,
+          aiSuggestions: "titulo",
         },
         {
           label: "Modalidad",
@@ -155,6 +156,7 @@ window.SGPI_CONTENT = {
             "La información sobre calidad del agua en las microcuencas piloto se obtiene mediante mediciones aisladas. Esta discontinuidad limita la identificación oportuna de variaciones y dificulta comparar condiciones entre sitios.",
           kind: "textarea",
           required: true,
+        aiSuggestions: "planteamiento",
         },
         {
           label: "Justificación",
@@ -162,6 +164,7 @@ window.SGPI_CONTENT = {
             "Un sistema de monitoreo continuo y validado permitirá reconocer variaciones en la calidad del agua y brindar evidencia útil a las personas responsables de su gestión.",
           kind: "textarea",
           required: true,
+        aiSuggestions: "planteamiento",
         },
         {
           label: "Antecedentes",
@@ -169,6 +172,7 @@ window.SGPI_CONTENT = {
             "El equipo dispone de una prueba de concepto en laboratorio. La propuesta integra medición, registro y visualización para avanzar hacia su validación en condiciones relevantes.",
           kind: "textarea",
           required: true,
+        aiSuggestions: "planteamiento",
         },
         {
           label: "Referencias",
@@ -176,6 +180,7 @@ window.SGPI_CONTENT = {
             "Las referencias documentales del caso se incorporan en el anexo de fundamentación.",
           kind: "textarea",
           required: true,
+        aiSuggestions: "planteamiento",
         },
       ],
     },
@@ -192,6 +197,7 @@ window.SGPI_CONTENT = {
             "Desarrollar y validar un sistema de monitoreo de calidad del agua que apoye la toma de decisiones en dos microcuencas piloto.",
           kind: "textarea",
           required: true,
+        aiSuggestions: "objetivo_general",
         },
       ],
       rows: [
@@ -222,6 +228,7 @@ window.SGPI_CONTENT = {
             "Desarrollo experimental en tres fases: definición de requerimientos, integración del prototipo y validación comparativa en campo.",
           kind: "textarea",
           required: true,
+        aiSuggestions: "actividades",
         },
         {
           label: "Procedimiento",
@@ -229,6 +236,7 @@ window.SGPI_CONTENT = {
             "Se definirán puntos de medición en dos microcuencas; se calibrarán los instrumentos; se compararán registros del prototipo con mediciones de referencia; y se documentarán desempeño y limitaciones.",
           kind: "textarea",
           required: true,
+        aiSuggestions: "actividades",
         },
         {
           label: "Análisis de resultados",
@@ -236,6 +244,7 @@ window.SGPI_CONTENT = {
             "Se evaluarán integridad de registros, concordancia de las mediciones y disponibilidad del sistema durante el período piloto.",
           kind: "textarea",
           required: true,
+        aiSuggestions: "actividades",
         },
         {
           label: "Resultados y productos",
@@ -243,6 +252,7 @@ window.SGPI_CONTENT = {
             "Prototipo validado; conjunto de datos documentado; informe de desempeño; manual de uso y mantenimiento.",
           kind: "textarea",
           required: true,
+        aiSuggestions: "actividades",
         },
       ],
     },
