@@ -44,6 +44,50 @@
     {
       "source": "/api/(.*)",
       "destination": "https://sgpi-backend-api.onrender.com/$1"
+    },
+    {
+      "source": "/auth/(.*)",
+      "destination": "https://sgpi-backend-api.onrender.com/auth/$1"
+    },
+    {
+      "source": "/propuestas/(.*)",
+      "destination": "https://sgpi-backend-api.onrender.com/propuestas/$1"
+    },
+    {
+      "source": "/ia/(.*)",
+      "destination": "https://sgpi-backend-api.onrender.com/ia/$1"
+    },
+    {
+      "source": "/notificaciones/(.*)",
+      "destination": "https://sgpi-backend-api.onrender.com/notificaciones/$1"
+    },
+    {
+      "source": "/modalidades/(.*)",
+      "destination": "https://sgpi-backend-api.onrender.com/modalidades/$1"
+    },
+    {
+      "source": "/escuelas/(.*)",
+      "destination": "https://sgpi-backend-api.onrender.com/escuelas/$1"
+    },
+    {
+      "source": "/lineas_de_investigacion/(.*)",
+      "destination": "https://sgpi-backend-api.onrender.com/lineas_de_investigacion/$1"
+    },
+    {
+      "source": "/convocatorias/(.*)",
+      "destination": "https://sgpi-backend-api.onrender.com/convocatorias/$1"
+    },
+    {
+      "source": "/catalogos/(.*)",
+      "destination": "https://sgpi-backend-api.onrender.com/catalogos/$1"
+    },
+    {
+      "source": "/admin/(.*)",
+      "destination": "https://sgpi-backend-api.onrender.com/admin/$1"
+    },
+    {
+      "source": "/notificaciones/(.*)",
+      "destination": "https://sgpi-backend-api.onrender.com/notificaciones/$1"
     }
   ],
   "headers": [
