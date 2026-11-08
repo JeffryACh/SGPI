@@ -85,11 +85,7 @@
       "source": "/admin/(.*)",
       "destination": "https://sgpi-backend-api.onrender.com/admin/$1"
     },
-    {
-      "source": "/notificaciones/(.*)",
-      "destination": "https://sgpi-backend-api.onrender.com/notificaciones/$1"
-    }
-  ],
+    ],
   "headers": [
     {
       "source": "/(.*)",

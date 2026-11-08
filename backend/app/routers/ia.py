@@ -826,7 +826,7 @@ Responde ÚNICAMENTE con un objeto JSON válido que contenga exactamente las sig
         os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
         *FREE_TIER_MODELS[:2],
     ][:2]
-    for model_name in dict.fromkeys(m.strip() for m in modelos_a_probar if m and m.strip()):
+    for model_name in list(dict.fromkeys(m.strip() for m in modelos_a_probar if m and m.strip()))[:2]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
         req = urllib.request.Request(
             url,

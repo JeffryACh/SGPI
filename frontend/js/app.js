@@ -60,7 +60,7 @@ const API_URL =
       }
       // Producción (Vercel + Render)
       return "https://sgpi-backend-api.onrender.com";
-    })(),
+  })(),
   SESSION_KEY = "sgpi-session";
 
 /**
@@ -1233,57 +1233,6 @@ function setupAISugerenciasKeyboard(campo, input, sugerenciasData) {
 
 // Mostrar sugerencias al hacer focus o al escribir (debounced)
 function setupAISugerencias(campo, input) {
-  const config = AI_SUGERENCIAS_CONFIG[campo];
-  if (!config) return;
-
-  let fetchTimer = null;
-  let currentAbort = null;
-
-      async function fetchAndShow(textoParcial) {
-    if (currentAbort) currentAbort.abort();
-    currentAbort = new AbortController();
-
-    // Limpiar timer anterior
-    clearTimeout(fetchTimer);
-
-    // Callback async function for setTimeout
-    async function fetchCallback() {
-      if (textoParcial.length < config.minChars) {
-        cerrarAISugerencias(campo);
-        return;
-      }
-      // Verificar si debe usar fallback (3 fallos consecutivos)
-      if (debeUsarFallback(campo)) {
-        const placeholder = obtenerPlaceholderInteligente(config.campo, null);
-        if (placeholder) {
-          input.placeholder = placeholder;
-        }
-        cerrarAISugerencias(campo);
-        return;
-      }
-      const data = await fetchAISugerencias(campo, textoParcial);
-      if (data?.sugerencias?.length) {
-        const dropdown = $(`#ai-sugerencias-${campo}`);
-        if (dropdown) {
-          dropdown.innerHTML = renderAISugerenciasDropdown(data, data.placeholder, campo);
-          dropdown.classList.add("open");
-          setupAISugerenciasKeyboard(campo, input, data);
-          // Actualizar placeholder inteligente
-          const placeholder = obtenerPlaceholderInteligente(config.campo, data);
-          if (placeholder) input.placeholder = placeholder;
-        } else {
-          registrarFallbackIA(campo);
-          const placeholder = obtenerPlaceholderInteligente(config.campo, null);
-          if (placeholder) input.placeholder = placeholder;
-          cerrarAISugerencias(campo);
-        }
-      }
-
-    fetchTimer = setTimeout(fetchCallback, 250);
-  }
-
-  // Mostrar sugerencias al hacer focus o al escribir (debounced)
-  function setupAISugerencias(campo, input) {
     const config = AI_SUGERENCIAS_CONFIG[campo];
     if (!config) return;
 
@@ -1332,6 +1281,7 @@ function setupAISugerencias(campo, input) {
 
       fetchTimer = setTimeout(fetchCallback, 250);
     }
+  }
 
     // Focus: buscar si ya hay texto
     input.addEventListener("focus", () => {
@@ -1485,120 +1435,14 @@ function setupAISugerencias(campo, input) {
 
   /**
    * Ejecutar la precarga paralela de todos los catálogos y métricas iniciales del sistema.
-function fieldConIA(
-  label,
-  value = "",
-  kind = "text",
-  help = "",
-  required = false,
-  key = "",
-  placeholder = "",
-  defaultValue = undefined,
-  campoIA = null
-) {
-  const html = field(label, value, kind, help, required, key, placeholder, defaultValue);
-  if (!campoIA || !AI_SUGERENCIAS_CONFIG[campoIA]) return html;
 
-  // Envolver en .field-wrapper y añadir dropdown
-  const config = AI_SUGERENCIAS_CONFIG[campoIA];
-  const keyAttr = key || `${current}:${label}`;
-  const id = "f-" + keyAttr.replace(/[^\w]/g, "-");
-
-  // Inyectar script de inicialización diferida
-  setTimeout(() => {
-    const input = $(`#${id}`);
-    if (input) setupAISugerencias(config.campo, input);
-  }, 0);
-
-  return `
-    <div class="field-wrapper">
-      ${html}
-      <div class="ai-sugerencias" id="ai-sugerencias-${config.campo}" data-campo="${config.campo}"></div>
-    </div>
-  `;
-}
 
 /**
  * Helper para crear un campo con sugerencias IA para formularios especiales (planForm, riskForm, budgetForm, complementaryForm).
  * Retorna HTML del campo envuelto en .field-wrapper con dropdown de IA.
  * Uso: fieldConIAEspecial(label, value, kind, help, required, key, placeholder, defaultValue, campoIA)
  */
-function fieldConIAEspecial(
-  label,
-  value = "",
-  kind = "text",
-  help = "",
-  required = false,
-  key = "",
-  placeholder = "",
-  defaultValue = undefined,
-  campoIA = null
-) {
-  if (!campoIA || !AI_SUGERENCIAS_CONFIG[campoIA]) {
-    return field(label, value, kind, help, required, key, placeholder, defaultValue);
-  }
 
-  const config = AI_SUGERENCIAS_CONFIG[campoIA];
-  const k = key || `${current}:${label}`;
-  const opts =
-    kind === "select"
-      ? (Array.isArray(value) ? value : [value]).map((v) =>
-          v && typeof v === "object"
-            ? { value: String(v.value), label: String(v.label ?? v.value) }
-            : { value: String(v), label: String(v) },
-        )
-      : [],
-    val =
-      state.saved[k] ??
-      (defaultValue !== undefined
-        ? defaultValue
-        : kind === "select"
-          ? opts[0]?.value ?? ""
-          : value),
-    id = "f-" + k.replace(/[^\w]/g, "-"),
-    req = required ? "required" : "",
-    placeholderAttr = placeholder ? ` placeholder="${esc(placeholder)}"` : "",
-    maxLen = obtenerLimiteCaracteres(label, k, kind),
-    maxAttr = maxLen ? ` maxlength="${maxLen}"` : "",
-    numBounds =
-      kind === "number"
-        ? /hours|horas|dedicaci/i.test(`${label} ${k}`)
-          ? ' min="1" max="40"'
-          : /budget|monto/i.test(`${label} ${k}`)
-            ? ' min="0" max="50000000"'
-            : ' min="0" max="9999"'
-        : "",
-    attr = `id="${id}" data-field="${esc(k)}" ${req}${placeholderAttr}${maxAttr}${numBounds}`;
-  let control;
-  if (kind === "textarea")
-    control = `<textarea ${attr} rows="3">${esc(val)}</textarea>`;
-  else if (kind === "select") {
-    control = `<select ${attr}>${opts.map((o) => `<option value="${esc(o.value)}" ${o.value === String(val) || o.label === String(val) ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
-  } else if (kind === "checkbox")
-    return `<label class="checkline"><input type="checkbox" ${attr} ${val === true ? "checked" : ""}>${esc(label)}</label>`;
-  else if (kind === "file")
-    control = `<div class="doc-row"><span class="doc-icon">PDF</span><div class="grow"><strong>${esc(val)}</strong></div>${act("Adjuntar", "upload", "secondary compact", "upload")}</div>`;
-  else
-    control = `<input ${attr} type="${["email", "number", "password", "date", "search"].includes(kind) ? kind : "text"}" value="${esc(val)}" ${kind === "readonly" ? "readonly" : ""}>`;
-  const mostrarContador = debeMostrarContadorCaracteres(label, k, kind);
-  const counterHtml =
-    mostrarContador && maxLen && kind !== "readonly"
-      ? `<small class="char-counter micro muted" style="display:block;text-align:right;margin-top:2px">${formatearTextoContador(String(val ?? "").length, maxLen, label, k)}</small>`
-      : "";
-
-  // Inyectar script de inicialización diferida
-  setTimeout(() => {
-    const input = $(`#${id}`);
-    if (input) setupAISugerencias(config.campo, input);
-  }, 0);
-
-  return `
-    <div class="field-wrapper">
-      <div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}${counterHtml}${help ? `<span class="help">${esc(help)}</span>` : ""}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>
-      <div class="ai-sugerencias" id="ai-sugerencias-${config.campo}" data-campo="${config.campo}"></div>
-    </div>
-  `;
-}
 
 /**
  * =====================================================================
@@ -6052,7 +5896,7 @@ function budgetForm() {
       `<textarea data-budget-index="${i}" data-budget-field="detail" class="budget-textarea" maxlength="500" style="width:280px;min-height:36px" aria-label="Justificación para ${esc(r.name)}">${esc(r.detail)}</textarea>`,
       ``,
     ]),
-  )}</div><div class="action-row mt">${act("Ver reglas de presupuesto", "budget-rules", "text")}</div><details class="accordion"><summary>Justificaciones y otras fuentes</summary>${state.budget.map((r) => `<p><strong>${r.name}.</strong> ${r.detail}</p>`).join("")}${fieldConIAEspecial("Financiamiento externo / contrapartida", "", "textarea", "Indica fuentes externas, contrapartidas o co-financiamiento.", false, "", "Sin aportes externos.", "justificacion_presupuesto")}</details>`;
+  )}</div><div class="action-row mt">${act("Ver reglas de presupuesto", "budget-rules", "text")}</div><details class="accordion"><summary>Justificaciones y otras fuentes</summary>${state.budget.map((r) => `<p><strong>${r.name}.</strong> ${r.detail}</p>`).join("")}${fieldConIAEspecial("Financiamiento externo / contrapartida", "", "textarea", "Indica fuentes externas, contrapartidas o co-financiamiento.", false, "", "Sin aportes externos.", undefined, "justificacion_presupuesto")}</details>`;
 }
 
 /**
@@ -8585,7 +8429,7 @@ async function handleAction(action, el) {
       ];
       modal(
         "Agregar actividad",
-        `${field("Objetivo específico", ["OE1", "OE2", "OE3", ...(state.extraObjective ? ["OE4"] : [])], "select", "", true, "modal:objective-code")}${fieldConIAEspecial("Actividad", "Entregar informe semestral de avance", "text", "", true, "modal:activity", "", "actividades")}${fieldConIAEspecial("Resultado esperado", "Informe semestral registrado", "text", "", true, "modal:result", "", "actividades")}<div class="field-row">${field("Responsable", miembrosOpts.length ? miembrosOpts : [nombreResponsableActual()], "select", "Integrante del equipo responsable.", true, "modal:owner")}${field("Mes inicial / duración", periodosOpts, "select", "Mes de inicio / duración en meses.", true, "modal:period", "", "6 / 1")}</div>`,
+        `${field("Objetivo específico", ["OE1", "OE2", "OE3", ...(state.extraObjective ? ["OE4"] : [])], "select", "", true, "modal:objective-code")}${fieldConIAEspecial("Actividad", "Entregar informe semestral de avance", "text", "", true, "modal:activity", "", undefined, "actividades")}${fieldConIAEspecial("Resultado esperado", "Informe semestral registrado", "text", "", true, "modal:result", "", undefined, "actividades")}<div class="field-row">${field("Responsable", miembrosOpts.length ? miembrosOpts : [nombreResponsableActual()], "select", "Integrante del equipo responsable.", true, "modal:owner")}${field("Mes inicial / duración", periodosOpts, "select", "Mes de inicio / duración en meses.", true, "modal:period", "", "6 / 1")}</div>`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar actividad", "save-extra", 'data-kind="activity"'),
         false,
@@ -8603,7 +8447,7 @@ async function handleAction(action, el) {
         : ["Bajo", "Medio", "Alto"].map((n) => ({ value: n, label: n })));
       modal(
         "Agregar riesgo",
-        `${field("Actividad", ["Definir requerimientos", "Integrar y calibrar", "Validar en campo", "Evaluar y documentar"], "select", "", true, "modal:riskactivity")}${fieldConIAEspecial("Riesgo", "Indisponibilidad temporal de un sitio piloto.", "textarea", "", true, "modal:risk", "", "riesgos")}<div class="field-row">${field("Probabilidad", nivelesRiesgoOpts, "select", "", true, "modal:riskprob", "", "Medio")}${field("Impacto", nivelesRiesgoOpts, "select", "", true, "modal:riskimpact", "", "Medio")}</div>${fieldConIAEspecial("Mitigación", "Acordar un sitio alternativo antes del inicio de la validación.", "textarea", "", true, "modal:mitigation", "", "riesgos")}${field("Responsable", miembrosRiesgoOpts.length ? miembrosRiesgoOpts : [nombreResponsableActual()], "select", "Persona encargada del monitoreo.", true, "modal:riskowner")}`,
+        `${field("Actividad", ["Definir requerimientos", "Integrar y calibrar", "Validar en campo", "Evaluar y documentar"], "select", "", true, "modal:riskactivity")}${fieldConIAEspecial("Riesgo", "Indisponibilidad temporal de un sitio piloto.", "textarea", "", true, "modal:risk", "", undefined, "riesgos")}<div class="field-row">${field("Probabilidad", nivelesRiesgoOpts, "select", "", true, "modal:riskprob", "", "Medio")}${field("Impacto", nivelesRiesgoOpts, "select", "", true, "modal:riskimpact", "", "Medio")}</div>${fieldConIAEspecial("Mitigación", "Acordar un sitio alternativo antes del inicio de la validación.", "textarea", "", true, "modal:mitigation", "", "riesgos")}${field("Responsable", miembrosRiesgoOpts.length ? miembrosRiesgoOpts : [nombreResponsableActual()], "select", "Persona encargada del monitoreo.", true, "modal:riskowner")}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar riesgo", "save-extra", 'data-kind="risk"'),
         false,
@@ -10516,9 +10360,6 @@ window.addEventListener("hashchange", () => {
   loadScreenData();
 });
 
-   }
-  }
-}
 
 // [Línea clave]: ¿Por qué soy importante? Punto de arranque del ciclo de vida del Frontend. ¿Para qué? Renderizar la vista inicial y sincronizar catálogos y datos del sistema asíncronamente. ¿Dónde me usan? Al pie del archivo app.js autoejecutándose como IIFE.
 (async function initApp() {
