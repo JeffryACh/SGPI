@@ -1071,99 +1071,123 @@ function renderizarPanelReferenciaIA(idPantalla) {
  * =====================================================================
  */
 
-// Mapeo de campo a endpoint/configuración
-const AI_SUGERENCIAS_CONFIG = {
-  titulo: { campo: "titulo", minChars: 3 },
-  planteamiento: { campo: "planteamiento", minChars: 10 },
-  objetivo_general: { campo: "objetivo_general", minChars: 10 },
-  objetivos_especificos: { campo: "objetivos_especificos", minChars: 10 },
-  hipotesis: { campo: "hipotesis", minChars: 10 },
-  actividades: { campo: "actividades", minChars: 10 },
-  riesgos: { campo: "riesgos", minChars: 10 },
-  justificacion_presupuesto: { campo: "justificacion_presupuesto", minChars: 10 },
-  etica: { campo: "etica", minChars: 5 },
-};
+// ---- Constantes configurables de las sugerencias IA (placeholder) ----
+const AI_FOCUS_DELAY_MS = 250; // espera tras enfocar un campo vacío antes de pedir la sugerencia
+const AI_CONTEXT_MAX_CHARS = 300; // máx. de caracteres de cada dato de contexto que se envía a la IA
+const AI_CACHE_TTL_MS = 5 * 60 * 1000; // cuánto se reutiliza una sugerencia con el mismo contexto
 
-// Campos de las pantallas 08/10/11/12 que reciben IA (clave de state.saved -> campo IA).
+// Campos con IA. Cada id tiene su propio prompt en el backend (ia.py: CAMPOS_IA).
+const AI_SUGERENCIAS_CONFIG = Object.fromEntries(
+  [
+    "titulo",
+    "planteamiento",
+    "justificacion",
+    "estado_arte",
+    "antecedentes",
+    "objetivo_general",
+    "objetivo_especifico_1",
+    "objetivo_especifico_2",
+    "objetivo_especifico_3",
+    "objetivo_especifico_4",
+    "metodologia_enfoque",
+    "metodologia_procedimientos",
+    "metodologia_usuarios",
+    "metodologia_analisis",
+    "hipotesis",
+    "actividades",
+    "riesgos",
+    "justificacion_presupuesto",
+    "etica",
+  ].map((campo) => [campo, { campo }]),
+);
+
+// Campos de las pantallas 08/10/11/12 que reciben IA (clave de state.saved -> id de campo IA).
 // Se resuelve dentro de field(), porque dataForm/foundationForm/objectiveForm/methodologyForm
 // llaman a field() directamente (fieldsFor() no se usa en ningún render).
 const AI_CAMPO_POR_KEY = {
   "08:Título de la propuesta": "titulo",
   "10:Problema e importancia": "planteamiento",
-  "10:Justificación": "planteamiento",
-  "10:Estado del arte y vacío identificado": "planteamiento",
-  "10:Antecedentes": "planteamiento",
+  "10:Justificación": "justificacion",
+  "10:Estado del arte y vacío identificado": "estado_arte",
+  "10:Antecedentes": "antecedentes",
   "11:Objetivo general": "objetivo_general",
-  "11:OE1": "objetivos_especificos",
-  "11:OE2": "objetivos_especificos",
-  "11:OE3": "objetivos_especificos",
-  "11:OE4": "objetivos_especificos",
-  "12:Enfoque y diseño metodológico": "actividades",
-  "12:Procedimientos y técnicas": "actividades",
-  "12:Usuarios y validación": "actividades",
-  "12:Análisis de resultados": "actividades",
+  "11:OE1": "objetivo_especifico_1",
+  "11:OE2": "objetivo_especifico_2",
+  "11:OE3": "objetivo_especifico_3",
+  "11:OE4": "objetivo_especifico_4",
+  "12:Enfoque y diseño metodológico": "metodologia_enfoque",
+  "12:Procedimientos y técnicas": "metodologia_procedimientos",
+  "12:Usuarios y validación": "metodologia_usuarios",
+  "12:Análisis de resultados": "metodologia_analisis",
 };
 
+// Datos del formulario que se envían como contexto (clave del contexto -> clave de state.saved)
+const AI_CONTEXTO_KEYS = {
+  titulo: "08:Título de la propuesta",
+  linea_investigacion: "08:Línea de investigación",
+  planteamiento: "10:Problema e importancia",
+  justificacion: "10:Justificación",
+  estado_arte: "10:Estado del arte y vacío identificado",
+  antecedentes: "10:Antecedentes",
+  objetivo_general: "11:Objetivo general",
+  objetivo_especifico_1: "11:OE1",
+  objetivo_especifico_2: "11:OE2",
+  objetivo_especifico_3: "11:OE3",
+  objetivo_especifico_4: "11:OE4",
+  metodologia_enfoque: "12:Enfoque y diseño metodológico",
+  metodologia_procedimientos: "12:Procedimientos y técnicas",
+  metodologia_usuarios: "12:Usuarios y validación",
+  metodologia_analisis: "12:Análisis de resultados",
+};
+
+// Envuelve el campo con el marcador de IA y una línea de ayuda ("Tab para aceptar")
 function aiEnvolverCampo(html, key, kind) {
   const campo = AI_CAMPO_POR_KEY[key];
   if (!campo || !["text", "textarea"].includes(kind)) return html;
-  return `<div class="field-wrapper" data-ai-campo="${campo}">${html}<div class="ai-sugerencias" role="listbox"></div></div>`;
+  return `<div class="field-wrapper" data-ai-campo="${campo}">${html}<div class="ai-hint" hidden></div></div>`;
 }
 
 // Cache en memoria para evitar llamadas repetidas
 const aiSugerenciasCache = new Map();
 
-// Obtener contexto actual del formulario para enviar a la IA
-function obtenerContextoIA() {
-  return {
-    titulo: state.saved["08:Título de la propuesta"] || state.saved["08:titulo"] || "",
-    modalidad: state.mode || "Desarrollo tecnológico",
-    linea_investigacion: state.saved["08:Línea de investigación"] || state.saved["08:linea"] || "",
-    planteamiento: state.saved["10:Planteamiento del problema"] || state.saved["10:planteamiento"] || "",
-    objetivo_general: state.saved["10:Objetivo general"] || state.saved["10:objetivo_general"] || "",
-    actividades: state.saved["12:Actividades"] || "",
-    metodologia: state.saved["12:Metodología"] || "",
-    monto_total: totalA() + totalB(),
-  };
+// Contexto = lo que el usuario ya llenó (sin el propio campo), recortado
+function obtenerContextoIA(campoActual) {
+  const ctx = { modalidad: state.mode || "Desarrollo tecnológico" };
+  for (const [clave, key] of Object.entries(AI_CONTEXTO_KEYS)) {
+    if (clave === campoActual) continue;
+    const v = String(state.saved[key] ?? "").trim();
+    if (!v) continue;
+    if (clave === "linea_investigacion" && !isNaN(v)) continue; // es un id de catálogo, no texto
+    ctx[clave] = v.slice(0, AI_CONTEXT_MAX_CHARS);
+  }
+  const monto = totalA() + totalB();
+  if (monto) ctx.monto_total = monto;
+  return ctx;
 }
 
-// Generar clave de cache basada en campo + contexto + texto parcial
-function generarCacheKey(campo, textoParcial) {
-  const ctx = obtenerContextoIA();
-  const str = `${campo}|${textoParcial}|${JSON.stringify(ctx)}`;
-  // Hash simple
+// Clave de cache: campo + contexto (si el contexto cambia, se pide otra sugerencia)
+function generarCacheKey(campo, ctx) {
+  const str = `${campo}|${JSON.stringify(ctx)}`;
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash = (hash << 5) - hash + str.charCodeAt(i);
     hash |= 0;
   }
   return `${campo}_${hash}`;
 }
 
-// Llamar al endpoint /ia/sugerencias
-async function fetchAISugerencias(campo, textoParcial, signal) {
-  const config = AI_SUGERENCIAS_CONFIG[campo];
-  if (!config) return null;
-
-  const cacheKey = generarCacheKey(campo, textoParcial);
-  if (aiSugerenciasCache.has(cacheKey)) {
-    return aiSugerenciasCache.get(cacheKey);
-  }
-
-  const ctx = obtenerContextoIA();
-  if (!textoParcial && !Object.values(ctx).some(v => v)) {
-    return null;
-  }
+// Pide UNA sugerencia (string) para el campo. Devuelve null si no hay.
+async function fetchAISugerencias(campo, signal) {
+  if (!AI_SUGERENCIAS_CONFIG[campo]) return null;
+  const ctx = obtenerContextoIA(campo);
+  const cacheKey = generarCacheKey(campo, ctx);
+  if (aiSugerenciasCache.has(cacheKey)) return aiSugerenciasCache.get(cacheKey);
 
   try {
     const resp = await fetch(`${API_URL}/ia/sugerencias`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        campo: config.campo,
-        contexto: ctx,
-        texto_parcial: textoParcial,
-      }),
+      body: JSON.stringify({ campo, contexto: ctx, texto_parcial: "" }),
       signal,
     });
     if (!resp.ok) {
@@ -1171,12 +1195,12 @@ async function fetchAISugerencias(campo, textoParcial, signal) {
       return null;
     }
     const data = await resp.json();
-    // Cache por 5 minutos
-    aiSugerenciasCache.set(cacheKey, data);
-    setTimeout(() => aiSugerenciasCache.delete(cacheKey), 5 * 60 * 1000);
-    // Éxito: resetear contador de fallos
-    aiFallbackCounters.delete(campo);
-    return data;
+    const texto = String(data?.sugerencias?.[0] ?? "").trim();
+    if (!texto) return null;
+    aiSugerenciasCache.set(cacheKey, texto);
+    setTimeout(() => aiSugerenciasCache.delete(cacheKey), AI_CACHE_TTL_MS);
+    aiFallbackCounters.delete(campo); // éxito: los fallos vuelven a ser "consecutivos"
+    return texto;
   } catch (e) {
     if (e.name === "AbortError") return null; // cancelada a propósito, no es un fallo
     console.warn("AI sugerencias error:", e);
@@ -1185,164 +1209,91 @@ async function fetchAISugerencias(campo, textoParcial, signal) {
   }
 }
 
-// Render de los items del dropdown (solo el contenido; el contenedor ya existe en el campo)
-function renderAISugerenciasDropdown(sugerencias) {
-  if (!sugerencias?.sugerencias?.length) return "";
-  return sugerencias.sugerencias
-    .map(
-      (s, i) => `
-      <div class="sugerencia-item" data-idx="${i}" role="option">
-        <span class="sugerencia-texto">${esc(s)}</span>
-        ${i === 0 ? `<span class="sugerencia-hint">Tab para autocompletar</span>` : ""}
-      </div>`,
-    )
-    .join("");
-}
-
 /* ---------------------------------------------------------------------
-   UI de sugerencias con DELEGACIÓN de eventos: se registran listeners
-   globales UNA sola vez (no por campo ni por render), y cada campo se
-   identifica por su .field-wrapper[data-ai-campo].
+   UI: la sugerencia se muestra como PLACEHOLDER del campo vacío.
+   Tab la acepta. Listeners globales (delegación), registrados UNA sola vez.
    --------------------------------------------------------------------- */
-const AI_DEBOUNCE_MS = 400;
-const aiUI = { timer: null, abort: null, wrapper: null, data: null, idx: -1, suppress: false };
+const AI_HINT_TEXTO = "Sugerencia de IA · Tab para aceptar";
+const aiUI = { timer: null, abort: null, wrapper: null };
 
 function aiWrapperDe(el) {
   return el?.closest?.(".field-wrapper[data-ai-campo]") || null;
 }
 
-function cerrarAISugerencias(wrapper = aiUI.wrapper) {
-  const dd = wrapper?.querySelector(".ai-sugerencias");
-  if (dd) {
-    dd.classList.remove("open");
-    dd.innerHTML = "";
-  }
-  if (wrapper === aiUI.wrapper) {
-    aiUI.data = null;
-    aiUI.idx = -1;
-  }
+function aiHint(wrapper, texto) {
+  const h = wrapper?.querySelector(".ai-hint");
+  if (!h) return;
+  h.textContent = texto || "";
+  h.hidden = !texto;
 }
 
-function aplicarAISugerencia(idx, metodo = "click") {
-  const wrapper = aiUI.wrapper;
-  const s = aiUI.data?.sugerencias?.[idx];
-  const input = wrapper?.querySelector("[data-field]");
-  if (!s || !input) return;
+async function pedirAISugerencia(wrapper, input) {
   const campo = wrapper.dataset.aiCampo;
-  aiUI.suppress = true; // evita volver a pedir sugerencias por el "input" sintético
-  input.value = input.maxLength > 0 ? s.slice(0, input.maxLength) : s;
-  input.dispatchEvent(new Event("input", { bubbles: true })); // el listener global guarda en state.saved
-  aiUI.suppress = false;
-  cerrarAISugerencias(wrapper);
-  input.focus();
-  registrarAceptacionSugerencia(campo, s, metodo);
-}
-
-async function pedirAISugerencias(wrapper, input) {
-  const campo = wrapper.dataset.aiCampo;
-  const config = AI_SUGERENCIAS_CONFIG[campo];
-  const texto = input.value.trim();
-  if (!config || !aiAssistConfig.enabled || texto.length < config.minChars) {
-    cerrarAISugerencias(wrapper);
-    return;
-  }
-  if (debeUsarFallback(campo)) {
-    const ph = obtenerPlaceholderInteligente(campo, null);
-    if (ph) input.placeholder = ph;
-    cerrarAISugerencias(wrapper);
+  if (input.value.trim() || !aiAssistConfig.enabled || debeUsarFallback(campo)) {
+    aiHint(wrapper, input.value.trim() ? "" : aiHintActual(input));
     return;
   }
   if (aiUI.abort) aiUI.abort.abort();
-  aiUI.abort = new AbortController();
-  const data = await fetchAISugerencias(campo, texto, aiUI.abort.signal);
-  // Descartar respuestas obsoletas (el usuario cambió de campo o siguió escribiendo)
-  if (!data || aiUI.wrapper !== wrapper || input.value.trim() !== texto) return;
-  const dd = wrapper.querySelector(".ai-sugerencias");
-  if (!dd || !data.sugerencias?.length) {
-    cerrarAISugerencias(wrapper);
-    return;
-  }
-  aiUI.data = data;
-  aiUI.idx = -1;
-  dd.innerHTML = renderAISugerenciasDropdown(data);
-  dd.classList.add("open");
-  const ph = obtenerPlaceholderInteligente(campo, data);
-  if (ph) input.placeholder = ph;
+  const ctrl = new AbortController();
+  aiUI.abort = ctrl;
+  aiHint(wrapper, "Generando sugerencia…");
+  const texto = await fetchAISugerencias(campo, ctrl.signal);
+  if (ctrl !== aiUI.abort || aiUI.wrapper !== wrapper) return; // respuesta obsoleta
+  if (input.value.trim()) return aiHint(wrapper, ""); // el usuario ya escribió
+  if (!texto) return aiHint(wrapper, aiHintActual(input));
+  input.placeholder = texto;
+  input.dataset.aiSug = texto;
+  aiHint(wrapper, AI_HINT_TEXTO);
 }
 
-function programarAISugerencias(wrapper, input) {
-  clearTimeout(aiUI.timer);
-  aiUI.timer = setTimeout(() => pedirAISugerencias(wrapper, input), AI_DEBOUNCE_MS);
+function aiHintActual(input) {
+  return input.dataset.aiSug && !input.value ? AI_HINT_TEXTO : "";
 }
 
 document.addEventListener("focusin", (e) => {
   const wrapper = aiWrapperDe(e.target);
   if (!wrapper || !e.target.matches("[data-field]")) return;
   aiUI.wrapper = wrapper;
-  programarAISugerencias(wrapper, e.target);
-});
-
-document.addEventListener("input", (e) => {
-  const wrapper = aiWrapperDe(e.target);
-  if (!wrapper || aiUI.suppress || !e.target.matches("[data-field]")) return;
-  aiUI.wrapper = wrapper;
-  programarAISugerencias(wrapper, e.target);
+  clearTimeout(aiUI.timer);
+  aiUI.timer = setTimeout(() => pedirAISugerencia(wrapper, e.target), AI_FOCUS_DELAY_MS);
 });
 
 document.addEventListener("focusout", (e) => {
   const wrapper = aiWrapperDe(e.target);
   if (!wrapper) return;
   clearTimeout(aiUI.timer);
-  setTimeout(() => {
-    if (!wrapper.contains(document.activeElement)) cerrarAISugerencias(wrapper);
-  }, 150);
+  if (aiUI.abort) aiUI.abort.abort();
+  aiHint(wrapper, "");
 });
 
-// mousedown (no click) para actuar antes del blur del input
-document.addEventListener("mousedown", (e) => {
-  const item = e.target.closest?.(".sugerencia-item");
-  if (!item || aiWrapperDe(item) !== aiUI.wrapper) return;
-  e.preventDefault();
-  aplicarAISugerencia(parseInt(item.dataset.idx, 10), "click");
+// Si el usuario escribe, se oculta la ayuda; si vacía el campo, vuelve
+document.addEventListener("input", (e) => {
+  const wrapper = aiWrapperDe(e.target);
+  if (!wrapper || !e.target.matches("[data-field]")) return;
+  aiHint(wrapper, aiHintActual(e.target));
 });
 
-// Teclado (fase de captura para que Escape no cierre además el modal)
+// Tab con el campo vacío = aceptar la sugerencia (fase de captura)
 document.addEventListener(
   "keydown",
   (e) => {
-    const wrapper = aiWrapperDe(e.target);
-    if (!wrapper || wrapper !== aiUI.wrapper || !aiUI.data) return;
-    const items = wrapper.querySelectorAll(".sugerencia-item");
-    if (!items.length) return;
-    const marcar = () => {
-      items.forEach((it, i) => it.classList.toggle("focus", i === aiUI.idx));
-      items[aiUI.idx]?.scrollIntoView({ block: "nearest" });
-    };
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      aiUI.idx = Math.min(aiUI.idx + 1, items.length - 1);
-      marcar();
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      aiUI.idx = Math.max(aiUI.idx - 1, 0);
-      marcar();
-    } else if (e.key === "Enter" && aiUI.idx >= 0) {
-      e.preventDefault();
-      aplicarAISugerencia(aiUI.idx, "enter");
-    } else if (e.key === "Tab" && !e.shiftKey) {
-      e.preventDefault();
-      aplicarAISugerencia(Math.max(aiUI.idx, 0), "tab");
-    } else if (e.key === "Escape") {
-      e.stopPropagation();
-      cerrarAISugerencias(wrapper);
-    }
+    if (e.key !== "Tab" || e.shiftKey) return;
+    const input = e.target;
+    const wrapper = aiWrapperDe(input);
+    if (!wrapper || !input.matches?.("[data-field]") || input.value || !input.dataset.aiSug) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const s = input.dataset.aiSug;
+    input.value = input.maxLength > 0 ? s.slice(0, input.maxLength) : s;
+    input.dispatchEvent(new Event("input", { bubbles: true })); // el listener global guarda en state.saved
+    registrarAceptacionSugerencia(wrapper.dataset.aiCampo, s, "tab");
   },
   true,
 );
 
 /**
- * Wrapper de field() con sugerencias IA. Sirve tanto para fieldsFor() como para
- * los formularios especiales (modales, presupuesto, ética): no se duplica field().
+ * Wrapper de field() con sugerencia IA. Sirve para los formularios especiales
+ * (modales, presupuesto, ética): no se duplica field().
  */
 function fieldConIA(
   label,
@@ -1358,7 +1309,7 @@ function fieldConIA(
   const html = field(label, value, kind, help, required, key, placeholder, defaultValue);
   const config = campoIA && AI_SUGERENCIAS_CONFIG[campoIA];
   if (!config || !["text", "textarea"].includes(kind)) return html;
-  return `<div class="field-wrapper" data-ai-campo="${config.campo}">${html}<div class="ai-sugerencias" role="listbox"></div></div>`;
+  return `<div class="field-wrapper" data-ai-campo="${config.campo}">${html}<div class="ai-hint" hidden></div></div>`;
 }
 function fieldConIAEspecial(...args) {
   return fieldConIA(...args);
