@@ -46,6 +46,14 @@
       "destination": "https://sgpi-backend-api.onrender.com/$1"
     },
     {
+      "source": "/propuestas",
+      "destination": "https://sgpi-backend-api.onrender.com/propuestas"
+    },
+    {
+      "source": "/catalogos",
+      "destination": "https://sgpi-backend-api.onrender.com/catalogos"
+    },
+    {
       "source": "/auth/(.*)",
       "destination": "https://sgpi-backend-api.onrender.com/auth/$1"
     },
@@ -84,8 +92,8 @@
     {
       "source": "/admin/(.*)",
       "destination": "https://sgpi-backend-api.onrender.com/admin/$1"
-    },
-    ],
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
