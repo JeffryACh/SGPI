@@ -3670,7 +3670,224 @@ const steps = [
   ["17", "Documentos"],
   ["18", "Revisión y envío"],
 ];
+function tieneValorBorrador(key, fallback = "") {
+  return String(draftValue(key, fallback) ?? "").trim() !== "";
+}
 
+function problemasPasoPropuesta(id) {
+  const faltantes = [];
+
+  const exigir = (key, nombre, fallback = "") => {
+    if (!tieneValorBorrador(key, fallback)) faltantes.push(nombre);
+  };
+
+  switch (id) {
+    case "08":
+      exigir("08:Título de la propuesta", "Título de la propuesta");
+      exigir(
+        "08:Instancia coordinadora",
+        "Instancia coordinadora",
+        escuelas?.[0]?.id,
+      );
+      exigir(
+        "08:Línea de investigación",
+        "Línea de investigación",
+        lineas_investigacion?.[0]?.id,
+      );
+      exigir("08:Fecha de inicio", "Fecha de inicio");
+      exigir("08:Fecha de finalización", "Fecha de finalización");
+      exigir("08:Resumen", "Resumen");
+      exigir("08:Palabras clave", "Palabras clave");
+      exigir("08:Resumen en inglés", "Resumen en inglés");
+      exigir("08:Palabras clave en inglés", "Palabras clave en inglés");
+      break;
+
+    case "09": {
+      // No usar proposalTeamMembers() aquí porque crea automáticamente
+      // un integrante y podría marcar el paso sin que el usuario lo complete.
+      const equipo = state.teamMembers || [];
+
+      if (!equipo.length) {
+        faltantes.push("Equipo investigador");
+        break;
+      }
+
+      if (
+        equipo.some(
+          (miembro) =>
+            Number(miembro.horas) < 1 || Number(miembro.horas) > 40,
+        )
+      ) {
+        faltantes.push("Horas válidas del equipo");
+      }
+
+      if (
+        equipo.some(
+          (miembro) =>
+            !esOrcidValido(
+              miembro.orcid ||
+                obtenerOrcidDePerfil(miembro.correo, miembro.nombre),
+            ),
+        )
+      ) {
+        faltantes.push("ORCID válido de cada integrante");
+      }
+
+      break;
+    }
+
+    case "10":
+      exigir("10:Problema e importancia", "Problema e importancia");
+      exigir("10:Justificación", "Justificación");
+      exigir(
+        "10:Estado del arte y vacío identificado",
+        "Estado del arte y vacío identificado",
+      );
+      break;
+
+    case "11":
+      exigir("11:Objetivo general", "Objetivo general");
+      exigir("11:OE1", "Objetivo específico OE1");
+      exigir("11:OE2", "Objetivo específico OE2");
+      exigir("11:OE3", "Objetivo específico OE3");
+      break;
+
+    case "12":
+      exigir(
+        "12:Enfoque y diseño metodológico",
+        "Enfoque y diseño metodológico",
+      );
+      exigir(
+        "12:Procedimientos y técnicas",
+        "Procedimientos y técnicas",
+      );
+      exigir("12:Usuarios y validación", "Usuarios y validación");
+      exigir("12:Análisis de resultados", "Análisis de resultados");
+      break;
+
+    case "13":
+      if (!(state.extraActivities || []).length) {
+        faltantes.push("Al menos una actividad");
+      } else if (
+        state.extraActivities.some((actividad) =>
+          actividad
+            .slice(0, 5)
+            .some((valor) => !String(valor ?? "").trim()),
+        )
+      ) {
+        faltantes.push("Datos completos de las actividades");
+      }
+      break;
+
+    case "14":
+      if (!(state.extraRisks || []).length) {
+        faltantes.push("Al menos un riesgo");
+      } else if (
+        state.extraRisks.some((riesgo) =>
+          riesgo
+            .slice(0, 4)
+            .some((valor) => !String(valor ?? "").trim()),
+        )
+      ) {
+        faltantes.push("Datos completos de los riesgos");
+      }
+      break;
+
+    case "15": {
+      const partidasUsadas = (state.budget || []).filter(
+        (partida) =>
+          Number(partida.a) > 0 || Number(partida.b) > 0,
+      );
+
+      if (!partidasUsadas.length) {
+        faltantes.push("Presupuesto");
+      }
+
+      if (partidasUsadas.some((partida) => !partida.id_rubro)) {
+        faltantes.push("Rubros presupuestarios");
+      }
+
+      if (
+        partidasUsadas.some(
+          (partida) => !String(partida.detail || "").trim(),
+        )
+      ) {
+        faltantes.push("Justificación de cada gasto");
+      }
+
+      if (!budgetValid()) {
+        faltantes.push("Reglas del presupuesto");
+      }
+
+      break;
+    }
+
+    case "16":
+      exigir(
+        "16:TRL actual",
+        "TRL actual",
+        PROPOSAL_DEFAULTS["16:TRL actual"],
+      );
+      exigir(
+        "16:TRL esperado",
+        "TRL esperado",
+        PROPOSAL_DEFAULTS["16:TRL esperado"],
+      );
+      exigir(
+        "16:Potencial de propiedad intelectual",
+        "Potencial de propiedad intelectual",
+        PROPOSAL_DEFAULTS[
+          "16:Potencial de propiedad intelectual"
+        ],
+      );
+      exigir("16:Activo previsto", "Activo previsto");
+
+      for (let i = 0; i < 4; i += 1) {
+        exigir(
+          `ethics:${i}:applies`,
+          `Declaración ética ${i + 1}`,
+          PROPOSAL_DEFAULTS[`ethics:${i}:applies`],
+        );
+        exigir(
+          `ethics:${i}:reason`,
+          `Justificación ética ${i + 1}`,
+        );
+      }
+      break;
+
+    case "17":
+      // Los documentos no impiden enviar, pero el paso solo muestra
+      // check cuando se haya adjuntado al menos uno.
+      if (!archivosBorrador.length) {
+        faltantes.push("Documento adjunto");
+      }
+      break;
+
+    case "18":
+      if (!state.reviewed) {
+        faltantes.push("Confirmación de revisión");
+      }
+      break;
+  }
+
+  return faltantes;
+}
+
+function pasoPropuestaCompleto(id) {
+  if (id === "18") {
+    return (
+      state.reviewed &&
+      steps.slice(0, -1).every(([stepId]) => {
+        return (
+          stepId === "17" ||
+          problemasPasoPropuesta(stepId).length === 0
+        );
+      })
+    );
+  }
+
+  return problemasPasoPropuesta(id).length === 0;
+}
 /**
  * Proveer el marco estructural común (Wizard Shell) para los formularios de formulación de propuestas.
  * Genera el stepper lateral con la barra de progreso porcentual, contenedor de formulario,
@@ -3682,9 +3899,103 @@ const steps = [
  *     + string : formShellHtml Marcado completo del asistente de pasos.
  */
 function formShell(inner, id = current) {
-  // [Línea clave]: ¿Por qué soy importante? Calcula el índice del paso activo. ¿Para qué? Establecer el ancho de la barra de progreso y habilitar los pasos concluidos en el stepper. ¿Dónde me usan? En la generación del stepper en formShell().
-  const idx = steps.findIndex((s) => s[0] === id);
-  return `<div class="form-layout"><aside><div class="small" style="margin:0 10px 10px"><strong>Tu propuesta</strong><p class="micro muted" style="margin-top:4px">Paso ${idx + 1} de 11</p></div><div class="progress" style="margin:0 10px 18px"><span style="width:${((idx + 1) / 11) * 100}%"></span></div><nav class="stepper" aria-label="Secciones del formulario">${steps.map(([n, l], i) => `<button class="step ${i === idx ? "active" : i < idx ? "done" : ""}" data-go="${n}"><span>${i < idx ? "✓" : i + 1}</span>${l}</button>`).join("")}</nav><p class="micro muted" style="margin:20px 10px">Puedes guardar y continuar después.<br>Los campos con * son obligatorios.</p></aside><div><form id="proposal-form" class="card form-card" novalidate><div class="form-title"><h2>${esc(screen(id).title)}</h2>${badge("Borrador")}</div>${inner}<div class="form-footer"><div>${idx > 0 ? btn("Anterior", steps[idx - 1][0], "text", "back") : btn("Mis propuestas", "06", "text", "back")}</div><div class="action-row">${act("Guardar borrador", "save", "secondary")}${idx < 10 ? act("Guardar y continuar", "next", "", "arrow", `data-next="${steps[idx + 1][0]}"`) : act("Enviar a evaluación", "send", "", "arrow")}</div></div></form><div class="saved" style="margin-top:12px">${icon("check")}Cambios guardados</div></div></div>`;
+  const idx = steps.findIndex((step) => step[0] === id);
+
+  const stepperHtml = steps
+    .map(([stepId, label], index) => {
+      const completo = pasoPropuestaCompleto(stepId);
+      const activo = index === idx;
+      const clase = activo ? "active" : completo ? "done" : "";
+      const indicador = completo && !activo ? "✓" : index + 1;
+
+      return `
+        <button
+          class="step ${clase}"
+          data-go="${stepId}"
+        >
+          <span>${indicador}</span>
+          ${label}
+        </button>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="form-layout">
+      <aside>
+        <div class="small" style="margin:0 10px 10px">
+          <strong>Tu propuesta</strong>
+          <p class="micro muted" style="margin-top:4px">
+            Paso ${idx + 1} de 11
+          </p>
+        </div>
+
+        <div class="progress" style="margin:0 10px 18px">
+          <span style="width:${((idx + 1) / 11) * 100}%"></span>
+        </div>
+
+        <nav class="stepper" aria-label="Secciones del formulario">
+          ${stepperHtml}
+        </nav>
+
+        <p class="micro muted" style="margin:20px 10px">
+          Puedes guardar y continuar después.<br>
+          Los campos con * son obligatorios.
+        </p>
+      </aside>
+
+      <div>
+        <form id="proposal-form" class="card form-card" novalidate>
+          <div class="form-title">
+            <h2>${esc(screen(id).title)}</h2>
+            ${badge("Borrador")}
+          </div>
+
+          ${inner}
+
+          <div class="form-footer">
+            <div>
+              ${
+                idx > 0
+                  ? btn(
+                      "Anterior",
+                      steps[idx - 1][0],
+                      "text",
+                      "back",
+                    )
+                  : btn("Mis propuestas", "06", "text", "back")
+              }
+            </div>
+
+            <div class="action-row">
+              ${act("Guardar borrador", "save", "secondary")}
+              ${
+                idx < 10
+                  ? act(
+                      "Guardar y continuar",
+                      "next",
+                      "",
+                      "arrow",
+                      `data-next="${steps[idx + 1][0]}"`,
+                    )
+                  : act(
+                      "Enviar a evaluación",
+                      "send",
+                      "",
+                      "arrow",
+                    )
+              }
+            </div>
+          </div>
+        </form>
+
+        <div class="saved" style="margin-top:12px">
+          ${icon("check")}
+          Cambios guardados
+        </div>
+      </div>
+    </div>
+  `;
 }
 /**
  * Construir y renderizar el formulario de inicio de sesión de usuario (Pantalla 01).
@@ -4567,29 +4878,18 @@ function buildProposalPayload() {
 }
 
 function proposalValidationIssues() {
-  const issues = [];
-  const obligatorios = [
-    ["08:Título de la propuesta", "08", "Título de la propuesta"],
-    ["08:Resumen", "08", "Resumen"],
-    ["08:Palabras clave", "08", "Palabras clave"],
-    ["11:Objetivo general", "11", "Objetivo general"],
-    ["10:Problema e importancia", "10", "Problema e importancia"],
-    ["10:Justificación", "10", "Justificación"],
-    ["12:Enfoque y diseño metodológico", "12", "Enfoque metodológico"],
-    ["12:Procedimientos y técnicas", "12", "Procedimientos y técnicas"],
-    ["12:Análisis de resultados", "12", "Análisis de resultados"],
-  ];
-  for (const [key, pantalla, nombre] of obligatorios) {
-    if (!String(draftValue(key, screenDefault(pantalla, nombre))).trim())
-      issues.push({ screen: pantalla, text: nombre });
-  }
-  if (!proposalTeamMembers().length) issues.push({ screen: "09", text: "Equipo investigador" });
-  if (state.budget.some((p) => (Number(p.a) > 0 || Number(p.b) > 0) && !p.id_rubro))
-    issues.push({ screen: "15", text: "Rubros presupuestarios sin equivalente institucional (falta id_rubro)" });
-  if (!budgetValid()) issues.push({ screen: "15", text: "Reglas del presupuesto" });
-  return issues;
+  // Los documentos continúan siendo opcionales.
+  // Las demás secciones usan la misma validación del stepper.
+  return steps
+    .map(([id]) => id)
+    .filter((id) => id !== "17" && id !== "18")
+    .flatMap((id) =>
+      problemasPasoPropuesta(id).map((text) => ({
+        screen: id,
+        text,
+      })),
+    );
 }
-
 function clearProposalDraft() {
   Object.keys(state.saved || {})
     .filter(
