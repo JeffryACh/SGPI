@@ -1250,6 +1250,10 @@ class SugerenciaCampoIn(BaseModel):
         default="",
         description="Texto que el usuario ya ha escrito en el campo; si viene, la respuesta es la continuación de ese texto"
     )
+    etiqueta: str = Field(
+        default="",
+        description="Nombre visible del campo; lo usa el campo genérico ('generico') para saber qué debe redactar"
+    )
     historial_ids: Optional[list[int]] = Field(
         default=None,
         description="IDs de propuestas previas del usuario para personalizar sugerencias"
@@ -1282,6 +1286,10 @@ class SugerenciaCampoOut(BaseModel):
 # HELPER: GENERAR SUGERENCIAS CON GEMINI
 # =====================================================================
 
+# Campo genérico: sirve para cualquier campo de texto del formulario que no tenga
+# un prompt propio. La etiqueta del campo (enviada por el Frontend) indica qué redactar.
+CAMPO_GENERICO = "generico"
+
 # Campos con IA: id -> (qué redactar, máximo de palabras). Cada campo del formulario
 # tiene su propio id para que dos campos distintos no reciban el mismo texto.
 CAMPOS_IA: dict[str, tuple[str, int]] = {
@@ -1304,6 +1312,7 @@ CAMPOS_IA: dict[str, tuple[str, int]] = {
     "riesgos": ("un riesgo realista del proyecto con su mitigación, formato 'Riesgo: ... Mitigación: ...'", 40),
     "justificacion_presupuesto": ("la justificación de un rubro del presupuesto y su relación con las actividades", 40),
     "etica": ("la justificación de una declaración ética (si aplica o no y por qué)", 40),
+    CAMPO_GENERICO: ("el contenido del campo de texto solicitado", 40),
 }
 
 # Datos del formulario que se incluyen como contexto, en orden de dependencia
@@ -1330,24 +1339,35 @@ MAX_CHARS_CONTEXTO = 600  # tope por dato, también validado en el servidor
 MAX_PALABRAS_CONTINUACION = 25  # tope de palabras de la continuación que completa lo ya escrito
 
 
-def _construir_prompt_sugerencia(campo: str, contexto: dict, texto_parcial: str = "") -> str:
+def _construir_prompt_sugerencia(campo: str, contexto: dict, texto_parcial: str = "", etiqueta: str = "") -> str:
     """Prompt para UNA sola sugerencia del campo, usando todo el contexto ya completado.
 
     Si viene texto_parcial, el prompt pide la CONTINUACIÓN de ese texto (autocompletado),
     es decir, solo las palabras que faltan, sin repetir lo ya escrito.
+
+    El campo genérico ("generico") usa la etiqueta del campo (su nombre visible) para
+    saber qué debe redactar.
     """
     spec = CAMPOS_IA.get(campo)
     if not spec:
         return ""
     instruccion, max_palabras = spec
 
+    # Campo genérico: la etiqueta del formulario indica qué se está redactando.
+    if campo == CAMPO_GENERICO:
+        nombre = str(etiqueta or "").strip()[:120]
+        if nombre:
+            instruccion = f"el contenido del campo «{nombre}» del formulario de propuesta"
+        else:
+            instruccion = "el contenido del campo de texto del formulario de propuesta"
+
     lineas = []
-    for clave, etiqueta in ETIQUETAS_CONTEXTO:
+    for clave, nombre_contexto in ETIQUETAS_CONTEXTO:
         if clave == campo:
             continue
         valor = str(contexto.get(clave) or "").strip()
         if valor:
-            lineas.append(f"- {etiqueta}: {valor[:MAX_CHARS_CONTEXTO]}")
+            lineas.append(f"- {nombre_contexto}: {valor[:MAX_CHARS_CONTEXTO]}")
     datos = "\n".join(lineas) if lineas else "- (el investigador aún no ha completado otros campos)"
 
     parcial = str(texto_parcial or "").strip()
@@ -1380,7 +1400,7 @@ def _construir_prompt_sugerencia(campo: str, contexto: dict, texto_parcial: str 
     )
 
 
-def _generar_sugerencias_gemini(campo: str, contexto: dict, texto_parcial: str) -> tuple[Optional[list[str]], str, str]:
+def _generar_sugerencias_gemini(campo: str, contexto: dict, texto_parcial: str, etiqueta: str = "") -> tuple[Optional[list[str]], str, str]:
     """
     Invocar Gemini API para generar sugerencias para un campo específico.
 
@@ -1390,7 +1410,7 @@ def _generar_sugerencias_gemini(campo: str, contexto: dict, texto_parcial: str) 
     if not api_key or api_key.startswith("TU_") or api_key == "reemplazar_con_tu_api_key":
         return None, "gemini-3.5-flash (respaldo)", "motor_normativo_respaldo"
 
-    prompt = _construir_prompt_sugerencia(campo, contexto, texto_parcial)
+    prompt = _construir_prompt_sugerencia(campo, contexto, texto_parcial, etiqueta)
     if not prompt:
         return None, "", ""
 
@@ -1450,10 +1470,11 @@ CONTINUACIONES_FALLBACK: dict[str, str] = {
     "riesgos": ". Mitigación: seguimiento mensual y plan de contingencia con proveedores alternativos.",
     "justificacion_presupuesto": ": horas de investigación, insumos de laboratorio y equipamiento para el pilotaje.",
     "etica": ". Justificación: no se recolectan datos personales sensibles ni se realizan experimentos con personas.",
+    CAMPO_GENERICO: " completando la idea con evidencia, responsables y resultados medibles.",
 }
 
 
-def _sugerencias_fallback(campo: str, contexto: dict, texto_parcial: str = "") -> list[str]:
+def _sugerencias_fallback(campo: str, contexto: dict, texto_parcial: str = "", etiqueta: str = "") -> list[str]:
     """Una sola sugerencia determinista cuando Gemini no está disponible.
 
     Si viene texto_parcial, devuelve la CONTINUACIÓN de ese texto (autocompletado).
@@ -1486,6 +1507,9 @@ def _sugerencias_fallback(campo: str, contexto: dict, texto_parcial: str = "") -
         "justificacion_presupuesto": "Rubro: Personal investigador. Justificación: horas VIE/CONS para la ejecución técnica del plan.",
         "etica": "Eje: Participación de seres humanos. Aplica: No. Justificación: no se recolectan datos de personas.",
     }
+    if campo == CAMPO_GENERICO:
+        nombre = str(etiqueta or "").strip() or "el campo solicitado"
+        return [f"Contenido de «{nombre}», redactado con base en los datos ya completados de la propuesta."]
     return [textos.get(campo, f"Describe aquí {campo.replace('_', ' ')}.")]
 
 
@@ -1499,6 +1523,9 @@ def generar_sugerencias_campo(payload: SugerenciaCampoIn):
     Si texto_parcial trae texto, retorna UNA continuación: solo las palabras que faltan para
     completar lo que el investigador ya escribió (autocompletado en línea, estilo Copilot).
 
+    El campo "generico" sirve para cualquier campo de texto sin prompt propio: en ese caso
+    la etiqueta enviada por el Frontend indica qué debe redactar.
+
     Si Gemini está disponible (GEMINI_API_KEY configurada), usa el modelo gratuito.
     Si no, retorna sugerencias deterministas de respaldo (fallback).
 
@@ -1506,7 +1533,7 @@ def generar_sugerencias_campo(payload: SugerenciaCampoIn):
     el Frontend debe no mostrar UI en ese caso.
 
     parametros:
-        - SugerenciaCampoIn : payload Campo objetivo, contexto del formulario, texto parcial.
+        - SugerenciaCampoIn : payload Campo objetivo, contexto del formulario, texto parcial, etiqueta.
         # - Connection : conn Conexión transaccional a Supabase (para historial opcional).
 
     return:
@@ -1515,17 +1542,18 @@ def generar_sugerencias_campo(payload: SugerenciaCampoIn):
     campo = payload.campo
     contexto = payload.contexto or {}
     texto_parcial = (payload.texto_parcial or "").strip()
+    etiqueta = (payload.etiqueta or "").strip()
 
     # Campo desconocido: sin sugerencia (el Frontend no muestra nada)
     if campo not in CAMPOS_IA:
         return SugerenciaCampoOut()
 
     # Intentar con Gemini (timeout corto: 3s)
-    sugerencias, modelo_usado, modo_gen = _generar_sugerencias_gemini(campo, contexto, texto_parcial)
+    sugerencias, modelo_usado, modo_gen = _generar_sugerencias_gemini(campo, contexto, texto_parcial, etiqueta)
 
     # Fallback determinista si Gemini falla o no hay API key
     if not sugerencias:
-        sugerencias = _sugerencias_fallback(campo, contexto, texto_parcial)
+        sugerencias = _sugerencias_fallback(campo, contexto, texto_parcial, etiqueta)
         modelo_usado = modelo_usado or "motor_normativo_respaldo"
         modo_gen = modo_gen or "motor_normativo_respaldo"
 

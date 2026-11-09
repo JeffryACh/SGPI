@@ -1078,6 +1078,7 @@ const AI_CONTEXT_MAX_CHARS = 300; // máx. de caracteres de cada dato de context
 const AI_CACHE_TTL_MS = 5 * 60 * 1000; // cuánto se reutiliza una continuación con el mismo contexto y texto
 
 // Campos con IA. Cada id tiene su propio prompt en el backend (ia.py: CAMPOS_IA).
+// "generico" es el id de los campos de texto sin prompt propio.
 const AI_SUGERENCIAS_CONFIG = Object.fromEntries(
   [
     "titulo",
@@ -1099,6 +1100,7 @@ const AI_SUGERENCIAS_CONFIG = Object.fromEntries(
     "riesgos",
     "justificacion_presupuesto",
     "etica",
+    "generico",
   ].map((campo) => [campo, { campo }]),
 );
 
@@ -1141,10 +1143,55 @@ const AI_CONTEXTO_KEYS = {
   metodologia_analisis: "12:Análisis de resultados",
 };
 
+// La IA asiste a TODOS los campos de texto del formulario. Excepciones:
+//  - el equipo investigador (paso 09 y sus modales),
+//  - el presupuesto (paso 15 y sus modales): solo los campos de justificación,
+//  - los buscadores, el acceso y el perfil del usuario.
+const AI_CAMPOS_SIN_IA = [
+  "login:",
+  "history:",
+  "call:",
+  "search:",
+  "modal:user-",
+  "modal:role",
+  "modal:hour-type",
+  "modal:hours",
+  "modal:orcid",
+  "modal:responsibility",
+  "modal:ext-",
+  "modal:edit-",
+  "modal:profile-",
+];
+const AI_PANTALLA_EQUIPO = "09"; // 09 · Equipo investigador
+const AI_PANTALLA_PRESUPUESTO = "15"; // 15 · Presupuesto
+
+// Id del campo IA que corresponde a una clave de formulario.
+// Devuelve null cuando ese campo no recibe asistencia IA.
+function aiCampoPara(key, label, kind) {
+  if (!["text", "textarea"].includes(kind)) return null;
+  if (AI_CAMPOS_SIN_IA.some((prefijo) => key.startsWith(prefijo))) return null;
+  if (key.startsWith(`${AI_PANTALLA_EQUIPO}:`)) return null; // equipo investigador
+  if (
+    key.startsWith(`${AI_PANTALLA_PRESUPUESTO}:`) ||
+    key.startsWith("modal:budget-")
+  ) {
+    // En el presupuesto solo se asiste a los campos de justificación
+    return /justificaci|financiamiento/i.test(label)
+      ? "justificacion_presupuesto"
+      : null;
+  }
+  if (AI_CAMPO_POR_KEY[key]) return AI_CAMPO_POR_KEY[key]; // prompt específico por campo
+  if (/^ethics:\d+:reason$/.test(key)) return "etica";
+  if (key === "modal:activity" || key === "modal:result") return "actividades";
+  if (key === "modal:risk" || key === "modal:mitigation") return "riesgos";
+  return "generico"; // cualquier otro texto
+}
+
 // Envuelve el campo con el marcador de IA, el overlay de texto fantasma y la línea de ayuda
-function aiEnvolverCampo(html, key, kind) {
-  const campo = AI_CAMPO_POR_KEY[key];
-  if (!campo || !["text", "textarea"].includes(kind)) return html;
+function aiEnvolverCampo(html, key, kind, label = "", campoIA = null) {
+  if (!["text", "textarea"].includes(kind)) return html;
+  const campo = campoIA || aiCampoPara(key, label, kind);
+  if (!campo) return html;
   return `<div class="field-wrapper" data-ai-campo="${campo}">${html}<div class="ai-ghost" hidden aria-hidden="true"></div><div class="ai-hint" hidden></div></div>`;
 }
 
@@ -1167,8 +1214,10 @@ function obtenerContextoIA(campoActual) {
 }
 
 // Clave de cache: campo + contexto + texto parcial (si cambia alguno, se pide otra continuación)
-function generarCacheKey(campo, ctx, textoParcial = "") {
-  const str = `${campo}|${JSON.stringify(ctx)}|${textoParcial}`;
+// Para el campo genérico se incluye la etiqueta: el mismo texto en dos campos distintos
+// necesita dos continuaciones diferentes.
+function generarCacheKey(campo, ctx, textoParcial = "", extra = "") {
+  const str = `${campo}|${extra}|${JSON.stringify(ctx)}|${textoParcial}`;
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     hash = (hash << 5) - hash + str.charCodeAt(i);
@@ -1179,21 +1228,26 @@ function generarCacheKey(campo, ctx, textoParcial = "") {
 
 // Pide UNA continuación (string) para el campo, a partir de lo que el usuario ya escribió.
 // Devuelve null si no hay.
-async function fetchAIContinuacion(campo, textoParcial, signal) {
+async function fetchAIContinuacion(campo, textoParcial, etiqueta, signal, claveCampo) {
   if (!AI_SUGERENCIAS_CONFIG[campo]) return null;
   const ctx = obtenerContextoIA(campo);
-  const cacheKey = generarCacheKey(campo, ctx, textoParcial);
+  const cacheKey = generarCacheKey(campo, ctx, textoParcial, etiqueta || claveCampo || "");
   if (aiSugerenciasCache.has(cacheKey)) return aiSugerenciasCache.get(cacheKey);
 
   try {
     const resp = await fetch(`${API_URL}/ia/sugerencias`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ campo, contexto: ctx, texto_parcial: textoParcial }),
+      body: JSON.stringify({
+        campo,
+        contexto: ctx,
+        texto_parcial: textoParcial,
+        etiqueta,
+      }),
       signal,
     });
     if (!resp.ok) {
-      registrarFallbackIA(campo);
+      registrarFallbackIA(claveCampo || campo);
       return null;
     }
     const data = await resp.json();
@@ -1201,12 +1255,12 @@ async function fetchAIContinuacion(campo, textoParcial, signal) {
     if (!texto) return null;
     aiSugerenciasCache.set(cacheKey, texto);
     setTimeout(() => aiSugerenciasCache.delete(cacheKey), AI_CACHE_TTL_MS);
-    aiFallbackCounters.delete(campo); // éxito: los fallos vuelven a ser "consecutivos"
+    aiFallbackCounters.delete(claveCampo || campo); // éxito: los fallos vuelven a ser "consecutivos"
     return texto;
   } catch (e) {
     if (e.name === "AbortError") return null; // cancelada a propósito, no es un fallo
     console.warn("AI continuación error:", e);
-    registrarFallbackIA(campo);
+    registrarFallbackIA(claveCampo || campo);
     return null;
   }
 }
@@ -1308,17 +1362,38 @@ function aiSincronizarOverlay(input) {
   overlay.scrollTop = input.scrollTop;
 }
 
+// Nombre visible del campo (para el prompt genérico del backend)
+function aiEtiquetaDe(input) {
+  const etiqueta =
+    input.closest(".field")?.querySelector("label")?.textContent ||
+    input.getAttribute("aria-label") ||
+    "";
+  return etiqueta.replace(/\*\s*$/, "").trim();
+}
+
+// Clave propia del campo (para los contadores de fallos, sin compartir entre campos)
+function aiClaveDe(input, wrapper) {
+  return input.dataset.field || input.dataset.budgetField || wrapper?.dataset.aiCampo || "";
+}
+
 // Pide la continuación de lo que el usuario ya escribió (con anti-rebote)
 async function pedirContinuacionIA(wrapper, input) {
   const campo = wrapper.dataset.aiCampo;
+  const clave = aiClaveDe(input, wrapper);
   const texto = input.value.trim();
   if (!texto || texto.length < AI_AUTOCOMPLETE_MIN_CHARS) return;
-  if (!aiAssistConfig.enabled || debeUsarFallback(campo)) return;
+  if (!aiAssistConfig.enabled || debeUsarFallback(clave)) return;
 
   if (aiUI.abort) aiUI.abort.abort();
   const ctrl = new AbortController();
   aiUI.abort = ctrl;
-  const continuacion = await fetchAIContinuacion(campo, texto, ctrl.signal);
+  const continuacion = await fetchAIContinuacion(
+    campo,
+    texto,
+    aiEtiquetaDe(input),
+    ctrl.signal,
+    clave,
+  );
   if (ctrl !== aiUI.abort) return; // respuesta obsoleta
   if (document.activeElement !== input) return; // el usuario ya salió del campo
   if (input.value.trim() !== texto) return; // el usuario siguió escribiendo
@@ -1335,7 +1410,7 @@ document.addEventListener("input", (e) => {
   }
   const input = e.target;
   const wrapper = aiWrapperDe(input);
-  if (!wrapper || !input.matches?.("[data-field]")) return;
+  if (!wrapper || !input.matches?.("input, textarea")) return;
   aiLimpiarFantasma(wrapper, input);
   clearTimeout(aiUI.timer);
   if (!aiAssistConfig.enabled) return;
@@ -1349,7 +1424,7 @@ document.addEventListener(
   (e) => {
     const input = e.target;
     const wrapper = aiWrapperDe(input);
-    if (!wrapper || !input.matches?.("[data-field]")) return;
+    if (!wrapper || !input.matches?.("input, textarea")) return;
 
     if (e.key === "Escape") {
       if (!input.dataset.aiSug) return;
@@ -1388,7 +1463,7 @@ document.addEventListener(
   "scroll",
   (e) => {
     const input = e.target;
-    if (input?.matches?.("[data-field]")) aiSincronizarOverlay(input);
+    if (input?.matches?.("input, textarea")) aiSincronizarOverlay(input);
   },
   true,
 );
@@ -1404,8 +1479,8 @@ window.addEventListener("resize", () => {
 });
 
 /**
- * Wrapper de field() con autocompletado IA. Sirve para los formularios especiales
- * (modales, presupuesto, ética): no se duplica field().
+ * Wrapper de field() con un id de campo IA específico (ética, plan, riesgos, presupuesto).
+ * No se duplica field(): la asistencia IA ya se resuelve dentro de field().
  */
 function fieldConIA(
   label,
@@ -1418,10 +1493,7 @@ function fieldConIA(
   defaultValue = undefined,
   campoIA = null,
 ) {
-  const html = field(label, value, kind, help, required, key, placeholder, defaultValue);
-  const config = campoIA && AI_SUGERENCIAS_CONFIG[campoIA];
-  if (!config || !["text", "textarea"].includes(kind)) return html;
-  return `<div class="field-wrapper" data-ai-campo="${config.campo}">${html}<div class="ai-ghost" hidden aria-hidden="true"></div><div class="ai-hint" hidden></div></div>`;
+  return field(label, value, kind, help, required, key, placeholder, defaultValue, campoIA);
 }
 function fieldConIAEspecial(...args) {
   return fieldConIA(...args);
@@ -3957,6 +4029,7 @@ function field(
   key = "",
   placeholder = "",
   defaultValue = undefined,
+  campoIA = null,
 ) {
   // [Línea clave]: Por qué soy importante? Genera una clave persistente única para el campo. Para qué? Recuperar y almacenar borradores parciales en state.saved. Dónde me usan? En el binding de valores de todos los formularios.
   const k = key || `${current}:${label}`,
@@ -3977,7 +4050,11 @@ function field(
           : value),
     id = "f-" + k.replace(/[^\w]/g, "-"),
     req = required ? "required" : "",
-    placeholderAttr = placeholder ? ` placeholder="${esc(placeholder)}"` : "",
+    // Los campos de texto no llevan placeholder: ese papel lo cumple la IA (texto fantasma).
+    placeholderAttr =
+      placeholder && !["text", "textarea", "readonly"].includes(kind)
+        ? ` placeholder="${esc(placeholder)}"`
+        : "",
     maxLen = obtenerLimiteCaracteres(label, k, kind),
     maxAttr = maxLen ? ` maxlength="${maxLen}"` : "",
     numBounds =
@@ -4008,7 +4085,9 @@ function field(
   return aiEnvolverCampo(
     `<div class="field"><label for="${id}">${esc(label)}${required ? ' <span class="required-star">*</span>' : ""}</label>${control}${counterHtml}${help ? `<span class="help">${esc(help)}</span>` : ""}<span class="error-msg" hidden>Completa este campo para continuar.</span></div>`,
     k,
-    kind
+    kind,
+    label,
+    campoIA,
   );
 }
 
@@ -5880,10 +5959,10 @@ function budgetForm() {
       `<span class="project-code">${r.id_rubro ? `R-${r.id_rubro}` : r.code}</span><strong>${esc(r.name)}</strong>`,
       `<input type="number" min="0" step="1000" value="${r.a}" data-budget-index="${i}" data-budget-field="a" class="budget-input" style="width:140px" aria-label="Monto 2027 para ${esc(r.name)}">`,
       `<input type="number" min="0" step="1000" value="${r.b}" data-budget-index="${i}" data-budget-field="b" class="budget-input" style="width:140px" aria-label="Monto 2028 para ${esc(r.name)}">`,
-      `<textarea data-budget-index="${i}" data-budget-field="detail" class="budget-textarea" maxlength="500" style="width:280px;min-height:36px" aria-label="Justificación para ${esc(r.name)}">${esc(r.detail)}</textarea>`,
+      `<div class="field-wrapper" data-ai-campo="justificacion_presupuesto"><textarea data-budget-index="${i}" data-budget-field="detail" class="budget-textarea" maxlength="500" style="width:280px;min-height:36px" aria-label="Justificación para ${esc(r.name)}">${esc(r.detail)}</textarea><div class="ai-ghost" hidden aria-hidden="true"></div><div class="ai-hint" hidden></div></div>`,
       ``,
     ]),
-  )}</div><div class="action-row mt">${act("Ver reglas de presupuesto", "budget-rules", "text")}</div><details class="accordion"><summary>Justificaciones y otras fuentes</summary>${state.budget.map((r) => `<p><strong>${r.name}.</strong> ${r.detail}</p>`).join("")}${fieldConIAEspecial("Financiamiento externo / contrapartida", "", "textarea", "Indica fuentes externas, contrapartidas o co-financiamiento.", false, "", "Sin aportes externos.", undefined, "justificacion_presupuesto")}</details>`;
+  )}</div><div class="action-row mt">${act("Ver reglas de presupuesto", "budget-rules", "text")}</div><details class="accordion"><summary>Justificaciones y otras fuentes</summary>${state.budget.map((r) => `<p><strong>${r.name}.</strong> ${r.detail}</p>`).join("")}${fieldConIAEspecial("Financiamiento externo / contrapartida", "", "textarea", "Indica fuentes externas, contrapartidas o co-financiamiento.", false, "", "", undefined, "justificacion_presupuesto")}</details>`;
 }
 
 /**
@@ -5897,23 +5976,13 @@ function budgetForm() {
  */
 function complementaryForm() {
   const totalHoras = totalHorasEquipo();
+  // Ejes éticos: solo la etiqueta. La justificación la redacta el investigador
+  // (o la IA con el campo "etica"); no hay texto quemado.
   const ethics = [
-    [
-      "Participación de seres humanos",
-      "No se recopilan datos de personas ni se realizan intervenciones con participantes humanos.",
-    ],
-    [
-      "Biodiversidad y recursos genéticos",
-      "No se recolectan especímenes ni material genético; solo se registran parámetros físico-químicos del agua.",
-    ],
-    [
-      "Uso de animales",
-      "No se utilizan animales ni se realizan procedimientos sobre fauna.",
-    ],
-    [
-      "Territorios o pueblos indígenas",
-      "Los sitios piloto no se ubican en territorios indígenas; cualquier cambio requerirá consulta y autorización previa.",
-    ],
+    "Participación de seres humanos",
+    "Biodiversidad y recursos genéticos",
+    "Uso de animales",
+    "Territorios o pueblos indígenas",
   ];
   const trlBase = catalogos?.nivel_trl?.length
     ? catalogos.nivel_trl
@@ -5922,7 +5991,7 @@ function complementaryForm() {
     value: String(t.nivel),
     label: t.nombre,
   }));
-  return `<h3 class="mb">Madurez tecnológica y propiedad intelectual</h3><div class="field-row">${field("TRL actual", trlOpts, "select", "Rango de referencia DT: 4–7.", true, "", "", "4")}${field("TRL esperado", trlOpts, "select", "Coherente con objetivos y validación.", true, "", "", "6")}</div>${field("Potencial de propiedad intelectual", ["Sí", "No"], "select", "En desarrollo tecnológico el dictamen de Vinculación es obligatorio.", true, "", "", "Sí")}${field("Activo previsto", "", "textarea", "Evitar divulgación previa a la valoración institucional.", true, "", "Software de integración y registro de mediciones ambientales.")}<details class="accordion" open><summary>Declaraciones éticas individuales</summary><p class="small muted" style="margin-top:14px">Cada aspecto se declara y justifica por separado; no se admite una respuesta general.</p><div class="ethics-grid">${ethics.map(([label, reason], i) => `<section class="ethics-item"><h3>${label}</h3>${field("Aplica?", ["No", "Sí"], "select", "Selecciona Sí si la actividad requiere revisión o permisos.", true, `ethics:${i}:applies`, "", "No")}${fieldConIAEspecial(`Justificación específica`, "", "textarea", "Indica entidad, estado, mitigación y plazo si corresponde.", true, `ethics:${i}:reason`, reason, undefined, "etica")}</section>`).join("")}</div></details><details class="accordion"><summary>Producción, difusión y hoja de ruta</summary><p><strong>${totalHoras} h/semana:</strong> software + artículo sometido WoS/Scopus + manual técnico. Se asocian a OE2 y OE3.</p>${field("Difusión y socialización", "", "textarea", "Plan de difusión de resultados (seminarios, publicaciones, transferencia).", false, "", "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.")}${field("Hoja de ruta", "", "textarea", "Hitos para avanzar del TRL actual al esperado.", false, "", "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.")}</details>`;
+  return `<h3 class="mb">Madurez tecnológica y propiedad intelectual</h3><div class="field-row">${field("TRL actual", trlOpts, "select", "Rango de referencia DT: 4–7.", true, "", "", "4")}${field("TRL esperado", trlOpts, "select", "Coherente con objetivos y validación.", true, "", "", "6")}</div>${field("Potencial de propiedad intelectual", ["Sí", "No"], "select", "En desarrollo tecnológico el dictamen de Vinculación es obligatorio.", true, "", "", "Sí")}${field("Activo previsto", "", "textarea", "Evitar divulgación previa a la valoración institucional.", true, "", "Software de integración y registro de mediciones ambientales.")}<details class="accordion" open><summary>Declaraciones éticas individuales</summary><p class="small muted" style="margin-top:14px">Cada aspecto se declara y justifica por separado; no se admite una respuesta general.</p><div class="ethics-grid">${ethics.map((label, i) => `<section class="ethics-item"><h3>${label}</h3>${field("Aplica?", ["No", "Sí"], "select", "Selecciona Sí si la actividad requiere revisión o permisos.", true, `ethics:${i}:applies`, "", "No")}${fieldConIAEspecial(`Justificación específica`, "", "textarea", "Indica entidad, estado, mitigación y plazo si corresponde.", true, `ethics:${i}:reason`, "", undefined, "etica")}</section>`).join("")}</div></details><details class="accordion"><summary>Producción, difusión y hoja de ruta</summary><p><strong>${totalHoras} h/semana:</strong> software + artículo sometido WoS/Scopus + manual técnico. Se asocian a OE2 y OE3.</p>${field("Difusión y socialización", "", "textarea", "Plan de difusión de resultados (seminarios, publicaciones, transferencia).", false, "", "Sesión institucional y manual para responsables de las microcuencas, después de la revisión de PI.")}${field("Hoja de ruta", "", "textarea", "Hitos para avanzar del TRL actual al esperado.", false, "", "TRL 4 a 6: integrar, calibrar y validar en entorno relevante.")}</details>`;
 }
 
 /**
@@ -8387,7 +8456,7 @@ async function handleAction(action, el) {
         "Agregar objetivo específico",
         field(
           "Objetivo",
-          "Documentar la transferencia de resultados a las personas usuarias.",
+          "",
           "textarea",
           "Se asociará con actividades del plan.",
           true,
@@ -8416,7 +8485,7 @@ async function handleAction(action, el) {
       ];
       modal(
         "Agregar actividad",
-        `${field("Objetivo específico", ["OE1", "OE2", "OE3", ...(state.extraObjective ? ["OE4"] : [])], "select", "", true, "modal:objective-code")}${fieldConIAEspecial("Actividad", "Entregar informe semestral de avance", "text", "", true, "modal:activity", "", undefined, "actividades")}${fieldConIAEspecial("Resultado esperado", "Informe semestral registrado", "text", "", true, "modal:result", "", undefined, "actividades")}<div class="field-row">${field("Responsable", miembrosOpts.length ? miembrosOpts : [nombreResponsableActual()], "select", "Integrante del equipo responsable.", true, "modal:owner")}${field("Mes inicial / duración", periodosOpts, "select", "Mes de inicio / duración en meses.", true, "modal:period", "", "6 / 1")}</div>`,
+        `${field("Objetivo específico", ["OE1", "OE2", "OE3", ...(state.extraObjective ? ["OE4"] : [])], "select", "", true, "modal:objective-code")}${fieldConIAEspecial("Actividad", "", "text", "", true, "modal:activity", "", undefined, "actividades")}${fieldConIAEspecial("Resultado esperado", "", "text", "", true, "modal:result", "", undefined, "actividades")}<div class="field-row">${field("Responsable", miembrosOpts.length ? miembrosOpts : [nombreResponsableActual()], "select", "Integrante del equipo responsable.", true, "modal:owner")}${field("Mes inicial / duración", periodosOpts, "select", "Mes de inicio / duración en meses.", true, "modal:period", "", "6 / 1")}</div>`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar actividad", "save-extra", 'data-kind="activity"'),
         false,
@@ -8434,7 +8503,7 @@ async function handleAction(action, el) {
         : ["Bajo", "Medio", "Alto"].map((n) => ({ value: n, label: n })));
       modal(
         "Agregar riesgo",
-        `${field("Actividad", ["Definir requerimientos", "Integrar y calibrar", "Validar en campo", "Evaluar y documentar"], "select", "", true, "modal:riskactivity")}${fieldConIAEspecial("Riesgo", "Indisponibilidad temporal de un sitio piloto.", "textarea", "", true, "modal:risk", "", undefined, "riesgos")}<div class="field-row">${field("Probabilidad", nivelesRiesgoOpts, "select", "", true, "modal:riskprob", "", "Medio")}${field("Impacto", nivelesRiesgoOpts, "select", "", true, "modal:riskimpact", "", "Medio")}</div>${fieldConIAEspecial("Mitigación", "Acordar un sitio alternativo antes del inicio de la validación.", "textarea", "", true, "modal:mitigation", "", undefined, "riesgos")}${field("Responsable", miembrosRiesgoOpts.length ? miembrosRiesgoOpts : [nombreResponsableActual()], "select", "Persona encargada del monitoreo.", true, "modal:riskowner")}`,
+        `${field("Actividad", ["Definir requerimientos", "Integrar y calibrar", "Validar en campo", "Evaluar y documentar"], "select", "", true, "modal:riskactivity")}${fieldConIAEspecial("Riesgo", "", "textarea", "", true, "modal:risk", "", undefined, "riesgos")}<div class="field-row">${field("Probabilidad", nivelesRiesgoOpts, "select", "", true, "modal:riskprob", "", "Medio")}${field("Impacto", nivelesRiesgoOpts, "select", "", true, "modal:riskimpact", "", "Medio")}</div>${fieldConIAEspecial("Mitigación", "", "textarea", "", true, "modal:mitigation", "", undefined, "riesgos")}${field("Responsable", miembrosRiesgoOpts.length ? miembrosRiesgoOpts : [nombreResponsableActual()], "select", "Persona encargada del monitoreo.", true, "modal:riskowner")}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Guardar riesgo", "save-extra", 'data-kind="risk"'),
         false,
@@ -8966,7 +9035,7 @@ async function handleAction(action, el) {
     case "attend":
       modal(
         "Atender observaciones",
-        `${notice("Corrección del expediente", "Describe el ajuste realizado. Al reenviar, el expediente regresa a la etapa institucional que lo devolvió.")}<div class="field"><label for="attend-doc">Evidencia de la corrección (PDF, DOCX)</label><input id="attend-doc" type="file" accept=".pdf,.docx"><span class="help">Opcional. Se adjunta al expediente.</span></div>${field("Detalle de la corrección", "", "textarea", "Ejemplo: se amplía la justificación del riesgo de campo y se adjunta el protocolo firmado.", true, "modal:attend")}`,
+        `${notice("Corrección del expediente", "Describe el ajuste realizado. Al reenviar, el expediente regresa a la etapa institucional que lo devolvió.")}<div class="field"><label for="attend-doc">Evidencia de la corrección (PDF, DOCX)</label><input id="attend-doc" type="file" accept=".pdf,.docx"><span class="help">Opcional. Se adjunta al expediente.</span></div>${field("Detalle de la corrección", "", "textarea", "Describe el ajuste realizado y la evidencia que lo respalda.", true, "modal:attend")}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Reenviar expediente", "attend-confirm"),
         false,
@@ -9005,7 +9074,7 @@ async function handleAction(action, el) {
     case "report":
       modal(
         "Informe de seguimiento",
-        `${field("Tipo", ["Informe semestral", "Informe anual", "Informe final"], "select", "", true, "modal:reporttype")}<div class="field"><label for="report-doc">Informe de resultados (PDF, DOCX)</label><input id="report-doc" type="file" accept=".pdf,.docx"><span class="help">Opcional. Se adjunta al expediente.</span></div>${field("Detalle del informe", "", "textarea", "Ejemplo: se ejecutaron las actividades del primer semestre y se cumplieron los productos previstos.", true, "modal:reportdetail")}<p>El cierre del proyecto requiere el informe final y la certificación de Dirección de Investigación.</p>`,
+        `${field("Tipo", ["Informe semestral", "Informe anual", "Informe final"], "select", "", true, "modal:reporttype")}<div class="field"><label for="report-doc">Informe de resultados (PDF, DOCX)</label><input id="report-doc" type="file" accept=".pdf,.docx"><span class="help">Opcional. Se adjunta al expediente.</span></div>${field("Detalle del informe", "", "textarea", "Indica los avances del período y los productos entregados.", true, "modal:reportdetail")}<p>El cierre del proyecto requiere el informe final y la certificación de Dirección de Investigación.</p>`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Registrar informe", "report-save"),
       );
@@ -9045,7 +9114,7 @@ async function handleAction(action, el) {
         state.viewProposalId = Number(el.dataset.proposalId) || state.viewProposalId;
       modal(
         "Cerrar proyecto",
-        `${notice("Cierre administrativo", "El cierre es terminal: el expediente queda en «Cerrada» y se conserva para consulta.")}<div class="field"><label for="close-doc">Informe final (PDF, DOCX)</label><input id="close-doc" type="file" accept=".pdf,.docx"><span class="help">Obligatorio. Es el soporte documental del cierre.</span></div>${field("Fundamento del cierre", "", "textarea", "Ejemplo: se cumplen los productos comprometidos y se entrega el informe final.", true, "modal:close")}`,
+        `${notice("Cierre administrativo", "El cierre es terminal: el expediente queda en «Cerrada» y se conserva para consulta.")}<div class="field"><label for="close-doc">Informe final (PDF, DOCX)</label><input id="close-doc" type="file" accept=".pdf,.docx"><span class="help">Obligatorio. Es el soporte documental del cierre.</span></div>${field("Fundamento del cierre", "", "textarea", "Explica el cumplimiento de los productos comprometidos y la entrega del informe final.", true, "modal:close")}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn("Cerrar expediente", "close-confirm"),
         false,
@@ -9085,7 +9154,7 @@ async function handleAction(action, el) {
     case "return":
       modal(
         "Devolver con observaciones",
-        `${field("Observaciones para el investigador", "Completar la justificación del riesgo de campo y vincular la medida con el responsable.", "textarea", "Explica el ajuste requerido y la evidencia esperada.", true, "modal:return")}${notice("La devolución permite corregir", "Se conserva la versión revisada y las observaciones. No equivale a una resolución negativa definitiva.")}`,
+        `${field("Observaciones para el investigador", "", "textarea", "Explica el ajuste requerido y la evidencia esperada.", true, "modal:return")}${notice("La devolución permite corregir", "Se conserva la versión revisada y las observaciones. No equivale a una resolución negativa definitiva.")}`,
         act("Cancelar", "close", "secondary") +
           confirmBtn(
             "Registrar devolución",
