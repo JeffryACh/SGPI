@@ -1071,10 +1071,11 @@ function renderizarPanelReferenciaIA(idPantalla) {
  * =====================================================================
  */
 
-// ---- Constantes configurables de las sugerencias IA (placeholder) ----
-const AI_FOCUS_DELAY_MS = 250; // espera tras enfocar un campo vacío antes de pedir la sugerencia
+// ---- Constantes configurables del autocompletado IA (texto fantasma) ----
+const AI_AUTOCOMPLETE_DELAY_MS = 700; // espera tras la última pulsación antes de pedir la continuación
+const AI_AUTOCOMPLETE_MIN_CHARS = 15; // mínimo de caracteres escritos para pedir una continuación
 const AI_CONTEXT_MAX_CHARS = 300; // máx. de caracteres de cada dato de contexto que se envía a la IA
-const AI_CACHE_TTL_MS = 5 * 60 * 1000; // cuánto se reutiliza una sugerencia con el mismo contexto
+const AI_CACHE_TTL_MS = 5 * 60 * 1000; // cuánto se reutiliza una continuación con el mismo contexto y texto
 
 // Campos con IA. Cada id tiene su propio prompt en el backend (ia.py: CAMPOS_IA).
 const AI_SUGERENCIAS_CONFIG = Object.fromEntries(
@@ -1140,11 +1141,11 @@ const AI_CONTEXTO_KEYS = {
   metodologia_analisis: "12:Análisis de resultados",
 };
 
-// Envuelve el campo con el marcador de IA y una línea de ayuda ("Tab para aceptar")
+// Envuelve el campo con el marcador de IA, el overlay de texto fantasma y la línea de ayuda
 function aiEnvolverCampo(html, key, kind) {
   const campo = AI_CAMPO_POR_KEY[key];
   if (!campo || !["text", "textarea"].includes(kind)) return html;
-  return `<div class="field-wrapper" data-ai-campo="${campo}">${html}<div class="ai-hint" hidden></div></div>`;
+  return `<div class="field-wrapper" data-ai-campo="${campo}">${html}<div class="ai-ghost" hidden aria-hidden="true"></div><div class="ai-hint" hidden></div></div>`;
 }
 
 // Cache en memoria para evitar llamadas repetidas
@@ -1165,9 +1166,9 @@ function obtenerContextoIA(campoActual) {
   return ctx;
 }
 
-// Clave de cache: campo + contexto (si el contexto cambia, se pide otra sugerencia)
-function generarCacheKey(campo, ctx) {
-  const str = `${campo}|${JSON.stringify(ctx)}`;
+// Clave de cache: campo + contexto + texto parcial (si cambia alguno, se pide otra continuación)
+function generarCacheKey(campo, ctx, textoParcial = "") {
+  const str = `${campo}|${JSON.stringify(ctx)}|${textoParcial}`;
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     hash = (hash << 5) - hash + str.charCodeAt(i);
@@ -1176,18 +1177,19 @@ function generarCacheKey(campo, ctx) {
   return `${campo}_${hash}`;
 }
 
-// Pide UNA sugerencia (string) para el campo. Devuelve null si no hay.
-async function fetchAISugerencias(campo, signal) {
+// Pide UNA continuación (string) para el campo, a partir de lo que el usuario ya escribió.
+// Devuelve null si no hay.
+async function fetchAIContinuacion(campo, textoParcial, signal) {
   if (!AI_SUGERENCIAS_CONFIG[campo]) return null;
   const ctx = obtenerContextoIA(campo);
-  const cacheKey = generarCacheKey(campo, ctx);
+  const cacheKey = generarCacheKey(campo, ctx, textoParcial);
   if (aiSugerenciasCache.has(cacheKey)) return aiSugerenciasCache.get(cacheKey);
 
   try {
     const resp = await fetch(`${API_URL}/ia/sugerencias`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ campo, contexto: ctx, texto_parcial: "" }),
+      body: JSON.stringify({ campo, contexto: ctx, texto_parcial: textoParcial }),
       signal,
     });
     if (!resp.ok) {
@@ -1203,21 +1205,26 @@ async function fetchAISugerencias(campo, signal) {
     return texto;
   } catch (e) {
     if (e.name === "AbortError") return null; // cancelada a propósito, no es un fallo
-    console.warn("AI sugerencias error:", e);
+    console.warn("AI continuación error:", e);
     registrarFallbackIA(campo);
     return null;
   }
 }
 
 /* ---------------------------------------------------------------------
-   UI: la sugerencia se muestra como PLACEHOLDER del campo vacío.
-   Tab la acepta. Listeners globales (delegación), registrados UNA sola vez.
+   UI: la continuación se muestra como TEXTO FANTASMA dentro del campo
+   (misma tipografía, color atenuado). Tab la acepta; Esc la descarta.
+   Listeners globales (delegación), registrados UNA sola vez.
    --------------------------------------------------------------------- */
-const AI_HINT_TEXTO = "Sugerencia de IA · Tab para aceptar";
-const aiUI = { timer: null, abort: null, wrapper: null };
+const AI_HINT_TEXTO = "Continuación de IA · Tab para aceptar · Esc para descartar";
+const aiUI = { timer: null, abort: null, aceptado: false };
 
 function aiWrapperDe(el) {
   return el?.closest?.(".field-wrapper[data-ai-campo]") || null;
+}
+
+function aiOverlayDe(wrapper) {
+  return wrapper?.querySelector(".ai-ghost") || null;
 }
 
 function aiHint(wrapper, texto) {
@@ -1227,72 +1234,177 @@ function aiHint(wrapper, texto) {
   h.hidden = !texto;
 }
 
-async function pedirAISugerencia(wrapper, input) {
-  const campo = wrapper.dataset.aiCampo;
-  if (input.value.trim() || !aiAssistConfig.enabled || debeUsarFallback(campo)) {
-    aiHint(wrapper, input.value.trim() ? "" : aiHintActual(input));
-    return;
-  }
-  if (aiUI.abort) aiUI.abort.abort();
-  const ctrl = new AbortController();
-  aiUI.abort = ctrl;
-  aiHint(wrapper, "Generando sugerencia…");
-  const texto = await fetchAISugerencias(campo, ctrl.signal);
-  if (ctrl !== aiUI.abort || aiUI.wrapper !== wrapper) return; // respuesta obsoleta
-  if (input.value.trim()) return aiHint(wrapper, ""); // el usuario ya escribió
-  if (!texto) return aiHint(wrapper, aiHintActual(input));
-  input.placeholder = texto;
+// Alinea el overlay con el control real: misma posición, tamaño, tipografía y box model
+function aiAlinearOverlay(wrapper, input) {
+  const overlay = aiOverlayDe(wrapper);
+  if (!overlay || !wrapper || !input) return;
+  const cs = getComputedStyle(input);
+  const wRect = wrapper.getBoundingClientRect();
+  const iRect = input.getBoundingClientRect();
+  overlay.style.left = `${iRect.left - wRect.left}px`;
+  overlay.style.top = `${iRect.top - wRect.top}px`;
+  overlay.style.width = `${iRect.width}px`;
+  overlay.style.height = `${iRect.height}px`;
+  overlay.style.fontFamily = cs.fontFamily;
+  overlay.style.fontSize = cs.fontSize;
+  overlay.style.fontWeight = cs.fontWeight;
+  overlay.style.fontStyle = cs.fontStyle;
+  overlay.style.lineHeight = cs.lineHeight;
+  overlay.style.letterSpacing = cs.letterSpacing;
+  overlay.style.padding = cs.padding;
+  overlay.style.borderStyle = cs.borderStyle;
+  overlay.style.borderWidth = cs.borderWidth;
+  overlay.style.borderColor = "transparent";
+  overlay.style.boxSizing = "border-box";
+  overlay.style.textAlign = cs.textAlign;
+  overlay.style.textIndent = cs.textIndent;
+  overlay.style.textTransform = cs.textTransform;
+  overlay.style.whiteSpace = cs.whiteSpace;
+  overlay.style.overflowWrap = cs.overflowWrap;
+  overlay.style.wordBreak = cs.wordBreak;
+}
+
+// Normaliza la separación entre lo escrito y la continuación (un solo espacio, y ninguno
+// antes de un signo de puntuación)
+function aiContinuacionAjustada(input, continuacion) {
+  const texto = String(continuacion || "").trim();
+  if (!texto) return "";
+  const sinEspacioFinal = !/\s$/.test(input.value);
+  const empiezaEnPuntuacion = /^[,.;:!?¡¿)\]}»“"]/.test(texto);
+  if (sinEspacioFinal && !empiezaEnPuntuacion) return ` ${texto}`;
+  return texto;
+}
+
+// Dibuja el texto fantasma: lo ya escrito queda transparente y la continuación en gris
+function aiPintarFantasma(wrapper, input, continuacion) {
+  const overlay = aiOverlayDe(wrapper);
+  if (!overlay) return;
+  const texto = aiContinuacionAjustada(input, continuacion);
+  aiAlinearOverlay(wrapper, input);
+  overlay.innerHTML = `<span class="ai-ghost-pre">${esc(input.value)}</span><span class="ai-ghost-tex">${esc(texto)}</span>`;
+  overlay.hidden = false;
+  overlay.scrollLeft = input.scrollLeft;
+  overlay.scrollTop = input.scrollTop;
   input.dataset.aiSug = texto;
   aiHint(wrapper, AI_HINT_TEXTO);
 }
 
-function aiHintActual(input) {
-  return input.dataset.aiSug && !input.value ? AI_HINT_TEXTO : "";
+function aiLimpiarFantasma(wrapper, input) {
+  const overlay = aiOverlayDe(wrapper);
+  if (overlay) {
+    overlay.hidden = true;
+    overlay.innerHTML = "";
+  }
+  if (input) delete input.dataset.aiSug;
+  aiHint(wrapper, "");
 }
 
-document.addEventListener("focusin", (e) => {
-  const wrapper = aiWrapperDe(e.target);
-  if (!wrapper || !e.target.matches("[data-field]")) return;
-  aiUI.wrapper = wrapper;
+// El overlay se desplaza junto con el texto del control
+function aiSincronizarOverlay(input) {
+  const wrapper = aiWrapperDe(input);
+  const overlay = aiOverlayDe(wrapper);
+  if (!overlay || overlay.hidden) return;
+  overlay.scrollLeft = input.scrollLeft;
+  overlay.scrollTop = input.scrollTop;
+}
+
+// Pide la continuación de lo que el usuario ya escribió (con anti-rebote)
+async function pedirContinuacionIA(wrapper, input) {
+  const campo = wrapper.dataset.aiCampo;
+  const texto = input.value.trim();
+  if (!texto || texto.length < AI_AUTOCOMPLETE_MIN_CHARS) return;
+  if (!aiAssistConfig.enabled || debeUsarFallback(campo)) return;
+
+  if (aiUI.abort) aiUI.abort.abort();
+  const ctrl = new AbortController();
+  aiUI.abort = ctrl;
+  const continuacion = await fetchAIContinuacion(campo, texto, ctrl.signal);
+  if (ctrl !== aiUI.abort) return; // respuesta obsoleta
+  if (document.activeElement !== input) return; // el usuario ya salió del campo
+  if (input.value.trim() !== texto) return; // el usuario siguió escribiendo
+  if (!continuacion) return;
+  aiPintarFantasma(wrapper, input, continuacion);
+}
+
+// Al escribir se limpia la fantasma anterior y se agenda una petición nueva
+document.addEventListener("input", (e) => {
+  if (aiUI.aceptado) {
+    aiUI.aceptado = false; // el input sintético de la aceptación no pide otra continuación
+    clearTimeout(aiUI.timer);
+    return;
+  }
+  const input = e.target;
+  const wrapper = aiWrapperDe(input);
+  if (!wrapper || !input.matches?.("[data-field]")) return;
+  aiLimpiarFantasma(wrapper, input);
   clearTimeout(aiUI.timer);
-  aiUI.timer = setTimeout(() => pedirAISugerencia(wrapper, e.target), AI_FOCUS_DELAY_MS);
+  if (!aiAssistConfig.enabled) return;
+  if (input.value.trim().length < AI_AUTOCOMPLETE_MIN_CHARS) return;
+  aiUI.timer = setTimeout(() => pedirContinuacionIA(wrapper, input), AI_AUTOCOMPLETE_DELAY_MS);
 });
 
+// Tab acepta la continuación (el foco se queda en el campo); Esc la descarta
+document.addEventListener(
+  "keydown",
+  (e) => {
+    const input = e.target;
+    const wrapper = aiWrapperDe(input);
+    if (!wrapper || !input.matches?.("[data-field]")) return;
+
+    if (e.key === "Escape") {
+      if (!input.dataset.aiSug) return;
+      aiLimpiarFantasma(wrapper, input);
+      e.preventDefault();
+      return;
+    }
+
+    if (e.key !== "Tab" || e.shiftKey) return;
+    const sugerencia = input.dataset.aiSug;
+    if (!sugerencia) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const completo = input.value + sugerencia;
+    const textoFinal = input.maxLength > 0 ? completo.slice(0, input.maxLength) : completo;
+    aiLimpiarFantasma(wrapper, input);
+    aiUI.aceptado = true; // evita pedir una continuación nueva por el input sintético
+    input.value = textoFinal;
+    input.dispatchEvent(new Event("input", { bubbles: true })); // el listener global guarda en state.saved
+    registrarAceptacionSugerencia(wrapper.dataset.aiCampo, textoFinal, "tab");
+  },
+  true,
+);
+
+// Al salir del campo se cancela la petición pendiente y se borra la fantasma
 document.addEventListener("focusout", (e) => {
   const wrapper = aiWrapperDe(e.target);
   if (!wrapper) return;
   clearTimeout(aiUI.timer);
   if (aiUI.abort) aiUI.abort.abort();
-  aiHint(wrapper, "");
+  aiLimpiarFantasma(wrapper, e.target);
 });
 
-// Si el usuario escribe, se oculta la ayuda; si vacía el campo, vuelve
-document.addEventListener("input", (e) => {
-  const wrapper = aiWrapperDe(e.target);
-  if (!wrapper || !e.target.matches("[data-field]")) return;
-  aiHint(wrapper, aiHintActual(e.target));
-});
-
-// Tab con el campo vacío = aceptar la sugerencia (fase de captura)
+// El overlay sigue el desplazamiento del texto dentro del control
 document.addEventListener(
-  "keydown",
+  "scroll",
   (e) => {
-    if (e.key !== "Tab" || e.shiftKey) return;
     const input = e.target;
-    const wrapper = aiWrapperDe(input);
-    if (!wrapper || !input.matches?.("[data-field]") || input.value || !input.dataset.aiSug) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const s = input.dataset.aiSug;
-    input.value = input.maxLength > 0 ? s.slice(0, input.maxLength) : s;
-    input.dispatchEvent(new Event("input", { bubbles: true })); // el listener global guarda en state.saved
-    registrarAceptacionSugerencia(wrapper.dataset.aiCampo, s, "tab");
+    if (input?.matches?.("[data-field]")) aiSincronizarOverlay(input);
   },
   true,
 );
 
+// Si cambia el tamaño de la ventana, se re-alinean los overlays visibles
+window.addEventListener("resize", () => {
+  document.querySelectorAll(".field-wrapper[data-ai-campo]").forEach((wrapper) => {
+    const input = wrapper.querySelector("[data-field]");
+    const overlay = aiOverlayDe(wrapper);
+    if (!input || !overlay || overlay.hidden) return;
+    aiAlinearOverlay(wrapper, input);
+  });
+});
+
 /**
- * Wrapper de field() con sugerencia IA. Sirve para los formularios especiales
+ * Wrapper de field() con autocompletado IA. Sirve para los formularios especiales
  * (modales, presupuesto, ética): no se duplica field().
  */
 function fieldConIA(
@@ -1309,7 +1421,7 @@ function fieldConIA(
   const html = field(label, value, kind, help, required, key, placeholder, defaultValue);
   const config = campoIA && AI_SUGERENCIAS_CONFIG[campoIA];
   if (!config || !["text", "textarea"].includes(kind)) return html;
-  return `<div class="field-wrapper" data-ai-campo="${config.campo}">${html}<div class="ai-hint" hidden></div></div>`;
+  return `<div class="field-wrapper" data-ai-campo="${config.campo}">${html}<div class="ai-ghost" hidden aria-hidden="true"></div><div class="ai-hint" hidden></div></div>`;
 }
 function fieldConIAEspecial(...args) {
   return fieldConIA(...args);

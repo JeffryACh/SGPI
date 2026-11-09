@@ -660,7 +660,7 @@
       font-style: italic;
     }
 
-    /* Sugerencias IA en campos de formulario */
+    /* Autocompletado IA en campos de formulario */
     .field-wrapper {
       position: relative;
     }
@@ -670,6 +670,26 @@
       margin-top: 4px;
     }
     .ai-hint[hidden] {
+      display: none;
+    }
+    /* Texto fantasma: se dibuja encima del control, con la misma tipografía */
+    .ai-ghost {
+      position: absolute;
+      z-index: 2;
+      pointer-events: none;
+      overflow: hidden;
+      color: var(--muted);
+      opacity: .85;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+    }
+    .ai-ghost-pre {
+      color: transparent;
+    }
+    .ai-ghost-tex {
+      font-style: italic;
+    }
+    .ai-ghost[hidden] {
       display: none;
     }
 
