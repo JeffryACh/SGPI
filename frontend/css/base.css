@@ -1334,6 +1334,16 @@
       padding: 24px
     }
 
+    /* Ventana de aviso superpuesta al modal vigente (errores del alta de investigadores). */
+    .modal-backdrop-alerta {
+      z-index: 60;
+      background: rgba(0, 40, 85, .58)
+    }
+
+    .modal-alerta {
+      width: min(480px, 100%)
+    }
+
     .modal {
       background: white;
       border-radius: 14px;

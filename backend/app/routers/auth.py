@@ -486,17 +486,17 @@ class UsuarioCrearIn(BaseModel):
     Se utiliza como parámetro en el endpoint POST /auth/usuarios.
 
     atributos:
-        * str : nombre Nombre de pila de la persona investigadora.
-        * str : lastname Primer apellido de la persona investigadora.
-        * str : second_lastname Segundo apellido (opcional, se guarda vacío si no se envía).
+        * str : nombre Nombre de pila de la persona investigadora (máximo 15 caracteres).
+        * str : lastname Primer apellido de la persona investigadora (máximo 15 caracteres).
+        * str : second_lastname Segundo apellido (opcional, máximo 15 caracteres, se guarda vacío si no se envía).
         * str : correo Correo institucional; su dominio debe estar en 'DOMINIOS_CORREO_PERMITIDOS'.
         * Optional[int] : id_escuela Escuela o instancia a la que se vincula la persona.
         * str : orcid Identificador ORCID en formato 0000-0000-0000-000X.
     """
 
-    nombre: str = Field(..., min_length=1, max_length=120)
-    lastname: str = Field(..., min_length=1, max_length=120)
-    second_lastname: str = Field(default="", max_length=120)
+    nombre: str = Field(..., min_length=1, max_length=15)
+    lastname: str = Field(..., min_length=1, max_length=15)
+    second_lastname: str = Field(default="", max_length=15)
     correo: str = Field(..., min_length=5, max_length=255)
     id_escuela: Optional[int] = None
     orcid: str = Field(..., min_length=19, max_length=19)

@@ -2926,6 +2926,8 @@ async function refrescarCatalogosFront() {
  */
 function obtenerLimiteCaracteres(label = "", key = "", kind = "text") {
   if (kind === "select" || kind === "checkbox" || kind === "file" || kind === "date" || kind === "number") return null;
+  // [Línea clave]: Por qué soy importante? Limita la longitud de los nombres del alta de investigadores. Para qué? Mantener los registros del directorio institucional dentro del formato de 15 caracteres por nombre y apellido. Dónde me usan? En field() y adminField().
+  if (/^modal:new-user-(nombre|apellidos|segundo-apellido)$/.test(key)) return 15;
   // [Línea clave]: Por qué soy importante? Asigna topes de longitud alineados con las restricciones documentales de Docs Proyecto y el esquema de base de datos. Para qué? Proteger contra desbordamientos de datos y asegurar consistencia con los formularios oficiales VIE 2027. Dónde me usan? En field() y adminField().
   const ref = `${label} ${key}`.toLowerCase();
 
@@ -7784,6 +7786,49 @@ function modal(title, body, actions = "", wide = false, name = "dialog") {
 }
 
 /**
+ * Mostrar un aviso de error como ventana emergente encima del modal vigente.
+ * Se usa en lugar del recuadro de error embebido porque ese queda fuera de la vista
+ * cuando el formulario es largo y la persona está al final de la pantalla.
+ * La ventana conserva debajo el formulario que la originó, de modo que no se pierde
+ * lo que ya se escribió; el botón «Aceptar» la cierra y devuelve el foco al formulario.
+ * parametros:
+ *     - string : titulo Encabezado del aviso.
+ *     - string : mensaje Detalle del error que se muestra en el cuerpo de la ventana.
+ * return:
+ *     + void : undefined Inserta la ventana de aviso en el DOM.
+ */
+function modalAviso(titulo, mensaje) {
+  const root = $("#modal-root");
+  if (!root) return;
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop modal-backdrop-alerta";
+  backdrop.dataset.modalBackdrop = "aviso-error";
+  backdrop.innerHTML = `<section class="modal modal-alerta" role="alertdialog" aria-modal="true" aria-labelledby="modal-alerta-title" data-modal="aviso-error"><header class="modal-head"><h2 id="modal-alerta-title">${esc(titulo)}</h2></header>${notice(mensaje, "Revisa los datos del formulario e inténtalo de nuevo.", "warning")}<div class="actions">${confirmBtn("Aceptar", "cerrar-aviso")}</div></section>`;
+  root.appendChild(backdrop);
+  backdrop.querySelector('[data-action="cerrar-aviso"]')?.focus();
+}
+
+/**
+ * Extraer un mensaje legible del detalle de error devuelto por la API.
+ * Normaliza las dos formas que devuelve FastAPI: texto simple ('detail') y la lista
+ * estructurada de errores de validación de Pydantic (código 422).
+ * parametros:
+ *     - Object : data Cuerpo JSON de la respuesta de la API.
+ * return:
+ *     + string : mensaje Texto legible del error o cadena vacía si no hay detalle.
+ */
+function detalleErrorApi(data) {
+  const detalle = data?.detail;
+  if (Array.isArray(detalle)) {
+    return detalle
+      .map((d) => (typeof d === "string" ? d : d?.msg || ""))
+      .filter(Boolean)
+      .join(" · ");
+  }
+  return typeof detalle === "string" ? detalle : "";
+}
+
+/**
  * Preguntar al investigador si desea dar de alta a una persona que no aparece en el directorio.
  * Reemplaza los mensajes de «usuario no encontrado» y «seleccione un investigador de la lista»
  * por una ventana de confirmación con respuesta Sí/No. Si responde No, el flujo se cierra sin más.
@@ -7803,7 +7848,7 @@ function abrirConfirmacionNuevoInvestigador(nombreSugerido = "") {
     `${notice(
       titulo,
       "Si la persona todavía no tiene cuenta, puedes registrarla con su nombre, correo institucional, escuela y ORCID.",
-    )}<div id="new-user-feedback" class="mt"></div>`,
+    )}`,
     act("No, cancelar", "close", "secondary") +
       confirmBtn("Sí, agregarlo", "team-add-user"),
     false,
@@ -7996,6 +8041,11 @@ async function handleAction(action, el) {
       break;
     case "close":
       closeModal();
+      break;
+    case "cerrar-aviso":
+      // [Línea clave]: Cierra solo la ventana de aviso y devuelve el foco al modal que la originó.
+      document.querySelector('[data-modal-backdrop="aviso-error"]')?.remove();
+      $("#modal-root .modal .btn")?.focus();
       break;
     case "roles":
       userMenuOpen = false;
@@ -8526,11 +8576,9 @@ async function handleAction(action, el) {
         draftValue("08:Instancia coordinadora", escuelas?.[0]?.id || 1),
         escuelas ?? [],
       );
-      // Prellena el campo de nombre o de correo según lo que la persona haya buscado.
-      const sugerido = pendingNuevoInvestigador;
-      const esCorreo = /@/.test(sugerido);
-      const nombreSugerido = esCorreo ? "" : sugerido;
-      const correoSugerido = esCorreo ? sugerido : "";
+      // [Línea clave]: El formulario de alta abre siempre vacío. Por qué? El texto buscado en el buscador
+      //                puede ser una errata y arrastrarlo al formulario llenaría la pantalla con datos equivocados.
+      //                Dónde me usan? Al confirmar el diálogo «¿Desea agregar al investigador?».
       // Limpia el borrador de los campos del alta para que el formulario abra siempre limpio.
       delete state.saved["modal:new-user-nombre"];
       delete state.saved["modal:new-user-apellidos"];
@@ -8553,30 +8601,30 @@ async function handleAction(action, el) {
 
       modal(
         "Agregar investigador al directorio",
-        `<div id="new-user-feedback" class="mb"></div>${field(
+        `${field(
           "Nombre",
-          nombreSugerido,
+          "",
           "text",
-          "Nombre de pila de la persona investigadora.",
+          "Nombre de pila de la persona investigadora (máximo 15 caracteres).",
           true,
           "modal:new-user-nombre",
         )}${field(
           "Apellidos",
           "",
           "text",
-          "Primer apellido de la persona investigadora.",
+          "Primer apellido de la persona investigadora (máximo 15 caracteres).",
           true,
           "modal:new-user-apellidos",
         )}${field(
           "Segundo apellido",
           "",
           "text",
-          "Opcional.",
+          "Opcional (máximo 15 caracteres).",
           false,
           "modal:new-user-segundo-apellido",
         )}${field(
           "Correo institucional",
-          correoSugerido,
+          "",
           "email",
           "Correo con el que la persona ingresará al SGPI.",
           true,
@@ -8616,105 +8664,114 @@ async function handleAction(action, el) {
       const tipo = $('[data-field="modal:hour-type"]')?.value || "VIE";
       const horas = Math.min(40, Math.max(1, Number($('[data-field="modal:hours"]')?.value) || 4));
       const responsabilidad = $('[data-field="modal:responsibility"]')?.value?.trim() || "";
-      const mostrarError = (mensaje) => {
-        const caja = $("#new-user-feedback");
-        if (caja) caja.innerHTML = notice("No se pudo registrar al investigador", mensaje, "warning");
-      };
+      // [Línea clave]: Por qué soy importante? Los errores se muestran en una ventana emergente. Para qué? Evitar
+      //                que el mensaje quede fuera de la vista en un formulario largo. Dónde me usan? En el alta de investigadores.
+      const mostrarError = (mensaje) => modalAviso("No se pudo registrar al investigador", mensaje);
 
-      if (!nombre || !lastname || !correo) {
-        mostrarError("Completa el nombre, los apellidos y el correo institucional.");
-        break;
-      }
-      if ([nombre, lastname, secondLastname, correo, responsabilidad].some(contieneInyeccionSQL)) {
-        mostrarError("Entrada bloqueada: se detectaron patrones de inyección SQL.");
-        break;
-      }
-      if (!esOrcidValido(orcid)) {
-        mostrarError("El ORCID ingresado no es válido según el estándar oficial ISO 7064 (0000-0000-0000-000X).");
-        break;
-      }
-      const ocupados = obtenerOrcidsOcupados(correo, nombre);
-      if (ocupados.has(orcid)) {
-        mostrarError(`El ORCID ${orcid} ya está asignado a otra persona. Cada ORCID debe ser único.`);
-        break;
-      }
+      // [Línea clave]: El botón se bloquea con un spinner mientras corre la petición. Para qué? Mostrar que la
+      //                solicitud se está procesando y evitar dobles envíos por condiciones de carrera.
+      await conCarga(
+        el,
+        async () => {
+          if (!nombre || !lastname || !correo) {
+            mostrarError("Completa el nombre, los apellidos y el correo institucional.");
+            return;
+          }
+          if ([nombre, lastname, secondLastname, correo, responsabilidad].some(contieneInyeccionSQL)) {
+            mostrarError("Entrada bloqueada: se detectaron patrones de inyección SQL.");
+            return;
+          }
+          if (!esOrcidValido(orcid)) {
+            mostrarError("El ORCID ingresado no es válido según el estándar oficial ISO 7064 (0000-0000-0000-000X).");
+            return;
+          }
+          const ocupados = obtenerOrcidsOcupados(correo, nombre);
+          if (ocupados.has(orcid)) {
+            mostrarError(`El ORCID ${orcid} ya está asignado a otra persona. Cada ORCID debe ser único.`);
+            return;
+          }
 
-      let creado = null;
-      try {
-        const resp = await fetch(`${API_URL}/auth/usuarios`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            nombre,
-            lastname,
-            second_lastname: secondLastname,
-            correo,
-            id_escuela: escuelaValor ? Number(escuelaValor) : null,
+          let creado = null;
+          try {
+            const resp = await fetch(`${API_URL}/auth/usuarios`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                nombre,
+                lastname,
+                second_lastname: secondLastname,
+                correo,
+                id_escuela: escuelaValor ? Number(escuelaValor) : null,
+                orcid,
+              }),
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+              mostrarError(
+                detalleErrorApi(data) || "No fue posible crear la cuenta en el directorio institucional.",
+              );
+              return;
+            }
+            creado = data;
+          } catch (e) {
+            console.error("Alta de investigador:", e);
+            mostrarError("No hay conexión con el servidor para registrar al investigador.");
+            return;
+          }
+
+          // [Línea clave]: Registra el ORCID en el perfil local y conserva la persona como seleccionado.
+          registrarOrcidEnPerfil(correo, creado.nombre || `${nombre} ${lastname}`, orcid);
+          state.selectedTeamUser = {
+            id_usuario: Number(creado.id_usuario),
+            nombre: creado.nombre || `${nombre} ${lastname}`,
+            correo: creado.correo || correo,
+            orcid: creado.orcid || orcid,
+            escuela: creado.escuela || "",
+            siglas_escuela: creado.siglas_escuela || "",
+          };
+
+          // [Línea clave]: Suma al equipo con el mismo control de duplicados que usa el guardado normal.
+          const equipoActual = proposalTeamMembers();
+          const yaExiste = equipoActual.some(
+            (m) =>
+              m.id_usuario === state.selectedTeamUser.id_usuario ||
+              String(m.correo).toLowerCase() === String(state.selectedTeamUser.correo).toLowerCase(),
+          );
+          if (yaExiste) {
+            mostrarError("Este investigador ya forma parte del equipo.");
+            return;
+          }
+          registrarOrcidEnPerfil(correo, state.selectedTeamUser.nombre, orcid);
+          state.teamMembers = equipoActual.concat({
+            id_usuario: state.selectedTeamUser.id_usuario,
+            nombre: state.selectedTeamUser.nombre,
+            correo: state.selectedTeamUser.correo,
+            escuela: state.selectedTeamUser.escuela,
+            siglas_escuela: state.selectedTeamUser.siglas_escuela,
+            rol,
+            horas,
             orcid,
-          }),
-        });
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-          mostrarError(data?.detail || "No fue posible crear la cuenta en el directorio institucional.");
-          break;
-        }
-        creado = data;
-      } catch (e) {
-        console.error("Alta de investigador:", e);
-        mostrarError("No hay conexión con el servidor para registrar al investigador.");
-        break;
-      }
-
-      // [Línea clave]: Registra el ORCID en el perfil local y conserva la persona como seleccionado.
-      registrarOrcidEnPerfil(correo, creado.nombre || `${nombre} ${lastname}`, orcid);
-      state.selectedTeamUser = {
-        id_usuario: Number(creado.id_usuario),
-        nombre: creado.nombre || `${nombre} ${lastname}`,
-        correo: creado.correo || correo,
-        orcid: creado.orcid || orcid,
-        escuela: creado.escuela || "",
-        siglas_escuela: creado.siglas_escuela || "",
-      };
-
-      // [Línea clave]: Suma al equipo con el mismo control de duplicados que usa el guardado normal.
-      const equipoActual = proposalTeamMembers();
-      const yaExiste = equipoActual.some(
-        (m) =>
-          m.id_usuario === state.selectedTeamUser.id_usuario ||
-          String(m.correo).toLowerCase() === String(state.selectedTeamUser.correo).toLowerCase(),
-      );
-      if (yaExiste) {
-        mostrarError("Este investigador ya forma parte del equipo.");
-        break;
-      }
-      registrarOrcidEnPerfil(correo, state.selectedTeamUser.nombre, orcid);
-      state.teamMembers = equipoActual.concat({
-        id_usuario: state.selectedTeamUser.id_usuario,
-        nombre: state.selectedTeamUser.nombre,
-        correo: state.selectedTeamUser.correo,
-        escuela: state.selectedTeamUser.escuela,
-        siglas_escuela: state.selectedTeamUser.siglas_escuela,
-        rol,
-        horas,
-        orcid,
-        responsabilidad,
-        tipo,
-      });
-      delete state.saved["modal:new-user-nombre"];
-      delete state.saved["modal:new-user-apellidos"];
-      delete state.saved["modal:new-user-segundo-apellido"];
-      delete state.saved["modal:new-user-correo"];
-      delete state.saved["modal:new-user-escuela"];
-      delete state.saved["modal:new-user-orcid"];
-      state.selectedTeamUser = null;
-      pendingNuevoInvestigador = "";
-      save();
-      closeModal();
-      render();
-      toast(
-        creado.password_temporal
-          ? `Investigador registrado. Contraseña inicial: ${creado.password_temporal}`
-          : "Investigador registrado en el directorio y agregado al equipo.",
+            responsabilidad,
+            tipo,
+          });
+          delete state.saved["modal:new-user-nombre"];
+          delete state.saved["modal:new-user-apellidos"];
+          delete state.saved["modal:new-user-segundo-apellido"];
+          delete state.saved["modal:new-user-correo"];
+          delete state.saved["modal:new-user-escuela"];
+          delete state.saved["modal:new-user-orcid"];
+          state.selectedTeamUser = null;
+          pendingNuevoInvestigador = "";
+          save();
+          closeModal();
+          render();
+          toast(
+            creado.password_temporal
+              ? `Investigador registrado. Contraseña inicial: ${creado.password_temporal}`
+              : "Investigador registrado en el directorio y agregado al equipo.",
+          );
+        },
+        { texto: "Registrando…" },
       );
       break;
     }
@@ -10637,11 +10694,24 @@ document.addEventListener("submit", (e) => {
 });
 // [Línea clave]: Por qué soy importante? Maneja accesibilidad WCAG y trampas de foco. Para qué? Cerrar modales con Escape y ciclar navegación con Tab dentro de diálogos modales. Dónde me usan? En el listener global keydown del documento.
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeModal();
+  if (e.key === "Escape") {
+    // [Línea clave]: Si hay una ventana de aviso abierta, Escape cierra solo esa ventana y conserva el formulario.
+    const alerta = document.querySelector('[data-modal-backdrop="aviso-error"]');
+    if (alerta) {
+      alerta.remove();
+      $("#modal-root .modal .btn")?.focus();
+      e.preventDefault();
+      return;
+    }
+    closeModal();
+  }
   if (e.key === "Tab" && modalName) {
+    // [Línea clave]: La trampa de foco actúa sobre la última ventana abierta (el aviso se superpone al formulario).
+    const ventana = $$("#modal-root .modal").at(-1);
+    if (!ventana) return;
     const f = $$(
       'button,input,select,textarea,[tabindex="0"]',
-      $(".modal"),
+      ventana,
     ).filter((x) => !x.disabled);
     if (!f.length) return;
     if (e.shiftKey && document.activeElement === f[0]) {

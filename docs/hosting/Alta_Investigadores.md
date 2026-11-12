@@ -140,9 +140,9 @@ Content-Type: application/json
 
 | Campo | Tipo | Obligatorio | Reglas |
 | :--- | :--- | :--- | :--- |
-| `nombre` | string | Sí | 1–120 caracteres, sin patrones de inyección SQL. |
-| `lastname` | string | Sí | 1–120 caracteres. |
-| `second_lastname` | string | No | 0–120 caracteres; vacío si no se envía. |
+| `nombre` | string | Sí | 1–15 caracteres, sin patrones de inyección SQL. |
+| `lastname` | string | Sí | 1–15 caracteres. |
+| `second_lastname` | string | No | 0–15 caracteres; vacío si no se envía. |
 | `correo` | string | Sí | Formato válido; el dominio debe estar en `DOMINIOS_CORREO_PERMITIDOS`; es único en el directorio. |
 | `id_escuela` | int | No | Debe existir en `public.escuelas`. |
 | `orcid` | string | Sí | 19 caracteres, formato `0000-0000-0000-000X`, válido bajo ISO 7064 MOD 11-2 y único en el directorio. |
@@ -174,6 +174,7 @@ Content-Type: application/json
 | :--- | :--- |
 | `400` | Dominio de correo no autorizado, formato de correo inválido, ORCID inválido, escuela inexistente o patrón de inyección SQL detectado. |
 | `409` | El correo ya está registrado en el directorio o el ORCID ya está asignado a otra persona. |
+| `422` | Algún campo no cumple el modelo de entrada (por ejemplo, nombre o apellido de más de 15 caracteres). |
 
 ### 5.4 Efectos en la base de datos
 
@@ -196,9 +197,12 @@ Content-Type: application/json
 | «Guardar participante» sin elegir a nadie y sin coincidencias | Abre el diálogo «¿Desea agregar al investigador?». |
 | «Guardar participante» sin elegir a nadie pero con coincidencias | Muestra el aviso «Selecciona un investigador de la lista de búsqueda»; no ofrece el alta porque la cuenta ya existe. |
 | «No, cancelar» | Cierra el diálogo; no se crea nada. |
-| «Sí, agregarlo» | Sustituye el diálogo por el formulario de alta. |
+| «Sí, agregarlo» | Sustituye el diálogo por el formulario de alta, **completamente vacío**: no arrastra el texto que se escribió en el buscador (puede ser una errata). |
 | «Registrar y agregar al equipo» | Valida en el navegador (campos obligatorios, ORCID, Injection SQL), llama `POST /auth/usuarios` y, si la creación es exitosa, agrega al miembro a `state.teamMembers`, cierra el modal y muestra el aviso. |
-| Error del backend | El mensaje se muestra dentro del modal (`#new-user-feedback`) con el detalle devuelto por la API; el formulario permanece abierto para corregir. |
+| Durante el envío | El botón se deshabilita, se muestra el círculo de carga (spinner) con el texto «Registrando…» y queda atenuado. Evita el doble envío y deja claro que la solicitud se está procesando. |
+| Error del backend | Se abre una **ventana de aviso superpuesta** al formulario con el detalle del error y un botón **«Aceptar»**. El formulario queda intacto detrás, con lo escrito, para corregir y reintentar. `Escape` también cierra solo esa ventana. |
+
+Los campos **Nombre**, **Apellidos** y **Segundo apellido** tienen un máximo de **15 caracteres** (contador visible en el campo). El límite se aplica en el navegador con `maxlength` y también en el servidor: `POST /auth/usuarios` responde `422` si se envía un nombre más largo.
 
 El frontend registra además el ORCID en el perfil local (`registrarOrcidEnPerfil`) para que los autocompletados posteriores de la aplicación lo reconozcan sin volver a consultar.
 
@@ -254,9 +258,11 @@ Comprobaciones:
 - [x] Buscar un nombre inexistente en el modal de equipo → solo aparece un aviso en línea, sin panel.
 - [x] «Guardar participante» → el diálogo «¿Desea agregar al investigador?» aparece.
 - [x] «No» → el modal se cierra.
-- [x] «Sí» → aparece el formulario de alta.
+- [x] «Sí» → aparece el formulario de alta **vacío** (no arrastra lo escrito en el buscador).
+- [x] Nombre, apellidos y segundo apellido con máximo 15 caracteres (navegador y servidor).
 - [x] Registrar → la persona aparece en la lista de integrantes de la Pantalla 09 con rol, tipo de hora, horas y responsabilidad.
-- [x] Los errores del backend se muestran dentro del modal.
+- [x] Durante el envío → botón deshabilitado, atenuado y con círculo de carga.
+- [x] Los errores se muestran en una ventana superpuesta con botón «Aceptar», sin perder lo escrito en el formulario.
 - [x] Ningún campo del formulario de alta dispara la IA.
 
 ---
