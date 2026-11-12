@@ -202,7 +202,7 @@ Content-Type: application/json
 | Durante el envío | El botón se deshabilita, se muestra el círculo de carga (spinner) con el texto «Registrando…» y queda atenuado. Evita el doble envío y deja claro que la solicitud se está procesando. |
 | Error del backend | Se abre una **ventana de aviso superpuesta** al formulario con el detalle del error y un botón **«Aceptar»**. El formulario queda intacto detrás, con lo escrito, para corregir y reintentar. `Escape` también cierra solo esa ventana. |
 
-Los campos **Nombre**, **Apellidos** y **Segundo apellido** tienen un máximo de **15 caracteres** (contador visible en el campo). El límite se aplica en el navegador con `maxlength` y también en el servidor: `POST /auth/usuarios` responde `422` si se envía un nombre más largo.
+Los campos **Nombre**, **Apellidos** y **Segundo apellido** tienen un máximo de **15 caracteres**, que se comunica con el contador de caracteres (`0/15 caracteres`) que aparece bajo cada campo. El límite se aplica en el navegador con `maxlength` y también en el servidor: `POST /auth/usuarios` responde `422` si se envía un nombre más largo.
 
 El frontend registra además el ORCID en el perfil local (`registrarOrcidEnPerfil`) para que los autocompletados posteriores de la aplicación lo reconozcan sin volver a consultar.
 
@@ -259,7 +259,7 @@ Comprobaciones:
 - [x] «Guardar participante» → el diálogo «¿Desea agregar al investigador?» aparece.
 - [x] «No» → el modal se cierra.
 - [x] «Sí» → aparece el formulario de alta **vacío** (no arrastra lo escrito en el buscador).
-- [x] Nombre, apellidos y segundo apellido con máximo 15 caracteres (navegador y servidor).
+- [x] Nombre, apellidos y segundo apellido con máximo 15 caracteres, mostrado en el contador de cada campo (navegador y servidor).
 - [x] Registrar → la persona aparece en la lista de integrantes de la Pantalla 09 con rol, tipo de hora, horas y responsabilidad.
 - [x] Durante el envío → botón deshabilitado, atenuado y con círculo de carga.
 - [x] Los errores se muestran en una ventana superpuesta con botón «Aceptar», sin perder lo escrito en el formulario.

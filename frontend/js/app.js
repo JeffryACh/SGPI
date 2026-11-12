@@ -2926,7 +2926,7 @@ async function refrescarCatalogosFront() {
  */
 function obtenerLimiteCaracteres(label = "", key = "", kind = "text") {
   if (kind === "select" || kind === "checkbox" || kind === "file" || kind === "date" || kind === "number") return null;
-  // [Línea clave]: Por qué soy importante? Limita la longitud de los nombres del alta de investigadores. Para qué? Mantener los registros del directorio institucional dentro del formato de 15 caracteres por nombre y apellido. Dónde me usan? En field() y adminField().
+  // [Línea clave]: Por qué soy importante? Limita la longitud de los nombres del alta de investigadores. Para qué? Mantener los registros del directorio institucional dentro del formato de 15 caracteres por nombre y apellido. Dónde me usan? En field() y adminField(). El límite se comunica con el contador de caracteres que ya pintan los campos.
   if (/^modal:new-user-(nombre|apellidos|segundo-apellido)$/.test(key)) return 15;
   // [Línea clave]: Por qué soy importante? Asigna topes de longitud alineados con las restricciones documentales de Docs Proyecto y el esquema de base de datos. Para qué? Proteger contra desbordamientos de datos y asegurar consistencia con los formularios oficiales VIE 2027. Dónde me usan? En field() y adminField().
   const ref = `${label} ${key}`.toLowerCase();
@@ -3032,6 +3032,10 @@ function debeMostrarContadorCaracteres(label = "", key = "", kind = "text") {
   ) {
     return false;
   }
+
+  // - Nombres y apellidos del alta de investigadores (directorio institucional, máximo 15 caracteres)
+  // [Línea clave]: Por qué soy importante? Comunica el límite de 15 caracteres con el contador de los demás campos. Para qué? Evitar repetir el tope como texto auxiliar debajo de la etiqueta y mantener una sola fuente de verdad visual. Dónde me usan? En field(), adminField() y en el evento input.
+  if (/^modal:new-user-(nombre|apellidos|segundo-apellido)$/.test(k)) return true;
 
   // 2. Secciones narrativas y de justificación en propuestas y convocatorias (Docs Proyecto):
   if (kind === "textarea") return true;
@@ -8605,21 +8609,21 @@ async function handleAction(action, el) {
           "Nombre",
           "",
           "text",
-          "Nombre de pila de la persona investigadora (máximo 15 caracteres).",
+          "Nombre de pila de la persona investigadora.",
           true,
           "modal:new-user-nombre",
         )}${field(
           "Apellidos",
           "",
           "text",
-          "Primer apellido de la persona investigadora (máximo 15 caracteres).",
+          "Primer apellido de la persona investigadora.",
           true,
           "modal:new-user-apellidos",
         )}${field(
           "Segundo apellido",
           "",
           "text",
-          "Opcional (máximo 15 caracteres).",
+          "Opcional.",
           false,
           "modal:new-user-segundo-apellido",
         )}${field(
