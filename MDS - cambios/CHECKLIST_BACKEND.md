@@ -53,11 +53,14 @@
 - [ ] Definir expiración/renovación de sesión.
 - [ ] Registrar cierre de sesión o invalidación de token.
 - [ ] **Deuda de seguridad:** migrar de SHA-256 simple a un hash con sal y costo (Argon2/bcrypt/scrypt).
+- [ ] **Deuda de seguridad:** `POST /auth/usuarios` (alta de investigadores) es invocable sin credenciales porque la API todavía no tiene sesiones en el servidor. Mitigaciones activas: allowlist de dominios (`DOMINIOS_CORREO_PERMITIDOS`), ORCID válido y único obligatorio, correo único y contraseña generada por el servidor (el cliente nunca la define). En producción debe restringirse al rol administrativo.
 
 ### 2.2 Validación y reglas de negocio
 
 - [x] Pydantic valida tipos, longitudes y rangos principales.
 - [x] Se valida que los correos del equipo existan y estén activos.
+- [x] Alta de investigadores en el directorio (`POST /auth/usuarios`): se validan formato y dominio del correo (allowlist `DOMINIOS_CORREO_PERMITIDOS`), ORCID bajo ISO 7064 MOD 11-2, unicidad del correo y del ORCID, existencia de la escuela y patrones de inyección SQL. El rol `Investigador` se asigna en la misma operación.
+- [x] El ORCID de un investigador institucional se persiste en `usuarios.identificacion_orcid` (migración V18) y deja de depender de la memoria del proceso.
 - [x] Se valida que los rubros presupuestarios existan.
 - [x] Se bloquean bienes duraderos fuera del Año 1.
 - [x] Se exige un mínimo de productos académicos según horas del equipo.
@@ -135,6 +138,7 @@
 | OK | POST | `/auth/login` | Conectado a pantalla 01 (retorna `orcid` del perfil del investigador) |
 | OK | GET | `/auth/usuarios` | Búsqueda de investigadores institucionales activos con escape seguro `ILIKE` y retorno de ORCID de perfil |
 | OK | PATCH | `/auth/usuarios/{id_usuario}/orcid` | Solicitud, validación ISO 7064 MOD 11-2, unicidad y asociación del ORCID al perfil del investigador |
+| OK | POST | `/auth/usuarios` | Alta de una persona investigadora en el directorio institucional (`usuarios` + rol `Investigador`), con dominio de correo autorizado, ORCID válido y único, y entrega de la credencial inicial por SMTP o en la respuesta cuando no hay SMTP configurado |
 | OK | GET | `/health` | Monitoreo |
 | OK | GET | `/catalogos` | Catálogos consolidados |
 | OK | GET | `/escuelas/totalescuelas` | Selector de escuela |
@@ -219,6 +223,7 @@ Pantallas principales: `02`, `03`, `04`–`20`, `22`, `28`, `33`.
 - [x] **09 · Equipo:** integrantes por correo institucional y horas.
 - [x] **09 · Equipo:** colaborador externo se persiste al crear.
 - [x] **09 · Equipo:** endpoint `GET /auth/usuarios` para buscar usuarios institucionales, autocompletar su ORCID si está registrado en su perfil o solicitarlo y validarlo bajo norma **ISO 7064 MOD 11-2** con unicidad por participante.
+- [x] **09 · Equipo:** alta de investigadores en el directorio institucional. Cuando la búsqueda no devuelve resultados (o se guarda sin selección) se abre el diálogo «¿Desea agregar al investigador?»; con «Sí» se registra la cuenta real con `POST /auth/usuarios` (nombre, apellidos, correo, escuela y ORCID) y se suma al equipo con rol, tipo de hora, dedicación y responsabilidad en el mismo paso. La contraseña inicial la genera el servidor y se entrega por correo SMTP (o en la respuesta, en modo prototipo, cuando no hay SMTP configurado).
 - [x] **10 · Descripción:** secciones narrativas persistidas.
 - [x] **11 · Objetivos:** objetivos y productos académicos persistidos.
 - [x] **12 · Metodología:** secciones persistidas.
@@ -414,7 +419,8 @@ Pantallas principales: `02`, `21`, `22`, `27`, `28`, `29`, `30`.
 
 - [ ] `GET /auth/me`
 - [ ] `POST /auth/logout`
-- [ ] `GET /usuarios?q=...` para búsqueda de equipo.
+- [x] `GET /usuarios?q=...` para búsqueda de equipo → cubierto por `GET /auth/usuarios` (búsqueda de investigadores institucionales activos con ORCID de perfil).
+- [x] `POST /usuarios` para alta de investigador en el directorio → cubierto por `POST /auth/usuarios` (rol `Investigador`, dominio autorizado, ORCID válido y único, credencial inicial por SMTP).
 - [ ] `GET /usuarios/{id}`.
 - [ ] `PATCH /usuarios/{id}` para perfil.
 - [ ] `PATCH /usuarios/{id}/password`.

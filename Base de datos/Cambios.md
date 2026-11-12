@@ -175,3 +175,19 @@ Este documento registra la evolución del modelo de base de datos relacional par
   - Completa esa fila con la explicación del saneamiento y con el responsable institucional de la decisión original.
 - **Verificación:** el script termina con cuatro consultas de control: catálogo vigente, expedientes reparados, incoherencias restantes (esperado: cero filas) y bitácora completa de los expedientes reparados.
 - **Aplicación:** lo ejecuta el administrador en el SQL Editor de Supabase. En una base de datos coherente no modifica nada y solo muestra los resultados de verificación.
+
+---
+
+## 9. Migración V18 — Persistencia del ORCID en el perfil institucional
+
+### Script: `Base de datos/Scripts/V18__orcid_en_usuarios.sql`
+- **Propósito:** guardar en la base de datos el identificador ORCID validado de cada persona investigadora del directorio, de modo que el dato sobreviva a los reinicios del backend y pueda asignarse al mismo crear una cuenta nueva desde el modal de equipo (Pantalla 09).
+- **Naturaleza:** script idempotente y aditivo; no modifica, mueve ni elimina filas existentes.
+- **Causa raíz que corrige:** hasta la V17 el ORCID de un investigador institucional se conservaba únicamente en los diccionarios en memoria `_ORCID_PERFIL_USUARIOS` y `_ORCID_PERFIL_CORREOS` de `backend/app/routers/auth.py`. Al reiniciar el servidor esa información se perdía y el backend no podía registrar el ORCID de una cuenta recién creada, que el endpoint `POST /propuestas` exige para cada integrante del equipo.
+- **Contenido:**
+  - `ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS identificacion_orcid character varying;` (columna nullable: las cuentas históricas todavía no tienen ORCID registrado).
+  - Índice único parcial `idx_usuarios_identificacion_orcid` sobre `public.usuarios (identificacion_orcid)` con la condición `WHERE identificacion_orcid IS NOT NULL`, que garantiza la unicidad del ORCID entre investigadores y admite varias filas sin ORCID.
+- **Compatibilidad:** `backend/app/routers/auth.py` verifica la existencia de la columna contra `information_schema` y cachea el resultado por proceso (`_ORCID_PERSISTENTE_DISPONIBLE`). Si la migración aún no está aplicada, el endpoint sigue funcionando: el ORCID se conserva solo en memoria y `PATCH /auth/usuarios/{id_usuario}/orcid` responde con la validación habitual.
+- **Reinicio obligatorio:** después de aplicar el script hay que reiniciar el backend, porque la comprobación de la columna se cachea al iniciar el proceso.
+- **Verificación:** consultas de control sobre `information_schema.columns`, `pg_indexes` y las filas de `usuarios` con ORCID registrado.
+- **Aplicación:** lo ejecuta el administrador en el SQL Editor de Supabase. Es idempotente: puede reejecutarse sin efectos adicionales.

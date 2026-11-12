@@ -1492,7 +1492,7 @@ def crear_propuesta(
                     detail=f"El ORCID {orcid_miembro} ya está asignado a otro investigador. Cada ORCID debe ser único.",
                 )
             # [Línea clave]: Vincula el ORCID validado al perfil del investigador para futuros autocompletados.
-            registrar_orcid_usuario(id_usuario, correo_resuelto, orcid_miembro)
+            registrar_orcid_usuario(id_usuario, correo_resuelto, orcid_miembro, conn=conn)
             orcids_ocupados[orcid_miembro] = f"user:{id_usuario}"
             clave = (id_usuario, miembro.id_tipo_hora)
             if clave in claves_equipo:

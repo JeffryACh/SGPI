@@ -1161,6 +1161,7 @@ const AI_CAMPOS_SIN_IA = [
   "modal:ext-",
   "modal:edit-",
   "modal:profile-",
+  "modal:new-user-",
 ];
 const AI_PANTALLA_EQUIPO = "09"; // 09 · Equipo investigador
 const AI_PANTALLA_PRESUPUESTO = "15"; // 15 · Presupuesto
@@ -3729,7 +3730,8 @@ let current = "01",
   previousFocus = null,
   activeFilter = "Todas",
   dossierTab = "Resumen",
-  userMenuOpen = false;
+  userMenuOpen = false,
+  pendingNuevoInvestigador = "";
 
 /**
  * Guardar el estado interactivo actual en el localStorage del navegador.
@@ -7781,6 +7783,34 @@ function modal(title, body, actions = "", wide = false, name = "dialog") {
 }
 
 /**
+ * Preguntar al investigador si desea dar de alta a una persona que no aparece en el directorio.
+ * Reemplaza los mensajes de «usuario no encontrado» y «seleccione un investigador de la lista»
+ * por una ventana de confirmación con respuesta Sí/No. Si responde No, el flujo se cierra sin más.
+ * parametros:
+ *     - string : nombreSugerido Texto buscado o nombre que se propone registrar.
+ * return:
+ *     + void : undefined Abre el diálogo de confirmación en el DOM.
+ */
+function abrirConfirmacionNuevoInvestigador(nombreSugerido = "") {
+  // [Línea clave]: Por qué soy importante? Es el único punto de entrada del alta de investigadores. Para qué? Evitar los mensajes de error que bloqueaban el flujo cuando la persona todavía no tiene cuenta institucional. Dónde me usan? En el buscador de usuarios del modal de equipo y en el guardado del participante.
+  pendingNuevoInvestigador = String(nombreSugerido || "").trim();
+  const titulo = pendingNuevoInvestigador
+    ? `No encontramos «${pendingNuevoInvestigador}» en el directorio institucional.`
+    : "No hay un investigador seleccionado en el directorio institucional.";
+  modal(
+    "¿Desea agregar al investigador?",
+    `${notice(
+      titulo,
+      "Si la persona todavía no tiene cuenta, puedes registrarla con su nombre, correo institucional, escuela y ORCID.",
+    )}<div id="new-user-feedback" class="mt"></div>`,
+    act("No, cancelar", "close", "secondary") +
+      confirmBtn("Sí, agregarlo", "team-add-user"),
+    false,
+    "team-add-confirm",
+  );
+}
+
+/**
  * Validar la completitud y validez sintáctica de los campos requeridos en un formulario.
  * Itera todos los elementos con atributo [required], resalta visualmente campos vacíos
  * o inválidos mostrando mensajes de error, enfoca el primer error y lanza un toast.
@@ -8306,8 +8336,9 @@ async function handleAction(action, el) {
             if (!resp.ok) return;
             const usuarios = await resp.json();
             if (usuarios.length === 0) {
-              results.innerHTML = `<div class="user-result" style="padding:12px;text-align:center;color:var(--muted);"><span class="micro">Usuario no encontrado en el directorio institucional</span></div>`;
+              // [Línea clave]: En vez de avisar que no existe, se pregunta si se desea darla de alta en el directorio.
               lastSearchResults = [];
+              abrirConfirmacionNuevoInvestigador(textoLimpio);
               return;
             }
             // Guardar resultados para uso en blur/enter
@@ -8395,7 +8426,10 @@ async function handleAction(action, el) {
     case "team-save": {
       const selectedUser = state.selectedTeamUser;
       if (!selectedUser) {
-        toast("Selecciona un investigador de la lista de búsqueda.");
+        // [Línea clave]: En vez de exigir una selección, se ofrece registrar a la persona buscada en el directorio.
+        abrirConfirmacionNuevoInvestigador(
+          $('[data-field="modal:user-search"]')?.value?.trim() || pendingNuevoInvestigador,
+        );
         break;
       }
       const rol = $('[data-field="modal:role"]')?.value || "Investigador/a asociado/a";
@@ -8449,6 +8483,227 @@ async function handleAction(action, el) {
       closeModal();
       render();
       toast("Miembro agregado al equipo con su ORCID validado.");
+      break;
+    }
+    case "team-add-user": {
+      // [Línea clave]: Abre el formulario de alta de un investigador en el directorio institucional.
+      // Para qué? Permitir crear la cuenta (nombre, correo, escuela y ORCID) y sumarlo al equipo en un solo paso.
+      // Dónde me usan? Al confirmar el diálogo «¿Desea agregar al investigador?».
+      const rolesOpts = (catalogos?.rol_colaborador?.length
+        ? catalogos.rol_colaborador
+        : [
+            { nombre_rol: "Investigador/a asociado/a" },
+            { nombre_rol: "Coordinador/a" },
+            { nombre_rol: "Estudiante asistente" },
+            { nombre_rol: "Especialista técnico" },
+          ]
+      ).map((r) => ({ value: r.nombre_rol, label: r.nombre_rol }));
+      // [Línea clave]: La persona que se registra en el directorio es institucional, por lo que el rol
+      //                predeterminado del equipo es «Investigador» y no la primera opción del catálogo.
+      const rolPorDefecto = rolesOpts.some((r) => r.value === "Investigador")
+        ? "Investigador"
+        : rolesOpts[0]?.value ?? "";
+      const tiposHoraOpts = (catalogos?.tipos_hora?.length
+        ? catalogos.tipos_hora.map((t) => ({ value: t.nombre_tipo_hora, label: t.nombre_tipo_hora }))
+        : ["VIE", "CONS", "REC", "DOC", "OTRO"].map((t) => ({ value: t, label: t })));
+      const escuelasOpts = (escuelas ?? []).map((e) => ({
+        value: e.id,
+        label: e.siglas ? `${e.nombre} (${e.siglas})` : e.nombre,
+      }));
+      const escuelaActual = catalogoId(
+        draftValue("08:Instancia coordinadora", escuelas?.[0]?.id || 1),
+        escuelas ?? [],
+      );
+      // Prellena el campo de nombre o de correo según lo que la persona haya buscado.
+      const sugerido = pendingNuevoInvestigador;
+      const esCorreo = /@/.test(sugerido);
+      const nombreSugerido = esCorreo ? "" : sugerido;
+      const correoSugerido = esCorreo ? sugerido : "";
+      // Limpia el borrador de los campos del alta para que el formulario abra siempre limpio.
+      delete state.saved["modal:new-user-nombre"];
+      delete state.saved["modal:new-user-apellidos"];
+      delete state.saved["modal:new-user-segundo-apellido"];
+      delete state.saved["modal:new-user-correo"];
+      delete state.saved["modal:new-user-escuela"];
+      delete state.saved["modal:new-user-orcid"];
+      pendingNuevoInvestigador = "";
+
+      setTimeout(() => {
+        const orcidInput = $('[data-field="modal:new-user-orcid"]');
+        if (!orcidInput) return;
+        orcidInput.addEventListener("input", () => {
+          orcidInput.value = formatearOrcidInput(orcidInput.value);
+          state.saved["modal:new-user-orcid"] = orcidInput.value;
+          const counter = orcidInput.closest(".field")?.querySelector(".char-counter");
+          if (counter) counter.textContent = formatearTextoContador(orcidInput.value.length, 19, "ORCID", "modal:new-user-orcid");
+        });
+      }, 80);
+
+      modal(
+        "Agregar investigador al directorio",
+        `<div id="new-user-feedback" class="mb"></div>${field(
+          "Nombre",
+          nombreSugerido,
+          "text",
+          "Nombre de pila de la persona investigadora.",
+          true,
+          "modal:new-user-nombre",
+        )}${field(
+          "Apellidos",
+          "",
+          "text",
+          "Primer apellido de la persona investigadora.",
+          true,
+          "modal:new-user-apellidos",
+        )}${field(
+          "Segundo apellido",
+          "",
+          "text",
+          "Opcional.",
+          false,
+          "modal:new-user-segundo-apellido",
+        )}${field(
+          "Correo institucional",
+          correoSugerido,
+          "email",
+          "Correo con el que la persona ingresará al SGPI.",
+          true,
+          "modal:new-user-correo",
+        )}${field(
+          "Escuela / instancia",
+          escuelasOpts,
+          "select",
+          "Unidad institucional a la que se vincula.",
+          false,
+          "modal:new-user-escuela",
+          "",
+          escuelaActual,
+        )}${field(
+          "ORCID",
+          "",
+          "text",
+          "Identificador ORCID de la persona (0000-0000-0000-000X).",
+          true,
+          "modal:new-user-orcid",
+        )}<div class="field-row">${field("Rol", rolesOpts, "select", "", false, "modal:role", "", rolPorDefecto)}${field("Tipo de hora", tiposHoraOpts, "select", "", false, "modal:hour-type", "", "VIE")}</div><div class="field-row">${field("Dedicación", "4", "number", "Horas por semana (1–40).", true, "modal:hours")}</div>${field("Responsabilidad", "", "textarea", "Funciones técnicas en la propuesta.", false, "modal:responsibility")}`,
+        act("Cancelar", "close", "secondary") +
+          confirmBtn("Registrar y agregar al equipo", "team-add-user-save"),
+        false,
+        "team-add-user",
+      );
+      break;
+    }
+    case "team-add-user-save": {
+      const nombre = $('[data-field="modal:new-user-nombre"]')?.value?.trim() || "";
+      const lastname = $('[data-field="modal:new-user-apellidos"]')?.value?.trim() || "";
+      const secondLastname = $('[data-field="modal:new-user-segundo-apellido"]')?.value?.trim() || "";
+      const correo = ($('[data-field="modal:new-user-correo"]')?.value || "").trim().toLowerCase();
+      const escuelaValor = $('[data-field="modal:new-user-escuela"]')?.value || "";
+      const orcid = ($('[data-field="modal:new-user-orcid"]')?.value || "").trim().toUpperCase();
+      const rol = $('[data-field="modal:role"]')?.value || "Investigador";
+      const tipo = $('[data-field="modal:hour-type"]')?.value || "VIE";
+      const horas = Math.min(40, Math.max(1, Number($('[data-field="modal:hours"]')?.value) || 4));
+      const responsabilidad = $('[data-field="modal:responsibility"]')?.value?.trim() || "";
+      const mostrarError = (mensaje) => {
+        const caja = $("#new-user-feedback");
+        if (caja) caja.innerHTML = notice("No se pudo registrar al investigador", mensaje, "warning");
+      };
+
+      if (!nombre || !lastname || !correo) {
+        mostrarError("Completa el nombre, los apellidos y el correo institucional.");
+        break;
+      }
+      if ([nombre, lastname, secondLastname, correo, responsabilidad].some(contieneInyeccionSQL)) {
+        mostrarError("Entrada bloqueada: se detectaron patrones de inyección SQL.");
+        break;
+      }
+      if (!esOrcidValido(orcid)) {
+        mostrarError("El ORCID ingresado no es válido según el estándar oficial ISO 7064 (0000-0000-0000-000X).");
+        break;
+      }
+      const ocupados = obtenerOrcidsOcupados(correo, nombre);
+      if (ocupados.has(orcid)) {
+        mostrarError(`El ORCID ${orcid} ya está asignado a otra persona. Cada ORCID debe ser único.`);
+        break;
+      }
+
+      let creado = null;
+      try {
+        const resp = await fetch(`${API_URL}/auth/usuarios`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nombre,
+            lastname,
+            second_lastname: secondLastname,
+            correo,
+            id_escuela: escuelaValor ? Number(escuelaValor) : null,
+            orcid,
+          }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          mostrarError(data?.detail || "No fue posible crear la cuenta en el directorio institucional.");
+          break;
+        }
+        creado = data;
+      } catch (e) {
+        console.error("Alta de investigador:", e);
+        mostrarError("No hay conexión con el servidor para registrar al investigador.");
+        break;
+      }
+
+      // [Línea clave]: Registra el ORCID en el perfil local y conserva la persona como seleccionado.
+      registrarOrcidEnPerfil(correo, creado.nombre || `${nombre} ${lastname}`, orcid);
+      state.selectedTeamUser = {
+        id_usuario: Number(creado.id_usuario),
+        nombre: creado.nombre || `${nombre} ${lastname}`,
+        correo: creado.correo || correo,
+        orcid: creado.orcid || orcid,
+        escuela: creado.escuela || "",
+        siglas_escuela: creado.siglas_escuela || "",
+      };
+
+      // [Línea clave]: Suma al equipo con el mismo control de duplicados que usa el guardado normal.
+      const equipoActual = proposalTeamMembers();
+      const yaExiste = equipoActual.some(
+        (m) =>
+          m.id_usuario === state.selectedTeamUser.id_usuario ||
+          String(m.correo).toLowerCase() === String(state.selectedTeamUser.correo).toLowerCase(),
+      );
+      if (yaExiste) {
+        mostrarError("Este investigador ya forma parte del equipo.");
+        break;
+      }
+      registrarOrcidEnPerfil(correo, state.selectedTeamUser.nombre, orcid);
+      state.teamMembers = equipoActual.concat({
+        id_usuario: state.selectedTeamUser.id_usuario,
+        nombre: state.selectedTeamUser.nombre,
+        correo: state.selectedTeamUser.correo,
+        escuela: state.selectedTeamUser.escuela,
+        siglas_escuela: state.selectedTeamUser.siglas_escuela,
+        rol,
+        horas,
+        orcid,
+        responsabilidad,
+        tipo,
+      });
+      delete state.saved["modal:new-user-nombre"];
+      delete state.saved["modal:new-user-apellidos"];
+      delete state.saved["modal:new-user-segundo-apellido"];
+      delete state.saved["modal:new-user-correo"];
+      delete state.saved["modal:new-user-escuela"];
+      delete state.saved["modal:new-user-orcid"];
+      state.selectedTeamUser = null;
+      pendingNuevoInvestigador = "";
+      save();
+      closeModal();
+      render();
+      toast(
+        creado.password_temporal
+          ? `Investigador registrado. Contraseña inicial: ${creado.password_temporal}`
+          : "Investigador registrado en el directorio y agregado al equipo.",
+      );
       break;
     }
     case "objective":

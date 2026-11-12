@@ -34,13 +34,16 @@ ARCHIVO: backend/app/routers/auth.py
 
 import hashlib
 import hmac
+import os
 import re
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg import Connection
 from pydantic import BaseModel, Field
 from typing import Optional
 
+from ..correo import enviar_credenciales_investigador
 from ..db import get_conn
 
 # [Línea clave]: Instancia el router bajo el prefijo /auth para agrupar las rutas de autenticación en la API.
@@ -58,6 +61,137 @@ _SQLI_PATTERN = re.compile(
 # [Línea clave]: Patrón sintáctico oficial de ORCID de 16 caracteres agrupados en cuatro bloques separados por guiones.
 _ORCID_FORMAT_REGEX = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$", re.IGNORECASE)
 
+# [Línea clave]: Dominio institucional exigido por defecto en el alta de investigadores.
+DOMINIO_CORREO_POR_DEFECTO = "tec.ac.cr"
+
+# [Línea clave]: Expresión regular del formato mínimo de un correo electrónico institucional.
+_CORREO_FORMAT_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
+
+# [Línea clave]: Caché del resultado de la migración V18 (columna 'usuarios.identificacion_orcid').
+_ORCID_PERSISTENTE_DISPONIBLE: Optional[bool] = None
+
+
+def dominios_correo_permitidos() -> tuple[str, ...]:
+    """
+    Obtener los dominios de correo autorizados para dar de alta a una persona investigadora.
+
+    Lee la variable de entorno 'DOMINIOS_CORREO_PERMITIDOS' (lista separada por comas). Cuando
+    no está definida se exige únicamente el dominio institucional 'tec.ac.cr'. El prototipo puede
+    ampliar la lista (por ejemplo, para demostraciones) sin tocar el código.
+
+    parametros:
+        (No recibe parámetros)
+
+    return:
+        + tuple[str, ...] : dominios Tupla de dominios en minúsculas habilitados para el alta.
+    """
+    configuracion = (os.getenv("DOMINIOS_CORREO_PERMITIDOS") or DOMINIO_CORREO_POR_DEFECTO).strip()
+    dominios = tuple(
+        d.strip().lower() for d in configuracion.split(",") if d.strip()
+    )
+    return dominios or (DOMINIO_CORREO_POR_DEFECTO,)
+
+
+def password_inicial_demo() -> Optional[str]:
+    """
+    Obtener la contraseña inicial fija de demostración, si el entorno la tiene declarada.
+
+    En producción la contraseña se genera al azar y se envía por correo. Para las demostraciones
+    del prototipo se puede fijar 'PASSWORD_DEMO' en el entorno y todas las cuentas nuevas
+    comparten esa clave, igual que las cuentas semilla del script V2.
+
+    parametros:
+        (No recibe parámetros)
+
+    return:
+        + Optional[str] : password Contraseña fija de demostración o None si no está definida.
+    """
+    return (os.getenv("PASSWORD_DEMO") or "").strip() or None
+
+
+def _tiene_columna_orcid(conn: Optional[Connection]) -> bool:
+    """
+    Indicar si la migración V18 ya agregó la columna 'usuarios.identificacion_orcid'.
+
+    La verificación se hace contra 'information_schema' (consulta que nunca falla) porque una
+    referencia a una columna inexistente abortaría la transacción activa en psycopg 3. El resultado
+    se cachea por proceso: tras aplicar la migración se reinicia el backend.
+
+    parametros:
+        - Optional[Connection] : conn Conexión transaccional a Supabase.
+
+    return:
+        + bool : disponible True si la columna existe y puede usarse de forma persistente.
+    """
+    global _ORCID_PERSISTENTE_DISPONIBLE
+    if conn is None:
+        return False
+    if _ORCID_PERSISTENTE_DISPONIBLE is None:
+        try:
+            fila = conn.execute(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'usuarios'
+                  AND column_name = 'identificacion_orcid'
+                """
+            ).fetchone()
+            _ORCID_PERSISTENTE_DISPONIBLE = bool(fila)
+        except Exception:
+            _ORCID_PERSISTENTE_DISPONIBLE = False
+    return _ORCID_PERSISTENTE_DISPONIBLE
+
+
+def _usuario_existe(conn: Optional[Connection], id_usuario: int) -> bool:
+    """
+    Indicar si un identificador de usuario sigue existiendo en el directorio institucional.
+
+    Se usa para depurar el registro en memoria de ORCIDs: cuando una cuenta se elimina de
+    'public.usuarios', su ORCID no debe seguir bloqueando el registro de otra persona.
+
+    parametros:
+        - Optional[Connection] : conn Conexión transaccional a Supabase.
+        - int : id_usuario Identificador numérico del usuario a verificar.
+
+    return:
+        + bool : existe True si el usuario sigue en la base de datos; False si ya no existe.
+    """
+    if conn is None:
+        return True
+    try:
+        fila = conn.execute(
+            "SELECT 1 FROM public.usuarios WHERE id_usuario = %s LIMIT 1",
+            (id_usuario,),
+        ).fetchone()
+        return bool(fila)
+    except Exception:
+        # Ante cualquier error se asume que la cuenta existe: es la postura conservadora.
+        return True
+
+
+def _id_usuario_por_correo(conn: Optional[Connection], correo: str) -> Optional[int]:
+    """
+    Resolver el identificador de un usuario del directorio a partir de su correo institucional.
+
+    parametros:
+        - Optional[Connection] : conn Conexión transaccional a Supabase.
+        - str : correo Correo institucional buscado.
+
+    return:
+        + Optional[int] : id_usuario Identificador del usuario o None si no existe en la base de datos.
+    """
+    if conn is None or not correo:
+        return None
+    try:
+        fila = conn.execute(
+            "SELECT id_usuario FROM public.usuarios WHERE lower(trim(correo)) = %s LIMIT 1",
+            (correo.strip().lower(),),
+        ).fetchone()
+        return fila["id_usuario"] if fila else None
+    except Exception:
+        return None
+
 # [Línea clave]: Registro institucional de ORCIDs verificados (ISO 7064 MOD 11-2) vinculados a los perfiles de investigadores activos.
 _ORCID_PERFIL_CORREOS: dict[str, str] = {
     "laura.mendez@example.com": "0000-0002-1825-0097",
@@ -72,6 +206,10 @@ _ORCID_PERFIL_CORREOS: dict[str, str] = {
 
 # [Línea clave]: Diccionario en memoria para retener los ORCIDs solicitados y validados por id_usuario durante la sesión del servidor.
 _ORCID_PERFIL_USUARIOS: dict[int, str] = {}
+
+# [Línea clave]: Copia del catálogo institucional sembrado en el código. Permite distinguir los perfiles
+#                de demostración (que no existen en 'usuarios') de los registros agregados en caliente.
+_ORCID_PERFIL_CORREOS_SEMILLA: dict[str, str] = dict(_ORCID_PERFIL_CORREOS)
 
 
 def contiene_inyeccion_sql(valor: Optional[str]) -> bool:
@@ -166,6 +304,23 @@ def obtener_orcid_usuario(
     return:
         + str : orcid Identificador ORCID validado asociado al perfil o cadena vacía si debe solicitarse.
     """
+    # [Línea clave]: Prioriza el ORCID persistido en la base de datos (fuente de verdad tras la migración V18).
+    if conn is not None and _tiene_columna_orcid(conn):
+        try:
+            fila = conn.execute(
+                """
+                SELECT identificacion_orcid
+                FROM public.usuarios
+                WHERE id_usuario = %s
+                   OR (%s::text IS NOT NULL AND lower(trim(correo)) = lower(trim(%s::text)))
+                LIMIT 1
+                """,
+                (id_usuario, correo, correo),
+            ).fetchone()
+            if fila and fila["identificacion_orcid"] and validar_orcid(fila["identificacion_orcid"]):
+                return fila["identificacion_orcid"].strip().upper()
+        except Exception:
+            pass
     # [Línea clave]: Prioriza el ORCID que el investigador haya solicitado/actualizado en su perfil activo.
     if id_usuario in _ORCID_PERFIL_USUARIOS:
         return _ORCID_PERFIL_USUARIOS[id_usuario]
@@ -193,17 +348,25 @@ def obtener_orcid_usuario(
     return ""
 
 
-def registrar_orcid_usuario(id_usuario: int, correo: Optional[str], orcid: str) -> str:
+def registrar_orcid_usuario(
+    id_usuario: int,
+    correo: Optional[str],
+    orcid: str,
+    conn: Optional[Connection] = None,
+) -> str:
     """
     Asociar y validar un identificador ORCID solicitado al perfil de un investigador institucional.
 
     Comprueba que el ORCID cumpla la norma ISO 7064 MOD 11-2 y que no se encuentre asignado a
     otro usuario distinto dentro del registro institucional antes de vincularlo al perfil.
+    Cuando la migración V18 está aplicada, el ORCID además queda persistido en
+    'public.usuarios.identificacion_orcid' para sobrevivir a un reinicio del servidor.
 
     parametros:
         - int : id_usuario Identificador del usuario propietario del perfil.
         - Optional[str] : correo Correo electrónico institucional del usuario.
         - str : orcid Identificador ORCID solicitado que se desea vincular al perfil.
+        - Optional[Connection] : conn Conexión opcional para persistir el ORCID en la base de datos.
 
     return:
         + str : orcid_normalizado Identificador ORCID validado y normalizado en mayúsculas.
@@ -216,18 +379,59 @@ def registrar_orcid_usuario(id_usuario: int, correo: Optional[str], orcid: str) 
             detail="El ORCID ingresado no es válido según el estándar oficial ISO 7064 (formato 0000-0000-0000-000X).",
         )
     clave_correo = (correo or "").strip().lower()
-    for uid_reg, orcid_reg in _ORCID_PERFIL_USUARIOS.items():
-        if orcid_reg == orcid_norm and uid_reg != id_usuario:
-            raise HTTPException(
-                status_code=409,
-                detail=f"El ORCID {orcid_norm} ya se encuentra vinculado a otro perfil de investigador.",
+    # [Línea clave]: El registro en memoria se depura de las cuentas que ya no existen en el directorio,
+    #                para que una baja de usuario no bloquee el reuso de su ORCID.
+    for uid_reg, orcid_reg in list(_ORCID_PERFIL_USUARIOS.items()):
+        if orcid_reg != orcid_norm or uid_reg == id_usuario:
+            continue
+        if not _usuario_existe(conn, uid_reg):
+            _ORCID_PERFIL_USUARIOS.pop(uid_reg, None)
+            continue
+        raise HTTPException(
+            status_code=409,
+            detail=f"El ORCID {orcid_norm} ya se encuentra vinculado a otro perfil de investigador.",
+        )
+    for correo_reg, orcid_reg in list(_ORCID_PERFIL_CORREOS.items()):
+        if orcid_reg != orcid_norm or correo_reg == clave_correo:
+            continue
+        if conn is not None and correo_reg not in _ORCID_PERFIL_CORREOS_SEMILLA:
+            uid_reg = _id_usuario_por_correo(conn, correo_reg)
+            if uid_reg is None:
+                # La cuenta se eliminó del directorio: el registro en memoria queda obsoleto.
+                _ORCID_PERFIL_CORREOS.pop(correo_reg, None)
+                continue
+            if uid_reg == id_usuario:
+                continue
+        raise HTTPException(
+            status_code=409,
+            detail=f"El ORCID {orcid_norm} ya pertenece a otro investigador registrado.",
+        )
+    # [Línea clave]: Persiste el ORCID en el perfil institucional cuando la columna de la migración V18 existe.
+    if conn is not None and _tiene_columna_orcid(conn):
+        try:
+            conflicto = conn.execute(
+                """
+                SELECT id_usuario
+                FROM public.usuarios
+                WHERE identificacion_orcid = %s
+                  AND id_usuario <> %s
+                LIMIT 1
+                """,
+                (orcid_norm, id_usuario),
+            ).fetchone()
+            if conflicto:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"El ORCID {orcid_norm} ya está asignado a otro investigador. Cada ORCID debe ser único.",
+                )
+            conn.execute(
+                "UPDATE public.usuarios SET identificacion_orcid = %s WHERE id_usuario = %s",
+                (orcid_norm, id_usuario),
             )
-    for correo_reg, orcid_reg in _ORCID_PERFIL_CORREOS.items():
-        if orcid_reg == orcid_norm and correo_reg != clave_correo:
-            raise HTTPException(
-                status_code=409,
-                detail=f"El ORCID {orcid_norm} ya pertenece a otro investigador registrado.",
-            )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
     # [Línea clave]: Vincula el ORCID validado tanto al ID de usuario como a su correo institucional.
     _ORCID_PERFIL_USUARIOS[id_usuario] = orcid_norm
     if clave_correo:
@@ -268,6 +472,65 @@ class OrcidActualizarIn(BaseModel):
 
     orcid: str = Field(..., min_length=19, max_length=19)
     correo: Optional[str] = Field(default=None, max_length=255)
+
+
+class UsuarioCrearIn(BaseModel):
+    """
+    Modelo de entrada (Request Body) para dar de alta a una persona investigadora en el directorio.
+
+    Recoge los datos institucionales mínimos exigidos por la tabla 'public.usuarios' y el ORCID
+    que se registrará en su perfil. La contraseña inicial NO se recibe desde el cliente: el
+    servidor la genera (o toma la contraseña fija de demostración 'PASSWORD_DEMO') para evitar
+    que un tercero pueda definir credenciales ajenas.
+
+    Se utiliza como parámetro en el endpoint POST /auth/usuarios.
+
+    atributos:
+        * str : nombre Nombre de pila de la persona investigadora.
+        * str : lastname Primer apellido de la persona investigadora.
+        * str : second_lastname Segundo apellido (opcional, se guarda vacío si no se envía).
+        * str : correo Correo institucional; su dominio debe estar en 'DOMINIOS_CORREO_PERMITIDOS'.
+        * Optional[int] : id_escuela Escuela o instancia a la que se vincula la persona.
+        * str : orcid Identificador ORCID en formato 0000-0000-0000-000X.
+    """
+
+    nombre: str = Field(..., min_length=1, max_length=120)
+    lastname: str = Field(..., min_length=1, max_length=120)
+    second_lastname: str = Field(default="", max_length=120)
+    correo: str = Field(..., min_length=5, max_length=255)
+    id_escuela: Optional[int] = None
+    orcid: str = Field(..., min_length=19, max_length=19)
+
+
+class UsuarioCreadoOut(BaseModel):
+    """
+    Modelo de salida con los datos del investigador recién dado de alta en el directorio.
+
+    Se utiliza como response_model en el endpoint POST /auth/usuarios. Incluye la contraseña
+    inicial únicamente cuando el servidor no tiene SMTP configurado (modo prototipo), para que
+    el flujo de alta pueda completarse y la credencial pueda comunicarse a la persona.
+
+    atributos:
+        * int : id_usuario Identificador numérico del investigador creado.
+        * str : nombre Nombre completo de la persona investigadora.
+        * str : correo Correo institucional registrado.
+        * str : orcid Identificador ORCID validado y vinculado al perfil.
+        * Optional[str] : escuela Nombre de la escuela o instancia asociada.
+        * Optional[str] : siglas_escuela Siglas de la escuela o instancia asociada.
+        * Optional[str] : password_temporal Contraseña inicial cuando no hubo envío por correo.
+        * bool : correo_enviado True si las credenciales se enviaron por SMTP.
+        * str : estado_credencial Motivo del envío o de la entrega manual de la credencial.
+    """
+
+    id_usuario: int
+    nombre: str
+    correo: str
+    orcid: str = ""
+    escuela: Optional[str] = None
+    siglas_escuela: Optional[str] = None
+    password_temporal: Optional[str] = None
+    correo_enviado: bool = False
+    estado_credencial: str = "sin_smtp"
 
 
 class UsuarioOut(BaseModel):
@@ -423,6 +686,154 @@ def buscar_usuarios(
         ]
 
 
+@router.post("/usuarios", response_model=UsuarioCreadoOut, status_code=201)
+def crear_usuario_investigador(
+    datos: UsuarioCrearIn,
+    conn: Connection = Depends(get_conn),
+):
+    """
+    Dar de alta a una persona investigadora en el directorio institucional.
+
+    Valida los datos personales e institucionales (patrones de inyección, formato y dominio del
+    correo, unicidad del correo y del ORCID bajo ISO 7064), inserta la cuenta en 'public.usuarios'
+    con el rol 'Investigador' y registra su ORCID en el perfil. La contraseña inicial se genera
+    al azar (o se toma de 'PASSWORD_DEMO' en el modo demostración) y se envía por correo cuando
+    hay SMTP configurado; si no lo hay, se devuelve en la respuesta para completar el flujo.
+
+    parametros:
+        - UsuarioCrearIn : datos Datos de la persona investigadora a registrar.
+        - Connection : conn Conexión transaccional a Supabase.
+
+    return:
+        + UsuarioCreadoOut : usuario Datos del investigador creado y estado de la credencial.
+    """
+    nombre = (datos.nombre or "").strip()
+    lastname = (datos.lastname or "").strip()
+    second_lastname = (datos.second_lastname or "").strip()
+    correo = (datos.correo or "").strip().lower()
+    orcid = (datos.orcid or "").strip().upper()
+
+    # [Línea clave]: Bloquea cualquier patrón de inyección SQL en los textos recibidos.
+    if any(contiene_inyeccion_sql(v) for v in (nombre, lastname, second_lastname, correo)):
+        raise HTTPException(
+            status_code=400,
+            detail="Entrada inválida: se detectó un patrón no permitido.",
+        )
+    if not _CORREO_FORMAT_REGEX.match(correo):
+        raise HTTPException(status_code=400, detail="El formato del correo institucional no es válido.")
+    dominio = correo.split("@")[-1].lower()
+    dominios = dominios_correo_permitidos()
+    if dominio not in dominios:
+        dominios_texto = ", ".join(dominios)
+        raise HTTPException(
+            status_code=400,
+            detail=f"El correo debe pertenecer a un dominio institucional permitido ({dominios_texto}).",
+        )
+    if not validar_orcid(orcid):
+        raise HTTPException(
+            status_code=400,
+            detail="El ORCID ingresado no es válido según el estándar oficial ISO 7064 (formato 0000-0000-0000-000X).",
+        )
+
+    with conn.cursor() as cur:
+        # [Línea clave]: Verifica que el correo no esté registrado previamente en el directorio.
+        cur.execute(
+            "SELECT id_usuario FROM public.usuarios WHERE lower(trim(correo)) = %s LIMIT 1",
+            (correo,),
+        )
+        if cur.fetchone():
+            raise HTTPException(
+                status_code=409,
+                detail="Ese correo ya está registrado en el directorio institucional.",
+            )
+        # [Línea clave]: Verifica que el ORCID no esté asignado a otra persona del directorio.
+        if _tiene_columna_orcid(conn):
+            cur.execute(
+                "SELECT id_usuario FROM public.usuarios WHERE identificacion_orcid = %s LIMIT 1",
+                (orcid,),
+            )
+            if cur.fetchone():
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"El ORCID {orcid} ya está asignado a otro investigador. Cada ORCID debe ser único.",
+                )
+        # [Línea clave]: Valida la escuela o instancia asociada cuando el Frontend la envía.
+        id_escuela = datos.id_escuela
+        if id_escuela is not None:
+            cur.execute("SELECT id_escuela FROM public.escuelas WHERE id_escuela = %s", (id_escuela,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=400, detail="La escuela o instancia indicada no existe.")
+
+        # [Línea clave]: La contraseña inicial nunca proviene del cliente: se genera o se toma de la demo.
+        password = password_inicial_demo() or secrets.token_urlsafe(12)
+        cur.execute(
+            """
+            INSERT INTO public.usuarios
+                (id_escuela, nombre, lastname, second_lastname, correo, password_hash, estado_activo)
+            VALUES (%s, %s, %s, %s, %s, %s, true)
+            RETURNING id_usuario
+            """,
+            (id_escuela, nombre, lastname, second_lastname, correo, hash_password(password)),
+        )
+        id_usuario = cur.fetchone()["id_usuario"]
+        # [Línea clave]: Asigna el rol institucional 'Investigador' para que aparezca en el buscador del equipo.
+        cur.execute(
+            """
+            INSERT INTO public.user_roles (id_usuario, id_rol)
+            SELECT %s, id_rol FROM public.roles WHERE nombre_rol = 'Investigador'
+            ON CONFLICT DO NOTHING
+            """,
+            (id_usuario,),
+        )
+
+    # [Línea clave]: Registra el ORCID validado en el perfil (persistente con la migración V18).
+    registrar_orcid_usuario(id_usuario, correo, orcid, conn=conn)
+
+    # [Línea clave]: Comprueba que el ORCID quedó realmente guardado cuando la migración V18 está aplicada,
+    #                para no devolver una cuenta creada cuyo ORCID se perdería al reiniciar el backend.
+    if _tiene_columna_orcid(conn):
+        fila_orcid = conn.execute(
+            "SELECT identificacion_orcid FROM public.usuarios WHERE id_usuario = %s",
+            (id_usuario,),
+        ).fetchone()
+        if not fila_orcid or (fila_orcid["identificacion_orcid"] or "").strip().upper() != orcid:
+            raise HTTPException(
+                status_code=500,
+                detail="No fue posible registrar el ORCID del investigador. Intente nuevamente.",
+            )
+
+    nombre_completo = f"{nombre} {lastname} {second_lastname}".strip()
+    enviado, estado_credencial = enviar_credenciales_investigador(
+        correo=correo,
+        nombre=nombre_completo,
+        password=password,
+        orcid=orcid,
+    )
+
+    escuela_info = None
+    with conn.cursor() as cur:
+        if id_escuela is not None:
+            cur.execute(
+                "SELECT nombre, siglas FROM public.escuelas WHERE id_escuela = %s",
+                (id_escuela,),
+            )
+            fila_escuela = cur.fetchone()
+            if fila_escuela:
+                escuela_info = fila_escuela
+
+    return UsuarioCreadoOut(
+        id_usuario=id_usuario,
+        nombre=nombre_completo,
+        correo=correo,
+        orcid=orcid,
+        escuela=escuela_info["nombre"] if escuela_info else None,
+        siglas_escuela=escuela_info["siglas"] if escuela_info else None,
+        password_temporal=None if enviado else password,
+        correo_enviado=enviado,
+        estado_credencial=estado_credencial,
+    )
+
+
 @router.patch("/usuarios/{id_usuario}/orcid")
 def actualizar_orcid_usuario(
     id_usuario: int,
@@ -453,7 +864,7 @@ def actualizar_orcid_usuario(
         (id_usuario,),
     ).fetchone()
     correo_efectivo = fila["correo"] if fila else datos.correo
-    orcid_validado = registrar_orcid_usuario(id_usuario, correo_efectivo, datos.orcid)
+    orcid_validado = registrar_orcid_usuario(id_usuario, correo_efectivo, datos.orcid, conn=conn)
     return {"ok": True, "id_usuario": id_usuario, "orcid": orcid_validado}
 
 
