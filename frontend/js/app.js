@@ -3731,7 +3731,8 @@ let current = "01",
   activeFilter = "Todas",
   dossierTab = "Resumen",
   userMenuOpen = false,
-  pendingNuevoInvestigador = "";
+  pendingNuevoInvestigador = "",
+  ultimosResultadosEquipo = [];
 
 /**
  * Guardar el estado interactivo actual en el localStorage del navegador.
@@ -8275,6 +8276,7 @@ async function handleAction(action, el) {
       delete state.saved["modal:hours"];
       delete state.saved["modal:responsibility"];
       state.selectedTeamUser = null;
+      ultimosResultadosEquipo = [];
       const rolesOpts = (catalogos?.rol_colaborador?.length
         ? catalogos.rol_colaborador
         : [
@@ -8329,6 +8331,7 @@ async function handleAction(action, el) {
           if (!textoLimpio || textoLimpio.length < 2 || contieneInyeccionSQL(textoLimpio)) {
             results.innerHTML = "";
             lastSearchResults = [];
+            ultimosResultadosEquipo = [];
             return;
           }
           try {
@@ -8336,13 +8339,16 @@ async function handleAction(action, el) {
             if (!resp.ok) return;
             const usuarios = await resp.json();
             if (usuarios.length === 0) {
-              // [Línea clave]: En vez de avisar que no existe, se pregunta si se desea darla de alta en el directorio.
+              // [Línea clave]: La búsqueda sin coincidencias solo informa de forma discreta. Por qué? Para no interrumpir
+              //                a la persona que se equivoca al escribir; el alta se ofrece al pulsar «Guardar participante».
               lastSearchResults = [];
-              abrirConfirmacionNuevoInvestigador(textoLimpio);
+              ultimosResultadosEquipo = [];
+              results.innerHTML = `<div class="user-result" style="padding:12px;text-align:center;color:var(--muted);"><span class="micro">Sin coincidencias en el directorio institucional. Si la persona no tiene cuenta, pulsa «Guardar participante» para registrarla.</span></div>`;
               return;
             }
             // Guardar resultados para uso en blur/enter
             lastSearchResults = usuarios;
+            ultimosResultadosEquipo = usuarios;
             // Siempre mostrar lista - el usuario elige con click, Enter, o blur
             results.innerHTML = usuarios.map((u) => {
               const orc = u.orcid || obtenerOrcidDePerfil(u.correo, u.nombre);
@@ -8366,6 +8372,7 @@ async function handleAction(action, el) {
           } catch (e) {
             console.error(e);
             lastSearchResults = [];
+            ultimosResultadosEquipo = [];
           }
         };
         let timer;
@@ -8426,10 +8433,15 @@ async function handleAction(action, el) {
     case "team-save": {
       const selectedUser = state.selectedTeamUser;
       if (!selectedUser) {
-        // [Línea clave]: En vez de exigir una selección, se ofrece registrar a la persona buscada en el directorio.
-        abrirConfirmacionNuevoInvestigador(
-          $('[data-field="modal:user-search"]')?.value?.trim() || pendingNuevoInvestigador,
-        );
+        const textoBusqueda = $('[data-field="modal:user-search"]')?.value?.trim() || "";
+        if (ultimosResultadosEquipo.length > 0) {
+          // [Línea clave]: Hay coincidencias en el directorio, así que solo hay que elegir una de la lista.
+          toast("Selecciona un investigador de la lista de búsqueda.");
+          break;
+        }
+        // [Línea clave]: La persona no aparece en el directorio: se ofrece registrarla.
+        // Para qué? Abrir el alta solo cuando la persona decide guardar, y no mientras escribe o busca.
+        abrirConfirmacionNuevoInvestigador(textoBusqueda);
         break;
       }
       const rol = $('[data-field="modal:role"]')?.value || "Investigador/a asociado/a";

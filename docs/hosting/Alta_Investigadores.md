@@ -12,8 +12,8 @@ Hasta ahora, el buscador de equipo (`GET /auth/usuarios`) solo devolvía persona
 
 Con este flujo:
 
-1. La persona escribe un nombre o correo en el buscador del modal de equipo y la búsqueda no devuelve resultados.
-2. Se abre el diálogo **«¿Desea agregar al investigador?»** con botones **No, cancelar** y **Sí, agregarlo**.
+1. La persona escribe un nombre o correo en el buscador del modal de equipo. Si la búsqueda no devuelve resultados, el buscador muestra **solo un aviso discreto en línea** («Sin coincidencias en el directorio institucional. Si la persona no tiene cuenta, pulsa *Guardar participante* para registrarla»), **sin abrir ningún panel**: es habitual teclear mal y el sistema no debe interrumpir mientras se escribe.
+2. Al pulsar **«Guardar participante»** sin haber elegido a nadie del buscador, se abre el diálogo **«¿Desea agregar al investigador?»** con botones **No, cancelar** y **Sí, agregarlo**.
    - **No** cierra el diálogo y no modifica nada.
    - **Sí** abre el formulario de alta.
 3. El formulario registra, en un solo paso: **nombre, apellidos, correo institucional, escuela/instancia, ORCID, rol en la propuesta, tipo de hora, dedicación (horas) y responsabilidad**.
@@ -24,7 +24,7 @@ Con este flujo:
    - genera la contraseña inicial y la entrega por correo (SMTP) o en la respuesta cuando no hay SMTP configurado.
 5. La persona queda **sumada al equipo** de la propuesta con los datos de rol, tipo de hora, dedicación y responsabilidad elegidos.
 
-El mismo diálogo aparece si se pulsa «Guardar participante» sin haber seleccionado a nadie del buscador.
+Si la búsqueda **sí** encontró coincidencias y la persona no eligió ninguna, el sistema no ofrece el alta: muestra el aviso «Selecciona un investigador de la lista de búsqueda», porque la cuenta ya existe en el directorio.
 
 > La IA **no** interviene en este flujo: los campos del formulario de alta están excluidos del autocompletado por IA (prefijo `modal:new-user-` en `AI_CAMPOS_SIN_IA`).
 
@@ -191,7 +191,10 @@ Content-Type: application/json
 
 | Acción | Resultado |
 | :--- | :--- |
-| Búsqueda sin resultados | Abre el diálogo «¿Desea agregar al investigador?». |
+| Búsqueda sin resultados | Muestra solo un aviso en línea bajo el buscador; **no** abre ningún panel. |
+| Búsqueda con resultados | Muestra la lista de investigadores para que se elija uno. |
+| «Guardar participante» sin elegir a nadie y sin coincidencias | Abre el diálogo «¿Desea agregar al investigador?». |
+| «Guardar participante» sin elegir a nadie pero con coincidencias | Muestra el aviso «Selecciona un investigador de la lista de búsqueda»; no ofrece el alta porque la cuenta ya existe. |
 | «No, cancelar» | Cierra el diálogo; no se crea nada. |
 | «Sí, agregarlo» | Sustituye el diálogo por el formulario de alta. |
 | «Registrar y agregar al equipo» | Valida en el navegador (campos obligatorios, ORCID, Injection SQL), llama `POST /auth/usuarios` y, si la creación es exitosa, agrega al miembro a `state.teamMembers`, cierra el modal y muestra el aviso. |
@@ -248,7 +251,8 @@ Comprobaciones:
 
 ### 7.3 En el navegador
 
-- [x] Buscar un nombre inexistente en el modal de equipo → aparece el diálogo.
+- [x] Buscar un nombre inexistente en el modal de equipo → solo aparece un aviso en línea, sin panel.
+- [x] «Guardar participante» → el diálogo «¿Desea agregar al investigador?» aparece.
 - [x] «No» → el modal se cierra.
 - [x] «Sí» → aparece el formulario de alta.
 - [x] Registrar → la persona aparece en la lista de integrantes de la Pantalla 09 con rol, tipo de hora, horas y responsabilidad.
