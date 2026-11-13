@@ -99,6 +99,7 @@
 ### 2.4 Documentos y archivos
 
 - [x] Documentos de convocatoria se suben a Supabase Storage.
+- [x] Estructura única de carpetas en el bucket `convocatorias`: `<convocatoria>/documentos/` para los instrumentos oficiales y `<convocatoria>/propuestas/<SI-YYYY-NNN>/` para cada propuesta. Las rutas se construyen en `backend/app/almacenamiento.py` (migración V19 + `backend/scripts/migrar_storage_estructura.py` para reorganizar los archivos físicos).
 - [x] Los documentos de propuesta se registran en `proposal_documents` solo cuando tienen archivo real; la creación ya no inserta metadatos falsos.
 - [x] Consulta de documentos de convocatoria por convocatoria.
 - [x] Los documentos de propuesta se guardan como archivo real en Supabase Storage y metadatos en `proposal_documents`.
@@ -501,6 +502,7 @@ Pantallas principales: `02`, `21`, `22`, `27`, `28`, `29`, `30`.
 - [x] Cada dictamen queda asociado a usuario, rol, fecha y documento (Comité Técnico, Consejo de Escuela, Dirección y CIE).
 - [x] Las notificaciones se listan y se marcan como leídas.
 - [x] Los documentos se cargan, listan, descargan y eliminan (instrumentos oficiales de convocatoria, verificados de punta a punta contra Supabase Storage).
+- [x] Las carpetas del bucket siguen la estructura institucional (`<convocatoria>/documentos/` y `<convocatoria>/propuestas/<código>/`), verificado con subidas reales de punta a punta.
 - [x] Cada transición de estado deja historial y notificación (verificado para el CIE en `test_endpoints.ps1`, FASE 10).
 - [ ] La IA responde con Gemini o con el motor de respaldo.
 - [ ] El frontend sigue funcionando si la IA falla.

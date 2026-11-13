@@ -31,22 +31,25 @@ import os
 from datetime import date, datetime
 from typing import Any, Literal, Optional
 
-import httpx
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from psycopg import Connection
 from pydantic import BaseModel, Field
 
+from ..almacenamiento import (
+    BUCKET,
+    SUBCARPETA_DOCUMENTOS,
+    asegurar_marcador,
+    borrar_archivo,
+    carpeta_unica,
+    config_storage,
+    nombre_archivo_seguro,
+    resolver_carpeta_convocatoria,
+    ruta_documento_convocatoria,
+    subir_archivo,
+)
 from ..db import get_conn
 from .catalogos import invalidar_cache_catalogos
-from .convocatorias import (
-    BUCKET,
-    MAX_BYTES,
-    MIME_POR_EXTENSION,
-    _borrar_de_storage,
-    _carpeta_unica,
-    _config_storage,
-    _nombre_archivo_seguro,
-)
+from .convocatorias import MAX_BYTES, MIME_POR_EXTENSION
 
 # [Línea clave]: Declara el router bajo el prefijo /admin para agrupar la administración institucional.
 router = APIRouter(prefix="/admin", tags=["administracion"])
@@ -1521,7 +1524,7 @@ def crear_convocatoria(
 
     with conn.cursor() as cur:
         _exigir_rol_admin(cur, id_usuario)
-        carpeta = _carpeta_unica(cur, payload.nombre)
+        carpeta = carpeta_unica(cur, payload.nombre)
         cur.execute(
             """
             INSERT INTO convocatorias
@@ -1935,7 +1938,7 @@ def subir_documento_admin(
     return:
         + DocumentoAdminOut : documento Instrumento registrado.
     """
-    nombre_archivo = _nombre_archivo_seguro(archivo.filename or "")
+    nombre_archivo = nombre_archivo_seguro(archivo.filename or "")
     extension = os.path.splitext(nombre_archivo)[1].lstrip(".")
     mime = MIME_POR_EXTENSION.get(extension)
     if not mime:
@@ -1947,17 +1950,12 @@ def subir_documento_admin(
     if len(contenido) > MAX_BYTES:
         raise HTTPException(413, f"El archivo supera el máximo de {MAX_BYTES // 1048576} MB.")
 
-    url, key = _config_storage()
+    url, key = config_storage()
 
     with conn.cursor() as cur:
         _exigir_rol_admin(cur, id_usuario)
-        convocatoria = _exigir_convocatoria(cur, id_convocatoria)
-        carpeta = convocatoria.get("carpeta_storage") or _carpeta_unica(cur, convocatoria["nombre"])
-        if not convocatoria.get("carpeta_storage"):
-            cur.execute(
-                "UPDATE convocatorias SET carpeta_storage = %s WHERE id_convocatoria = %s",
-                (carpeta, id_convocatoria),
-            )
+        _exigir_convocatoria(cur, id_convocatoria)
+        carpeta = resolver_carpeta_convocatoria(cur, id_convocatoria)
 
         if orden is None:
             cur.execute(
@@ -1967,31 +1965,25 @@ def subir_documento_admin(
             )
             orden = cur.fetchone()["siguiente"]
 
-        storage_path = f"{carpeta}/{nombre_archivo}"
+        # [Línea clave]: Los instrumentos de la convocatoria viven en su subcarpeta 'documentos'.
+        storage_path = ruta_documento_convocatoria(carpeta, nombre_archivo)
         file_url = f"{url}/storage/v1/object/public/{BUCKET}/{storage_path}"
 
-        try:
-            respuesta = httpx.post(
-                f"{url}/storage/v1/object/{BUCKET}/{storage_path}",
-                headers={
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": mime,
-                    "x-upsert": "false",
-                },
-                content=contenido,
-                timeout=60,
-            )
-        except httpx.HTTPError:
+        estado, detalle = subir_archivo(url, key, storage_path, contenido, mime)
+        if estado == 0:
             conn.rollback()
             raise HTTPException(502, "No se pudo contactar a Supabase Storage.")
 
-        if respuesta.status_code >= 400:
+        if estado >= 400:
             conn.rollback()
-            if "Duplicate" in respuesta.text or respuesta.status_code == 409:
+            if "Duplicate" in detalle or estado == 409:
                 raise HTTPException(
                     409, f"Ya existe un archivo llamado '{nombre_archivo}' en esta convocatoria."
                 )
-            raise HTTPException(502, f"Storage rechazó el archivo: {respuesta.text}")
+            raise HTTPException(502, f"Storage rechazó el archivo: {detalle}")
+
+        # [Línea clave]: El marcador deja visible la carpeta 'documentos' en el panel de Supabase.
+        asegurar_marcador(url, key, carpeta, SUBCARPETA_DOCUMENTOS)
 
         try:
             cur.execute(
@@ -2022,7 +2014,7 @@ def subir_documento_admin(
             conn.commit()
         except Exception:
             conn.rollback()
-            _borrar_de_storage(url, key, storage_path)
+            borrar_archivo(url, key, storage_path)
             raise HTTPException(500, "No se pudo registrar el documento en la base de datos.")
 
     return DocumentoAdminOut(**nuevo)
@@ -2103,8 +2095,8 @@ def eliminar_documento(
     # [Línea clave]: La fila ya quedó eliminada; el archivo de Storage se borra como limpieza.
     if documento["storage_path"]:
         try:
-            url, key = _config_storage()
-            _borrar_de_storage(url, key, documento["storage_path"])
+            url, key = config_storage()
+            borrar_archivo(url, key, documento["storage_path"])
         except HTTPException:
             pass
     return {"ok": True, "id_documento": id_documento}

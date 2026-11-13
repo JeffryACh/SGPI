@@ -47,6 +47,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from psycopg import Connection
 from pydantic import BaseModel, Field
 
+from ..almacenamiento import BUCKET, url_publica
 from ..db import get_conn
 from ..estados import (
     ESTADO_FORMULACION,
@@ -73,14 +74,7 @@ router = APIRouter(prefix="/propuestas", tags=["propuestas"])
 def _url_publica_documento(file_path: str) -> str:
     """Construir la URL pública de un documento almacenado en Supabase Storage."""
 
-    if not file_path:
-        return ""
-    if file_path.startswith("http://") or file_path.startswith("https://"):
-        return file_path
-    url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    if not url:
-        return file_path
-    return f"{url}/storage/v1/object/public/convocatorias/{file_path.lstrip('/')}"
+    return url_publica(file_path, BUCKET)
 
 
 # =====================================================================

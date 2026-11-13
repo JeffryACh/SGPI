@@ -29,16 +29,26 @@ ARCHIVO: backend/app/routers/vinculacion.py
 """
 
 import os
-import unicodedata
 from datetime import datetime
 from typing import Literal, Optional
 from uuid import uuid4
 
-import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from psycopg import Connection
 from pydantic import BaseModel, Field
 
+from ..almacenamiento import (
+    BUCKET,
+    SUBCARPETA_PROPUESTAS,
+    asegurar_marcador,
+    borrar_archivo,
+    config_storage,
+    nombre_archivo_seguro,
+    resolver_carpeta_convocatoria,
+    ruta_documento_propuesta,
+    subir_archivo,
+    url_publica,
+)
 from ..db import get_conn
 from ..estados import (
     ESTADO_COMITE,
@@ -53,7 +63,6 @@ router = APIRouter(prefix="/propuestas", tags=["vinculacion"])
 
 ROL_VINCULACION = "Vinculación"
 ROL_COMITE = "Comité Técnico"
-BUCKET = "convocatorias"
 MAX_BYTES = 20 * 1024 * 1024
 MIME_POR_EXTENSION = {
     "pdf": "application/pdf",
@@ -226,65 +235,12 @@ class VinculacionResultadoOut(BaseModel):
     mensaje: str
 
 
-def _slugify(texto: str) -> str:
-    """
-    Normalizar una cadena de texto para su uso seguro como nombre de objeto o carpeta en Storage.
-
-    Elimina acentos, caracteres diacríticos y caracteres especiales, convirtiendo a minúsculas
-    y separando palabras con guiones.
-
-    parametros:
-        - str : texto Cadena de caracteres a normalizar.
-
-    return:
-        + str : slug Cadena alfanumérica limpia y segura para rutas de almacenamiento.
-    """
-
-    t = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode()
-    t = "".join(c if c.isalnum() else "-" for c in t.lower()).strip("-")
-    return t or "documento"
-
-
-def _nombre_archivo_seguro(nombre: str) -> str:
-    """
-    Sanitizar el nombre de un archivo preservando su extensión original.
-
-    Aplica normalización slug al nombre base del archivo y conserva la extensión en minúsculas.
-
-    parametros:
-        - str : nombre Nombre original del archivo suministrado por el cliente.
-
-    return:
-        + str : nombre_seguro Nombre sanitizado y libre de caracteres incompatibles con el filesystem o URL.
-    """
-
-    base, ext = os.path.splitext(nombre or "")
-    return f"{_slugify(base)}{ext.lower()}"
-
-
-def _config_storage() -> tuple[str, str]:
-    """
-    Obtener las credenciales y URL de configuración del servicio Supabase Storage.
-
-    Lee las variables de entorno SUPABASE_URL y SUPABASE_SERVICE_KEY, validando su existencia.
-
-    return:
-        + tuple[str, str] : configuracion Tupla con (url_base, service_key).
-    """
-
-    url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_KEY", "")
-    if not url or not key:
-        raise HTTPException(500, "Supabase Storage no está configurado en el servidor.")
-    return url, key
-
-
 def _url_documento(file_path: str) -> str:
     """
     Construir la URL pública accesible para un archivo almacenado en Supabase Storage.
 
-    Si la ruta ya es una URL absoluta la devuelve tal cual; de lo contrario concatena
-    el endpoint de Storage del bucket 'convocatorias'.
+    Delega en 'app.almacenamiento' para que todos los routers compartan la misma regla
+    de construcción de enlaces hacia el bucket institucional.
 
     parametros:
         - str : file_path Ruta relativa del archivo en el bucket.
@@ -293,14 +249,7 @@ def _url_documento(file_path: str) -> str:
         + str : url URL completa de acceso al documento.
     """
 
-    if not file_path:
-        return ""
-    if file_path.startswith("http://") or file_path.startswith("https://"):
-        return file_path
-    url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    if not url:
-        return file_path
-    return f"{url}/storage/v1/object/public/{BUCKET}/{file_path.lstrip('/')}"
+    return url_publica(file_path, BUCKET)
 
 
 def _obtener_rol_vinculacion(cur, id_usuario: int) -> int:
@@ -721,6 +670,10 @@ def subir_documento_propuesta(
     Valida la extensión y el tamaño del archivo, lo carga mediante HTTP en el bucket 'convocatorias'
     de Supabase Storage y registra la fila correspondiente en 'proposal_documents'.
 
+    El archivo se guarda dentro de la carpeta de su convocatoria:
+    <convocatoria>/propuestas/<codigo>/<archivo>. La carpeta de la propuesta se crea
+    automáticamente con la primera subida.
+
     parametros:
         - int : id_propuesta Identificador de la propuesta a la que se adjunta el documento.
         - UploadFile : archivo Archivo binario cargado en la petición multipart.
@@ -733,7 +686,7 @@ def subir_documento_propuesta(
         + DocumentoPropuestaOut : documento Metadatos del documento creado con su URL pública.
     """
 
-    nombre_archivo = _nombre_archivo_seguro(archivo.filename or "")
+    nombre_archivo = nombre_archivo_seguro(archivo.filename or "")
     extension = os.path.splitext(nombre_archivo)[1].lstrip(".")
     mime = MIME_POR_EXTENSION.get(extension)
     if not mime:
@@ -745,15 +698,26 @@ def subir_documento_propuesta(
     if len(contenido) > MAX_BYTES:
         raise HTTPException(413, f"El archivo supera el máximo de {MAX_BYTES // 1048576} MB.")
 
-    url, key = _config_storage()
+    url, key = config_storage()
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT COALESCE(codigo, 'SI-' || id_propuesta) AS codigo FROM propuestas WHERE id_propuesta = %s",
+            """
+            SELECT COALESCE(p.codigo, 'SI-' || p.id_propuesta) AS codigo,
+                   p.id_convocatoria
+            FROM propuestas p
+            WHERE p.id_propuesta = %s
+            """,
             (id_propuesta,),
         )
         propuesta = cur.fetchone()
         if not propuesta:
             raise HTTPException(404, "Propuesta no encontrada.")
+        if not propuesta["id_convocatoria"]:
+            raise HTTPException(
+                400,
+                "La propuesta no está asociada a una convocatoria, por lo que no se puede "
+                "reservar su carpeta de documentos.",
+            )
 
         cur.execute(
             "SELECT 1 FROM usuarios WHERE id_usuario = %s AND estado_activo",
@@ -762,32 +726,32 @@ def subir_documento_propuesta(
         if not cur.fetchone():
             raise HTTPException(403, "El usuario que adjunta el documento no está activo.")
 
-        carpeta = f"propuestas/{_slugify(propuesta['codigo'])}"
+        # [Línea clave]: La carpeta de la propuesta cuelga de su convocatoria, de modo que todo
+        #                lo que pertenece a la convocatoria queda junto en el bucket.
+        carpeta_convocatoria = resolver_carpeta_convocatoria(cur, propuesta["id_convocatoria"])
         # [Línea clave]: Un sufijo único permite conservar versiones del mismo nombre
         # sin que Supabase Storage rechace la carga por archivo duplicado.
-        storage_path = f"{carpeta}/{uuid4().hex[:8]}-{nombre_archivo}"
+        storage_path = ruta_documento_propuesta(
+            carpeta_convocatoria,
+            propuesta["codigo"],
+            f"{uuid4().hex[:8]}-{nombre_archivo}",
+        )
         file_url = f"{url}/storage/v1/object/public/{BUCKET}/{storage_path}"
 
-        try:
-            respuesta = httpx.post(
-                f"{url}/storage/v1/object/{BUCKET}/{storage_path}",
-                headers={
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": mime,
-                    "x-upsert": "false",
-                },
-                content=contenido,
-                timeout=60,
-            )
-        except httpx.HTTPError:
+        estado, detalle = subir_archivo(url, key, storage_path, contenido, mime)
+        if estado == 0:
             conn.rollback()
             raise HTTPException(502, "No se pudo contactar a Supabase Storage.")
 
-        if respuesta.status_code >= 400:
+        if estado >= 400:
             conn.rollback()
-            if "Duplicate" in respuesta.text or respuesta.status_code == 409:
+            if "Duplicate" in detalle or estado == 409:
                 raise HTTPException(409, f"Ya existe un archivo llamado '{nombre_archivo}'.")
-            raise HTTPException(502, f"Storage rechazó el archivo: {respuesta.text}")
+            raise HTTPException(502, f"Storage rechazó el archivo: {detalle}")
+
+        # [Línea clave]: El marcador deja visible la carpeta 'propuestas' de la convocatoria
+        # aunque todavía no tenga archivos.
+        asegurar_marcador(url, key, carpeta_convocatoria, SUBCARPETA_PROPUESTAS)
 
         try:
             cur.execute(
@@ -815,14 +779,7 @@ def subir_documento_propuesta(
             conn.commit()
         except Exception:
             conn.rollback()
-            try:
-                httpx.delete(
-                    f"{url}/storage/v1/object/{BUCKET}/{storage_path}",
-                    headers={"Authorization": f"Bearer {key}"},
-                    timeout=30,
-                )
-            except httpx.HTTPError:
-                pass
+            borrar_archivo(url, key, storage_path)
             raise HTTPException(500, "No se pudo registrar el documento en la base de datos.")
 
     return DocumentoPropuestaOut(**{**documento, "file_url": file_url})

@@ -39,6 +39,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg import Connection
 from pydantic import BaseModel, Field
 
+from ..almacenamiento import BUCKET, url_publica
 from ..db import get_conn
 from ..estados import (
     ESTADO_COMITE,
@@ -64,7 +65,7 @@ ESTADOS_POR_DECISION = {
 NIVELES_VALIDOS = (0, 6, 8, 10)
 PUNTAJE_MINIMO = 70
 NIVEL_OBLIGATORIO_MINIMO = 8
-BUCKET = "convocatorias"
+# [Línea clave]: BUCKET y url_publica se importan de 'app.almacenamiento' (bucket único institucional).
 
 
 # =====================================================================
@@ -442,8 +443,8 @@ def _url_documento(file_path: str) -> str:
     """
     Construir la URL pública o firmada de descarga para un archivo almacenado en Supabase Storage.
 
-    Examina la ruta del archivo; si ya es absoluta la retorna intacta, de lo contrario concatena
-    la variable de entorno SUPABASE_URL con el endpoint público del bucket de convocatorias.
+    Delega en 'app.almacenamiento' para que todos los routers compartan la misma regla
+    de construcción de enlaces hacia el bucket institucional.
 
     parametros:
         - str : file_path Ruta relativa o URL del archivo en el sistema de almacenamiento.
@@ -452,14 +453,7 @@ def _url_documento(file_path: str) -> str:
         + str : url URL pública accesible para visualización o descarga del documento.
     """
 
-    if not file_path:
-        return ""
-    if file_path.startswith("http://") or file_path.startswith("https://"):
-        return file_path
-    url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    if not url:
-        return file_path
-    return f"{url}/storage/v1/object/public/{BUCKET}/{file_path.lstrip('/')}"
+    return url_publica(file_path, BUCKET)
 
 
 def _documentos_propuesta(cur, id_propuesta: int) -> list[DocumentoPropuestaOut]:

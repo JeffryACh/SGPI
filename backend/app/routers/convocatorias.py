@@ -14,7 +14,8 @@ ARCHIVO: backend/app/routers/convocatorias.py
            - Consulta las tablas 'convocatorias', 'convocatoria_etapas' y 'convocatoria_documentos'
              en Supabase mediante la conexión de 'app.db.get_conn'.
            - Los archivos físicos viven en el bucket 'convocatorias' de Supabase Storage, organizados
-             en una carpeta por convocatoria: convocatorias/<carpeta_storage>/<archivo>.
+             en una carpeta por convocatoria: <convocatoria>/documentos/<archivo>. La estructura
+             completa y las reglas de nombres se definien en 'app.almacenamiento'.
     2.2.2. A dónde envía datos:
            - Envía listas estructuradas hacia el Frontend para poblar las pantallas 04 (Convocatorias),
              05 (Detalle de Convocatoria) y 31 (Administración de Convocatorias).
@@ -28,28 +29,34 @@ ARCHIVO: backend/app/routers/convocatorias.py
 
 2.4. CONFIGURACIÓN REQUERIDA:
     Variables de entorno del backend: SUPABASE_URL y SUPABASE_SERVICE_KEY (service role, solo servidor).
-    Dependencias: httpx y python-multipart (necesaria para recibir archivos con Form/UploadFile).
+    Dependencias: python-multipart (necesaria para recibir archivos con Form/UploadFile).
+    Las rutas de Storage y la configuración del bucket se resuelven en 'app.almacenamiento'.
 ========================================================================================
 """
 
 import os
-import re
-import unicodedata
 from datetime import date, datetime
 from typing import Optional, Union
 
-import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from psycopg import Connection
 from pydantic import BaseModel
 
+from ..almacenamiento import (
+    BUCKET,
+    SUBCARPETA_DOCUMENTOS,
+    asegurar_marcador,
+    borrar_archivo,
+    config_storage,
+    nombre_archivo_seguro,
+    resolver_carpeta_convocatoria,
+    ruta_documento_convocatoria,
+    subir_archivo,
+)
 from ..db import get_conn
 
 # [Línea clave]: Declara el router bajo el prefijo /convocatorias para agrupar las rutas de concursos institucionales.
 router = APIRouter(prefix="/convocatorias", tags=["convocatorias"])
-
-# Bucket de Supabase Storage que actúa como carpeta raíz "convocatorias/".
-BUCKET = "convocatorias"
 
 # Tamaño máximo por archivo (debe coincidir con el límite configurado en el bucket).
 MAX_BYTES = 20 * 1024 * 1024
@@ -153,100 +160,6 @@ class ConvocatoriaDocumentoOut(BaseModel):
     version: str = "1.0"
     tamano_bytes: Optional[int] = None
     mime_type: Optional[str] = None
-
-
-# ----------------------------------------------------------------------------------------
-# Utilidades internas (Storage y carpetas)
-# ----------------------------------------------------------------------------------------
-
-
-def _slugify(texto: str) -> str:
-    """
-    Convertir un texto en un identificador seguro para rutas de Storage.
-
-    Elimina tildes, pasa a minúsculas y reemplaza cualquier secuencia no alfanumérica por un guion.
-    Ejemplo: 'Fondos VIE 2027' -> 'fondos-vie-2027'.
-
-    parametros:
-        - str : texto Texto original (título de convocatoria o nombre de archivo).
-
-    return:
-        + str : slug Texto normalizado ('sin-nombre' si queda vacío).
-    """
-    t = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode()
-    t = re.sub(r"[^a-zA-Z0-9]+", "-", t.lower()).strip("-")
-    return t or "sin-nombre"
-
-
-def _nombre_archivo_seguro(nombre: str) -> str:
-    """
-    Normalizar el nombre de un archivo conservando su extensión.
-
-    parametros:
-        - str : nombre Nombre original del archivo subido (ej. 'Formulario Final.DOCX').
-
-    return:
-        + str : nombre_seguro Nombre en formato slug (ej. 'formulario-final.docx').
-    """
-    stem, ext = os.path.splitext(nombre or "")
-    return f"{_slugify(stem)}{ext.lower()}"
-
-
-def _config_storage() -> tuple[str, str]:
-    """
-    Leer la configuración de Supabase Storage desde las variables de entorno.
-
-    return:
-        + tuple[str, str] : (url, service_key) URL base del proyecto y service role key.
-
-    Lanza HTTPException 500 si falta alguna variable (evita tumbar todo el backend al arrancar).
-    """
-    url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_KEY", "")
-    if not url or not key:
-        raise HTTPException(500, "Supabase Storage no está configurado en el servidor.")
-    return url, key
-
-
-def _carpeta_unica(cur, nombre: str) -> str:
-    """
-    Calcular una carpeta de Storage única para una convocatoria a partir de su título.
-
-    Si el slug ya está en uso por otra convocatoria, agrega un sufijo numérico (-2, -3, ...).
-
-    parametros:
-        - cursor : cur Cursor activo de la transacción.
-        - str : nombre Título de la convocatoria.
-
-    return:
-        + str : carpeta Nombre de carpeta disponible.
-    """
-    base = _slugify(nombre)
-    carpeta, n = base, 2
-    while True:
-        cur.execute(
-            "SELECT 1 FROM convocatorias WHERE carpeta_storage = %s", (carpeta,)
-        )
-        if not cur.fetchone():
-            return carpeta
-        carpeta = f"{base}-{n}"
-        n += 1
-
-
-def _borrar_de_storage(url: str, key: str, storage_path: str) -> None:
-    """
-    Eliminar un archivo de Storage (limpieza si falla el registro en la base de datos).
-
-    Es un intento de mejor esfuerzo: si falla, no propaga el error.
-    """
-    try:
-        httpx.delete(
-            f"{url}/storage/v1/object/{BUCKET}/{storage_path}",
-            headers={"Authorization": f"Bearer {key}"},
-            timeout=30,
-        )
-    except httpx.HTTPError:
-        pass
 
 
 # ----------------------------------------------------------------------------------------
@@ -387,7 +300,7 @@ def subir_documento_convocatoria(
     """
     Subir un instrumento a Supabase Storage y registrarlo en 'convocatoria_documentos'.
 
-    El archivo se guarda en convocatorias/<carpeta_storage>/<nombre-archivo-seguro>. Si la convocatoria
+    El archivo se guarda en <convocatoria>/documentos/<nombre-archivo-seguro>. Si la convocatoria
     todavía no tiene carpeta asignada, se calcula a partir de su título y se persiste. Si el registro en
     la base de datos falla después de subir el archivo, este se elimina de Storage para no dejar huérfanos.
 
@@ -404,7 +317,7 @@ def subir_documento_convocatoria(
         + ConvocatoriaDocumentoOut : documento Registro creado, con su URL pública.
     """
     # 1) Validar formato y tamaño antes de tocar Storage
-    nombre_archivo = _nombre_archivo_seguro(archivo.filename or "")
+    nombre_archivo = nombre_archivo_seguro(archivo.filename or "")
     extension = os.path.splitext(nombre_archivo)[1].lstrip(".")
     mime = MIME_POR_EXTENSION.get(extension)
     if not mime:
@@ -416,25 +329,11 @@ def subir_documento_convocatoria(
     if len(contenido) > MAX_BYTES:
         raise HTTPException(413, f"El archivo supera el máximo de {MAX_BYTES // 1048576} MB.")
 
-    url, key = _config_storage()
+    url, key = config_storage()
 
     with conn.cursor() as cur:
         # 2) Resolver la carpeta de la convocatoria (se asigna una sola vez)
-        cur.execute(
-            "SELECT nombre, carpeta_storage FROM convocatorias WHERE id_convocatoria = %s",
-            (id_convocatoria,),
-        )
-        conv = cur.fetchone()
-        if not conv:
-            raise HTTPException(404, "Convocatoria no encontrada.")
-
-        carpeta = conv["carpeta_storage"]
-        if not carpeta:
-            carpeta = _carpeta_unica(cur, conv["nombre"])
-            cur.execute(
-                "UPDATE convocatorias SET carpeta_storage = %s WHERE id_convocatoria = %s",
-                (carpeta, id_convocatoria),
-            )
+        carpeta = resolver_carpeta_convocatoria(cur, id_convocatoria)
 
         if orden is None:
             cur.execute(
@@ -444,32 +343,26 @@ def subir_documento_convocatoria(
             )
             orden = cur.fetchone()["siguiente"]
 
-        storage_path = f"{carpeta}/{nombre_archivo}"
+        # [Línea clave]: Los instrumentos de la convocatoria viven en su subcarpeta 'documentos'.
+        storage_path = ruta_documento_convocatoria(carpeta, nombre_archivo)
         file_url = f"{url}/storage/v1/object/public/{BUCKET}/{storage_path}"
 
         # 3) Subir el archivo (x-upsert=false: nunca pisa un archivo existente)
-        try:
-            r = httpx.post(
-                f"{url}/storage/v1/object/{BUCKET}/{storage_path}",
-                headers={
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": mime,
-                    "x-upsert": "false",
-                },
-                content=contenido,
-                timeout=60,
-            )
-        except httpx.HTTPError:
+        estado, detalle = subir_archivo(url, key, storage_path, contenido, mime)
+        if estado == 0:
             conn.rollback()
             raise HTTPException(502, "No se pudo contactar a Supabase Storage.")
 
-        if r.status_code >= 400:
+        if estado >= 400:
             conn.rollback()
-            if "Duplicate" in r.text or r.status_code == 409:
+            if "Duplicate" in detalle or estado == 409:
                 raise HTTPException(
                     409, f"Ya existe un archivo llamado '{nombre_archivo}' en esta convocatoria."
                 )
-            raise HTTPException(502, f"Storage rechazó el archivo: {r.text}")
+            raise HTTPException(502, f"Storage rechazó el archivo: {detalle}")
+
+        # [Línea clave]: El marcador deja visible la carpeta 'documentos' en el panel de Supabase.
+        asegurar_marcador(url, key, carpeta, SUBCARPETA_DOCUMENTOS)
 
         # 4) Registrar la fila; si falla, se limpia el archivo recién subido
         try:
@@ -492,7 +385,7 @@ def subir_documento_convocatoria(
             conn.commit()
         except Exception:
             conn.rollback()
-            _borrar_de_storage(url, key, storage_path)
+            borrar_archivo(url, key, storage_path)
             raise HTTPException(500, "No se pudo registrar el documento en la base de datos.")
 
     return ConvocatoriaDocumentoOut(**nuevo)

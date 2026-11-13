@@ -191,3 +191,29 @@ Este documento registra la evolución del modelo de base de datos relacional par
 - **Reinicio obligatorio:** después de aplicar el script hay que reiniciar el backend, porque la comprobación de la columna se cachea al iniciar el proceso.
 - **Verificación:** consultas de control sobre `information_schema.columns`, `pg_indexes` y las filas de `usuarios` con ORCID registrado.
 - **Aplicación:** lo ejecuta el administrador en el SQL Editor de Supabase. Es idempotente: puede reejecutarse sin efectos adicionales.
+
+---
+
+## 10. Migración V19 — Estructura de carpetas de Supabase Storage
+
+### Script: `Base de datos/Scripts/V19__estructura_carpetas_storage.sql`
+- **Propósito:** hacer que la base de datos refleje la nueva distribución de la documentación institucional en el bucket `convocatorias`, en la que cada convocatoria es la raíz de sus documentos y de sus propuestas:
+
+  ```
+  <bucket 'convocatorias'>/
+  └── <carpeta de la convocatoria>/
+      ├── documentos/          -> instrumentos oficiales de la convocatoria
+      └── propuestas/
+          └── <SI-YYYY-NNN>/    -> documentos de la propuesta
+  ```
+- **Naturaleza:** script idempotente de reescritura de rutas; no elimina filas ni archivos.
+- **Causa raíz que corrige:** los instrumentos de la convocatoria se guardaban en la raíz de su carpeta (`<carpeta>/<archivo>`) y los documentos de las propuestas vivían en una carpeta global `propuestas/<código>/`, desconectada de la convocatoria a la que pertenecen. Además, `convocatorias.carpeta_storage` guardaba el valor con el prefijo del bucket (`convocatorias/vie-2027`), lo que armaba una ruta duplicada al combinarse con el bucket `convocatorias`.
+- **Contenido:**
+  - Normaliza `convocatorias.carpeta_storage`: la carpeta es ahora relativa a la raíz del bucket y la convocatoria institucional vigente adopta su carpeta real (`fondos-vie-2027`), donde ya están los archivos subidos desde el panel de Supabase.
+  - Reescribe `convocatoria_documentos.storage_path` y `file_url` para insertar el segmento `documentos/` en las rutas de una sola carpeta y archivo.
+  - Completa la ruta de los documentos heredados del seed que no tenían `storage_path` pero sí apuntan al bucket, para que también usen `<convocatoria>/documentos/`.
+  - Reescribe `proposal_documents.file_path` de `propuestas/<código>/<archivo>` a `<convocatoria>/propuestas/<SI-YYYY-NNN>/<archivo>`, conservando las mayúsculas del código institucional (lo genera el trigger V9).
+- **Compatibilidad:** `backend/app/almacenamiento.py` normaliza el valor de `carpeta_storage` en tiempo de ejecución (`normalizar_carpeta`), así que el backend nuevo funciona incluso antes de aplicar el script; conviene aplicarlo primero para que la base quede coherente.
+- **Nota sobre los archivos:** los 25 registros de `proposal_documents` reescritos apuntaban a archivos que ya no existen en el bucket (se fueron con el bucket `propuestas` que se eliminó). La migración actualiza la ruta registrada, no el contenido: esos documentos hay que volver a subirlos.
+- **Verificación:** consultas de control sobre `convocatorias.carpeta_storage`, `convocatoria_documentos.storage_path`/`file_url` y `proposal_documents.file_path`.
+- **Aplicación:** lo ejecuta el administrador en el SQL Editor de Supabase. Los archivos físicos se reorganizan con `backend/scripts/migrar_storage_estructura.py`.

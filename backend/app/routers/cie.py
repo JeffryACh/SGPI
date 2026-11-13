@@ -38,6 +38,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg import Connection
 from pydantic import BaseModel, Field
 
+from ..almacenamiento import BUCKET, url_publica
 from ..db import get_conn
 from ..estados import (
     ESTADO_APROBADA_CIE,
@@ -73,7 +74,7 @@ ESTADO_POR_RESOLUCION = {
     4: ESTADO_APROBADA_CIE,
 }
 
-BUCKET = "convocatorias"
+# [Línea clave]: BUCKET y url_publica se importan de 'app.almacenamiento' (bucket único institucional).
 
 
 # =====================================================================
@@ -228,14 +229,7 @@ class CieResultadoOut(BaseModel):
 def _url_documento(file_path: str) -> str:
     """Construir la URL pública de un documento sin romper lecturas si Storage no está configurado."""
 
-    if not file_path:
-        return ""
-    if file_path.startswith("http://") or file_path.startswith("https://"):
-        return file_path
-    url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    if not url:
-        return file_path
-    return f"{url}/storage/v1/object/public/{BUCKET}/{file_path.lstrip('/')}"
+    return url_publica(file_path, BUCKET)
 
 
 def _documentos_propuesta(cur, id_propuesta: int) -> list[DocumentoPropuestaOut]:
