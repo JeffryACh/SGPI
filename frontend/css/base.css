@@ -215,6 +215,24 @@
       gap: 20px
     }
 
+    /* Aviso del recorrido de demostración: indica con qué cuenta institucional se está actuando. */
+    .aviso-demo {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 40px;
+      background: var(--soft);
+      border-bottom: 1px solid var(--line);
+      font-size: 13px
+    }
+
+    .aviso-demo-texto {
+      display: flex;
+      align-items: center;
+      gap: 8px
+    }
+
     .icon-btn {
       display: grid;
       place-items: center;

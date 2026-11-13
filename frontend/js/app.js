@@ -390,6 +390,143 @@ async function apiLogin(correo, password) {
 }
 
 /**
+ * Cuentas institucionales de demostración descargadas del backend.
+ * Cada elemento lleva id_usuario, nombre, correo y los roles que la cuenta posee.
+ */
+let cuentasDemo = null;
+
+/**
+ * Correspondencia entre cada rol de la interfaz y los nombres de rol que usa el backend.
+ * Se obtiene invirtiendo ROLE_KEYS para no duplicar la lista de nombres en dos lugares.
+ */
+const ROLES_BACKEND = Object.entries(ROLE_KEYS).reduce((acumulado, [nombre, clave]) => {
+  (acumulado[clave] = acumulado[clave] || []).push(nombre);
+  return acumulado;
+}, {});
+
+/**
+ * Cuenta institucional preferida para cada rol en los recorridos de demostración.
+ * Si la cuenta preferida no está disponible se usa la primera que tenga el rol.
+ */
+const CUENTA_DEMO_PREFERIDA = {
+  investigador: "laura.mendez@example.com",
+  vinculacion: "mariana.solis@example.com",
+  comite: "gabriel.sanchez@example.com",
+  consejo: "patricia.vargas@example.com",
+  direccion: "elena.chacon@example.com",
+  cie: "carlos.morales@example.com",
+  vie: "elena.chacon@example.com",
+  administracion: "administrador@example.com",
+};
+
+/**
+ * Descargar del backend las cuentas institucionales de demostración y sus roles.
+ * El resultado se cachea en memoria: solo se necesita una vez por sesión.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<Array<Object>> : cuentas Cuentas de demostración descargadas (vacío si falla).
+ */
+async function cargarCuentasDemo() {
+  if (cuentasDemo) return cuentasDemo;
+  try {
+    const res = await fetch(`${API_URL}/auth/cuentas-demo`);
+    cuentasDemo = res.ok ? await res.json() : [];
+  } catch (err) {
+    console.warn("cargarCuentasDemo error:", err);
+    cuentasDemo = [];
+  }
+  return cuentasDemo;
+}
+
+/**
+ * Resolver la cuenta institucional de demostración que corresponde a un rol de la interfaz.
+ * Prioriza la cuenta preferida del recorrido y, si no existe, toma la primera con ese rol.
+ * parametros:
+ *     - string : clave Clave del rol de la interfaz ('investigador', 'comite', 'cie', ...).
+ * return:
+ *     + Object|null : cuenta Cuenta de demostración elegida o null si el rol no tiene cuenta.
+ */
+function cuentaDemoParaRol(clave) {
+  const nombres = ROLES_BACKEND[clave] || [];
+  const candidatas = (cuentasDemo || []).filter((cuenta) =>
+    (cuenta.roles || []).some((rol) => nombres.includes(rol)),
+  );
+  if (!candidatas.length) return null;
+  const preferida = CUENTA_DEMO_PREFERIDA[clave];
+  return (
+    candidatas.find(
+      (cuenta) => String(cuenta.correo || "").toLowerCase() === String(preferida || "").toLowerCase(),
+    ) || candidatas[0]
+  );
+}
+
+/**
+ * Cambiar el usuario efectivo de la demostración al Adoptar la cuenta institucional del rol.
+ *
+ * El botón «Cambiar rol» del prototipo no reescribe la autorización del backend: en su lugar
+ * la sesión adopta la cuenta que realmente posee ese rol, de modo que cada consulta se valida
+ * con las reglas reales y los datos mostrados corresponden a la bandeja de ese rol.
+ * parametros:
+ *     - string : clave Clave del rol de la interfaz al que se quiere pasar.
+ * return:
+ *     + Promise<boolean> : exito True si el cambio de rol se aplicó correctamente.
+ */
+async function cambiarRolDemo(clave) {
+  await cargarCuentasDemo();
+  const cuenta = cuentaDemoParaRol(clave);
+  if (!cuenta) {
+    toast("No hay una cuenta institucional de demostración para ese rol.");
+    return false;
+  }
+  // [Línea clave]: El usuario que inició sesión se conserva para poder volver a él con «Volver a mi usuario».
+  if (!session?.usuarioAutenticado && session?.user) session.usuarioAutenticado = { ...session.user };
+  session.user = {
+    ...session.user,
+    id_usuario: cuenta.id_usuario,
+    nombre: cuenta.nombre,
+    correo: cuenta.correo,
+    roles: cuenta.roles,
+    orcid: "",
+  };
+  setSession(session);
+  applyRole(clave);
+  save();
+  // [Línea clave]: Las notificaciones pertenecen a la cuenta activa: se vuelven a pedir al cambiar de rol.
+  Notificaciones();
+  // [Línea clave]: homeFor() lleva a cada rol a su pantalla de inicio y la recarga es forzosa:
+  //                si el hash no cambia, el cargador de la pantalla debe volver a ejecutarse.
+  go(homeFor(), true);
+  toast(`Rol de demostración: ${roles[clave]?.label || clave}.`);
+  return true;
+}
+
+/**
+ * Restituir el usuario que inició sesión después de haber adoptado otro rol de demostración.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + Promise<boolean> : exito True si se restauró el usuario autenticado original.
+ */
+async function volverAlUsuarioAutenticado() {
+  const original = session?.usuarioAutenticado;
+  if (!original) {
+    toast("No hay otro usuario activo en esta sesión.");
+    return false;
+  }
+  session.user = { ...original };
+  delete session.usuarioAutenticado;
+  setSession(session);
+  const clave = ROLE_KEYS[original.roles?.[0]] || "investigador";
+  applyRole(clave);
+  save();
+  Notificaciones();
+  go(homeFor(), true);
+  toast(`Sesión restaurada de ${original.nombre}.`);
+  return true;
+}
+
+/**
  * Registrar la propuesta completa en el backend mediante una única transacción.
  * Envía el payload consolidado a POST /propuestas y propaga el mensaje de error del servidor.
  * parametros:
@@ -468,6 +605,12 @@ const SCREEN_LOADERS = {
         await Promise.all([cargarBandejaCie(), cargarDashboardCie()]);
         return null;
       }
+      if (state.role === "investigador") {
+        // [Línea clave]: El panel del investigador se alimenta de las propuestas de la cuenta activa:
+        //                al cambiar de rol de demostración hay que volver a pedir esos contadores.
+        await Promise.all([numsPropuestas(), propuestaMasReciente(), top3PropuestasMasRecientes()]);
+        return null;
+      }
       return null;
     } catch (e) {
       console.warn("SCREEN_LOADERS 02 error:", e);
@@ -487,6 +630,12 @@ const SCREEN_LOADERS = {
     if (state.role === "consejo") return cargarBandejaConsejo();
     if (state.role === "direccion") return cargarBandejaDireccion();
     if (state.role === "cie") return cargarBandejaCie();
+    // [Línea clave]: Los roles administrativos no tienen bandeja de evaluación: se les lleva a
+    //                la pantalla de Convocatorias en vez de consultar la bandeja de Vinculación.
+    if (state.role === "vie" || state.role === "administracion") {
+      go("31", true);
+      return null;
+    }
     return cargarBandejaVinculacion();
   },
   "22": () => cargarDossier(),
@@ -559,6 +708,10 @@ async function loadScreenData() {
   const id = location.hash.replace("#", "") || "01";
   const loader = SCREEN_LOADERS[id];
   if (!loader || !session) return;
+  // [Línea clave]: Si la pantalla no corresponde al rol activo no se pide nada: así se evita
+  //                disparar consultas que el backend rechazaría con 403 (p. ej. la bandeja de
+  //                Vinculación al abrir la pantalla 21 con un rol de Comité Técnico).
+  if (!guardRoute(id)) return;
   try {
     // Se espera el cargador para que la pantalla se pinte con los datos ya cargados.
     // Cada cargador captura sus propios errores, así que un fallo no deja la SPA congelada.
@@ -3780,6 +3933,18 @@ const person = () => {
 };
 
 /**
+ * Indicar si la sesión está operando con la cuenta institucional de otro rol de demostración.
+ * Es true cuando el botón «Cambiar rol» adoptó una cuenta distinta a la que inició sesión.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + boolean : acting True si la sesión actúa con una cuenta de demostración ajena.
+ */
+const actingDemo = () =>
+  !!session?.usuarioAutenticado &&
+  session?.user?.id_usuario !== session.usuarioAutenticado.id_usuario;
+
+/**
  * Obtener el identificador de pantalla de inicio asignado al rol activo.
  * Retorna '02' para investigador y Dirección (panel con contadores reales), '31'
  * para los roles administrativos (convocatorias y catálogos) y '21'
@@ -3798,7 +3963,8 @@ const homeFor = () =>
 
 /**
  * Cambiar el rol institucional activo en la demostración y sincronizar la etapa de la propuesta.
- * Asigna state.role con la nueva clave, fija el expediente SI-2027-014 y actualiza la etapa según el rol.
+ * Asigna state.role con la nueva clave, fija el expediente SI-2027-014, actualiza la etapa según
+ * el rol y descarta los datos en memoria del rol anterior para que nada se mezcle entre bandejas.
  * parametros:
  *     - string : key Clave del rol a activar ('investigador', 'vinculacion', etc.).
  * return:
@@ -3811,6 +3977,9 @@ function applyRole(key) {
   // por otro rol; se limpia el puntero al cambiar a un rol evaluador.
   if (["vinculacion", "comite", "consejo", "direccion", "cie"].includes(key) && rolAnterior !== key)
     state.viewProposalId = null;
+  // [Línea clave]: Al cambiar de rol se vacían las cachés de bandeja, expediente y decisiones:
+  //                de lo contrario la pantalla mostraría los datos del rol anterior.
+  if (rolAnterior !== key) limpiarDatosPorRol();
   state.viewProposal = state.created?.code || "SI-2027-014";
   state.stage = {
     investigador: state.stage,
@@ -3822,6 +3991,43 @@ function applyRole(key) {
     vie: "Convocatoria vigente",
     administracion: "Convocatoria vigente",
   }[key];
+}
+
+/**
+ * Descartar los datos en memoria que pertenecen al rol anterior.
+ * Vacía las bandejas, el expediente y las decisiones de evaluación para que el cambio de rol
+ * de demostración no mezcle información de un rol con otro.
+ * parametros:
+ *     (ninguno)
+ * return:
+ *     + void : undefined Reinicia las variables de estado por rol.
+ */
+function limpiarDatosPorRol() {
+  bandejaPropuestas = null;
+  misPropuestas = null;
+  bandejaComite = null;
+  bandejaConsejo = null;
+  bandejaDireccion = [];
+  bandejaCie = [];
+  dossierActual = null;
+  dossierCargadoEn = 0;
+  historialPropuestas = null;
+  evaluacionVinculacion = null;
+  documentosVinculacion = [];
+  vinculacionCargadaId = null;
+  evaluacionComite = null;
+  rubricaComite = null;
+  comiteCargadoId = null;
+  avalConsejo = null;
+  consejoCargadoId = null;
+  dictamenDireccion = null;
+  direccionCargadoId = null;
+  dashboardDireccion = null;
+  resolucionCie = null;
+  cieCargadoId = null;
+  dashboardCie = null;
+  numspropuestas = null;
+  propuestamasreciente = null;
 }
 
 /**
@@ -4343,7 +4549,7 @@ function shell(body, title, description = "", headingActions = "") {
     // [Línea clave]: Para los roles administrativos el «Inicio» es la administración de convocatorias.
     inicio = state.role === "vie" || state.role === "administracion" ? "31" : "02";
   const module = (screen(current) || {}).module || "Expediente";
-  return `<div class="app"><aside class="sidebar"><div class="brand"><div class="brand-mark">S</div><div><div class="brand-name">SGPI</div><span class="tec-wordmark">Tecnológico de Costa Rica</span></div></div><nav aria-label="Navegación principal"><div class="nav-group">${navItem("Inicio", inicio, "home", current === inicio)}${research ? navItem("Mis propuestas", "06", "folder", +current >= 6 && +current <= 20) : navItem("Bandeja de trabajo", "21", "inbox", +current >= 21 && +current <= 27)}${research ? navItem("Convocatorias", "04", "calendar", current === "04" || current === "05") : ""}${historical ? navItem("Consulta histórica", "29", "search", current === "29" || current === "30") : ""}</div>${admin ? `<div class="nav-title" style="margin-top:28px">SUPERADMINISTRACIÓN</div><div class="nav-group">${navItem("Convocatorias", "31", "calendar", current === "31")}${navItem("Rúbricas y catálogos", "32", "settings", current === "32")}</div>` : ""}</nav><div class="nav-group" style="margin-top:auto">${navItem("Mi perfil", "33", "user", current === "33")}<button class="nav-item has-tooltip" data-action="contact" data-tooltip="Persona de contacto y canales de apoyo." title="Persona de contacto y canales de apoyo.">${icon("info")}Contacto y soporte</button><button class="nav-item has-tooltip" data-action="logout" data-tooltip="${esc(optionHelp["Cerrar sesión"])}" title="${esc(optionHelp["Cerrar sesión"])}">${icon("logout")}Cerrar sesión</button></div></aside><div class="main"><header class="topbar"><div class="topbar-context"><strong>VIE</strong></div><div class="topbar-actions"><button class="icon-btn" data-go="03" aria-label="Notificaciones">${icon("bell")}${!state.read ? '<span class="notif-dot"></span>' : ""}</button><button class="profile-btn" data-action="user-menu" aria-expanded="${userMenuOpen}" aria-haspopup="menu"><span class="avatar">${esc(r.initials)}</span><span class="profile-text"><strong>${esc(r.name)}</strong><br><span class="micro muted">${r.label}</span></span>${icon("down")}</button>${userMenuOpen ? `<div class="user-menu" role="menu"><div class="user-menu-head"><strong>${esc(r.name)}</strong><div class="micro muted">${r.label}</div></div><button role="menuitem" data-go="33">${icon("user")}Mi perfil</button><button role="menuitem" data-action="settings">${icon("settings")}Ajustes y accesibilidad</button><button role="menuitem" data-action="contact">${icon("info")}Contactar soporte</button><button role="menuitem" class="danger" data-action="logout">${icon("logout")}Cerrar sesión</button></div>` : ""}</div></header><main class="content"><div class="page-heading"><div><h1>${esc(title)}</h1>${description ? `<p class="subtitle">${esc(description)}</p>` : ""}</div>${headingActions ? `<div class="action-row">${headingActions}</div>` : ""}</div>${body}</main></div><button class="support-fab" data-action="contact" aria-label="Contactar soporte">${icon("info")}<span>Soporte</span></button></div>`;
+  return `<div class="app"><aside class="sidebar"><div class="brand"><div class="brand-mark">S</div><div><div class="brand-name">SGPI</div><span class="tec-wordmark">Tecnológico de Costa Rica</span></div></div><nav aria-label="Navegación principal"><div class="nav-group">${navItem("Inicio", inicio, "home", current === inicio)}${research ? navItem("Mis propuestas", "06", "folder", +current >= 6 && +current <= 20) : navItem("Bandeja de trabajo", "21", "inbox", +current >= 21 && +current <= 27)}${research ? navItem("Convocatorias", "04", "calendar", current === "04" || current === "05") : ""}${historical ? navItem("Consulta histórica", "29", "search", current === "29" || current === "30") : ""}</div>${admin ? `<div class="nav-title" style="margin-top:28px">SUPERADMINISTRACIÓN</div><div class="nav-group">${navItem("Convocatorias", "31", "calendar", current === "31")}${navItem("Rúbricas y catálogos", "32", "settings", current === "32")}</div>` : ""}</nav><div class="nav-group" style="margin-top:auto">${navItem("Mi perfil", "33", "user", current === "33")}<button class="nav-item has-tooltip" data-action="contact" data-tooltip="Persona de contacto y canales de apoyo." title="Persona de contacto y canales de apoyo.">${icon("info")}Contacto y soporte</button><button class="nav-item has-tooltip" data-action="logout" data-tooltip="${esc(optionHelp["Cerrar sesión"])}" title="${esc(optionHelp["Cerrar sesión"])}">${icon("logout")}Cerrar sesión</button></div></aside><div class="main"><header class="topbar"><div class="topbar-context"><strong>VIE</strong></div><div class="topbar-actions"><button class="icon-btn" data-go="03" aria-label="Notificaciones">${icon("bell")}${!state.read ? '<span class="notif-dot"></span>' : ""}</button><button class="profile-btn" data-action="user-menu" aria-expanded="${userMenuOpen}" aria-haspopup="menu"><span class="avatar">${esc(r.initials)}</span><span class="profile-text"><strong>${esc(r.name)}</strong><br><span class="micro muted">${r.label}</span></span>${icon("down")}</button>${userMenuOpen ? `<div class="user-menu" role="menu"><div class="user-menu-head"><strong>${esc(r.name)}</strong><div class="micro muted">${r.label}</div></div><button role="menuitem" data-go="33">${icon("user")}Mi perfil</button><button role="menuitem" data-action="settings">${icon("settings")}Ajustes y accesibilidad</button><button role="menuitem" data-action="contact">${icon("info")}Contactar soporte</button><button role="menuitem" class="danger" data-action="logout">${icon("logout")}Cerrar sesión</button></div>` : ""}</div></header>${actingDemo() ? `<div class="aviso-demo"><span class="aviso-demo-texto">${icon("user")}<strong>Modo demostración:</strong> estás actuando como ${esc(r.name)} (${esc(r.label)})</span>${act("Volver a mi usuario", "demo-volver", "text compact")}</div>` : ""}<main class="content"><div class="page-heading"><div><h1>${esc(title)}</h1>${description ? `<p class="subtitle">${esc(description)}</p>` : ""}</div>${headingActions ? `<div class="action-row">${headingActions}</div>` : ""}</div>${body}</main></div><button class="support-fab" data-action="contact" aria-label="Contactar soporte">${icon("info")}<span>Soporte</span></button></div>`;
 }
 
 /**
@@ -7664,7 +7870,7 @@ function profile() {
         ["Rol activo", p.label],
         ["Tema", state.theme === "dark" ? "Oscuro" : "Claro"],
       ],
-    )}<div class="action-row mt">${act("Solicitar / actualizar ORCID", "profile-orcid-modal", "secondary", "edit")}${act("Ajustes y accesibilidad", "settings", "secondary", "settings")}${act("Contactar soporte", "contact", "text", "info")}</div></div><details class="accordion" style="max-width:760px;margin-top:28px"><summary>Opciones del prototipo</summary><div class="action-row mt">${act("Cambiar rol", "roles", "secondary", "user")}${act("Guía de recorridos", "guide", "text")}${act("Ver etapas", "stages", "text")}</div><p class="small muted mt">Los datos, documentos y decisiones son ejemplos para evaluar la interfaz.</p></details>`,
+    )}<div class="action-row mt">${act("Solicitar / actualizar ORCID", "profile-orcid-modal", "secondary", "edit")}${act("Ajustes y accesibilidad", "settings", "secondary", "settings")}${act("Contactar soporte", "contact", "text", "info")}</div></div>${actingDemo() ? `<div class="card card-pad mt" style="max-width:760px"><div class="action-row mb"><span>${icon("user")}<div><h3>Rol de demostración activo</h3><p class="small muted">La sesión está actuando con la cuenta institucional de <strong>${esc(p.label)}</strong>. Los datos que ves son los reales de esa bandeja.</p></div></div><div class="action-row">${act("Volver a mi usuario", "demo-volver", "secondary", "logout")}</div></div>` : ""}<details class="accordion" style="max-width:760px;margin-top:28px"><summary>Opciones del prototipo</summary><div class="action-row mt">${act("Cambiar rol", "roles", "secondary", "user")}${act("Guía de recorridos", "guide", "text")}${act("Ver etapas", "stages", "text")}</div><p class="small muted mt">Los datos, documentos y decisiones son ejemplos para evaluar la interfaz.</p></details>`,
     "Mi perfil",
   );
 }
@@ -7786,16 +7992,21 @@ function render() {
  * Cierra modales abiertos, repliega menús de usuario, restablece filtros y asigna el nuevo hash en location.
  * parametros:
  *     - string : id Identificador de pantalla a la que se desea navegar (ej. '02', '15').
+ *     - boolean : recargar Fuerza la descarga de los datos aunque la pantalla ya sea la actual.
  * return:
  *     + void : undefined Dispara la navegación y hashchange.
  */
-function go(id) {
+function go(id, recargar = false) {
   closeModal();
   userMenuOpen = false;
   activeFilter = "Todas";
   if (id !== "22") dossierTab = "Resumen";
-  if (location.hash === "#" + id) render();
-  else location.hash = id;
+  if (location.hash === "#" + id) {
+    render();
+    // [Línea clave]: Cuando la pantalla no cambia de hash no hay evento 'hashchange' y el cargador
+    //                no se ejecutaría: con 'recargar' se vuelve a pedir los datos de la pantalla.
+    if (recargar) loadScreenData();
+  } else location.hash = id;
 }
 
 /**
@@ -8176,9 +8387,12 @@ async function handleAction(action, el) {
       toast("Sesión cerrada.");
       break;
     case "set-role":
-      applyRole(el.dataset.role);
-      save();
-      go(state.role === "investigador" ? "02" : "21");
+      // [Línea clave]: El cambio de rol de demostración adopta la cuenta institucional del rol:
+      //                las consultas siguen validándose en el backend y llegan los datos de esa bandeja.
+      await cambiarRolDemo(el.dataset.role);
+      break;
+    case "demo-volver":
+      await volverAlUsuarioAutenticado();
       break;
     case "login":
       await doLogin();
@@ -10599,7 +10813,7 @@ async function handleAction(action, el) {
       state = structuredClone(defaultState);
       if (session) applyRole(ROLE_KEYS[session.user.roles[0]]);
       save();
-      go(session ? homeFor() : "01");
+      go(session ? homeFor() : "01", true);
       toast("Recorrido reiniciado.");
       break;
     default:

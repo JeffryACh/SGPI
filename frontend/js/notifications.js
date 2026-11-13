@@ -189,15 +189,16 @@ const originalGo = go;
 
 /**
  * Envolver la función de navegación global go() para garantizar el cierre del menú de notificaciones.
- * Restablece la bandera notificationMenuOpen a false e invoca inmediatamente la función original originalGo(id).
+ * Restablece la bandera notificationMenuOpen a false e invoca inmediatamente la función original originalGo(id, recargar).
  * parametros:
  *     - string : id Identificador numérico o alfanumérico de la pantalla de destino.
+ *     - boolean : recargar Fuerza la descarga de los datos aunque la pantalla ya sea la actual.
  * return:
  *     + any : resultado El valor devuelto por la función originalGo.
  */
-go = function (id) {
+go = function (id, recargar = false) {
   notificationMenuOpen = false;
-  return originalGo(id);
+  return originalGo(id, recargar);
 };
 
 /**

@@ -110,6 +110,14 @@ html[data-theme="dark"] .profile-btn {
   border-color: var(--dark-border);
 }
 
+/* Aviso del recorrido de demostración */
+
+html[data-theme="dark"] .aviso-demo {
+  background: var(--dark-surface-emphasis);
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+}
+
 /* Tablas */
 
 html[data-theme="dark"] table,

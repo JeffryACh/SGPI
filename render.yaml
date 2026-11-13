@@ -22,6 +22,9 @@ services:
         value: tec.ac.cr
       - key: PASSWORD_DEMO
         sync: false
+      # Recorrido de demostración por roles (pantalla 33). Poner "0" en producción.
+      - key: MODO_DEMO
+        value: "1"
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT

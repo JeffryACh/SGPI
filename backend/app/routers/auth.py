@@ -70,6 +70,35 @@ _CORREO_FORMAT_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
 # [Línea clave]: Caché del resultado de la migración V18 (columna 'usuarios.identificacion_orcid').
 _ORCID_PERSISTENTE_DISPONIBLE: Optional[bool] = None
 
+# [Línea clave]: Roles institucionales que participan en los recorridos de demostración del prototipo.
+_ROLES_DEMOSTRACION = (
+    "Investigador",
+    "Vinculación",
+    "Comité Técnico",
+    "Consejo de Escuela",
+    "Dirección de Investigación",
+    "CIE",
+    "Funcionario VIE",
+    "Administrador del Sistema",
+)
+
+
+def modo_demo_activo() -> bool:
+    """
+    Indicar si el modo demostración está habilitado en el entorno.
+
+    El prototipo expone las cuentas institucionales de demostración para poder recorrer los
+    roles sin cerrar sesión e iniciar sesión otra vez. En una instalación real se desactiva
+    declarando 'MODO_DEMO=0'.
+
+    parametros:
+        (No recibe parámetros)
+
+    return:
+        + bool : activo True si las cuentas de demostración pueden listarse.
+    """
+    return (os.getenv("MODO_DEMO") or "1").strip().lower() not in ("0", "false", "no", "off")
+
 
 def dominios_correo_permitidos() -> tuple[str, ...]:
     """
@@ -584,6 +613,26 @@ class UsuarioBuscarOut(BaseModel):
     is_exact_match: bool = False
 
 
+class CuentaDemoOut(BaseModel):
+    """
+    Modelo de salida de las cuentas institucionales usadas en los recorridos de demostración.
+
+    Se utiliza como response_model en el endpoint GET /auth/cuentas-demo. Expone únicamente
+    datos de identificación y roles: nunca la huella de la contraseña.
+
+    atributos:
+        * int : id_usuario Identificador numérico único del usuario.
+        * str : nombre Nombre completo (nombre + apellidos).
+        * str : correo Correo institucional.
+        * list[str] : roles Nombres de los roles institucionales que posee la cuenta.
+    """
+
+    id_usuario: int
+    nombre: str
+    correo: str
+    roles: list[str]
+
+
 # [Línea clave]: Hash ficticio para mitigar ataques de temporización cuando el correo no existe en la BD.
 _DUMMY_HASH = hashlib.sha256(b"sin-usuario").hexdigest()
 
@@ -684,6 +733,54 @@ def buscar_usuarios(
             }
             for f in filas
         ]
+
+
+@router.get("/cuentas-demo", response_model=list[CuentaDemoOut])
+def listar_cuentas_demo(conn: Connection = Depends(get_conn)):
+    """
+    Listar las cuentas institucionales de demostración y los roles que poseen.
+
+    Sirve para que el prototipo recorra los roles institucionales sin cerrar sesión e iniciar
+    sesión otra vez: el frontend adopta la cuenta que corresponde al rol elegido y sigue
+    consultando los endpoints reales, que validan el rol contra la base de datos. Solo se
+    devuelven datos de identificación y roles, nunca la huella de la contraseña.
+
+    El recorrido se desactiva declarando 'MODO_DEMO=0' en el entorno.
+
+    parametros:
+        - Connection : conn Conexión transaccional inyectada por FastAPI desde el pool.
+
+    return:
+        + list[dict] : cuentas Lista de cuentas institucionales activas con sus roles.
+    """
+
+    if not modo_demo_activo():
+        raise HTTPException(404, "El recorrido de demostración está deshabilitado en este entorno.")
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT u.id_usuario,
+                   TRIM(u.nombre || ' ' || u.lastname || ' ' || COALESCE(u.second_lastname, '')) AS nombre,
+                   u.correo,
+                   COALESCE(
+                     array_agg(r.nombre_rol ORDER BY r.nombre_rol)
+                       FILTER (WHERE r.nombre_rol IS NOT NULL),
+                     '{}'
+                   ) AS roles
+            FROM public.usuarios u
+            JOIN public.user_roles ur ON ur.id_usuario = u.id_usuario
+            JOIN public.roles r       ON r.id_rol = ur.id_rol
+            WHERE u.estado_activo
+              AND r.nombre_rol = ANY(%s)
+            GROUP BY u.id_usuario
+            ORDER BY u.id_usuario
+            """,
+            (list(_ROLES_DEMOSTRACION),),
+        )
+        filas = cur.fetchall()
+
+    return [{"id_usuario": f["id_usuario"], "nombre": f["nombre"], "correo": f["correo"], "roles": list(f["roles"])} for f in filas]
 
 
 @router.post("/usuarios", response_model=UsuarioCreadoOut, status_code=201)

@@ -43,6 +43,7 @@
 
 - [x] `POST /auth/login` valida correo, hash y usuario activo.
 - [x] El login devuelve roles del usuario.
+- [x] `GET /auth/cuentas-demo` lista las cuentas institucionales de demostración y sus roles (solo lectura, sin contraseña). Habilita el botón «Cambiar rol» de la pantalla 33: la sesión adopta la cuenta real del rol elegido y sigue validando cada consulta con las reglas del backend. Se desactiva con `MODO_DEMO=0`.
 - [ ] **Parcial:** el backend no emite token/JWT; la sesión vive solo en el frontend.
 - [ ] **Parcial:** los endpoints no exigen autenticación.
 - [ ] **Parcial:** los endpoints no validan que el rol del usuario permita la acción.
@@ -137,6 +138,7 @@
 | Estado | Método | Ruta | Uso actual |
 |---|---|---|---|
 | OK | POST | `/auth/login` | Conectado a pantalla 01 (retorna `orcid` del perfil del investigador) |
+| OK | GET | `/auth/cuentas-demo` | Cuentas institucionales de demostración y sus roles, para el «Cambiar rol» de la pantalla 33 (se desactiva con `MODO_DEMO=0`) |
 | OK | GET | `/auth/usuarios` | Búsqueda de investigadores institucionales activos con escape seguro `ILIKE` y retorno de ORCID de perfil |
 | OK | PATCH | `/auth/usuarios/{id_usuario}/orcid` | Solicitud, validación ISO 7064 MOD 11-2, unicidad y asociación del ORCID al perfil del investigador |
 | OK | POST | `/auth/usuarios` | Alta de una persona investigadora en el directorio institucional (`usuarios` + rol `Investigador`), con dominio de correo autorizado, ORCID válido y único, y entrega de la credencial inicial por SMTP o en la respuesta cuando no hay SMTP configurado |
@@ -247,6 +249,7 @@ Pantallas principales: `02`, `03`, `04`–`20`, `22`, `28`, `33`.
 - [x] **22 · Expediente:** pestañas Documentos, Evaluaciones, Resolución e Historial conectadas al dossier real.
 - [x] **28 · Historial:** conectado al arreglo `historial` y a `vinculacion_evaluaciones` del dossier.
 - [x] **33 · Perfil:** endpoint `PATCH /auth/usuarios/{id_usuario}/orcid` para solicitar, validar (ISO 7064 MOD 11-2) y vincular el ORCID único al perfil del investigador.
+- [x] **33 · Perfil:** «Cambiar rol» (modo demostración) adopta la cuenta institucional del rol elegido (`GET /auth/cuentas-demo`), recarga los datos reales de esa bandeja y permite volver al usuario original con «Volver a mi usuario». El recorrido se apaga con `MODO_DEMO=0`.
 - [ ] **33 · Perfil:** no hay endpoint para consultar roles/permisos actualizados.
 
 ### 4.2 Vinculación
