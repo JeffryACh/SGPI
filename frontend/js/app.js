@@ -4178,6 +4178,31 @@ function docPropuesta(d = {}) {
   return `<div class="doc-row"><span class="doc-icon">${icono}</span><div class="grow"><strong>${esc(nombre)}</strong><small>${esc(meta)}</small></div>${enlace}</div>`;
 }
 
+/**
+ * Construir el mensaje que se muestra cuando la lista de documentos no tiene archivos visibles.
+ * Distingue un expediente realmente vacío de un expediente que no se pudo cargar.
+ * parametros:
+ *     - Object|null : d Expediente consolidado (null cuando la carga del expediente falló).
+ *     - str : nota Texto de ayuda que acompaña al estado pendiente.
+ * return:
+ *     + string : estadoHtml Marcado HTML del aviso visible.
+ */
+function documentosVacios(
+  d = null,
+  nota = "Los archivos se adjuntan desde el expediente y quedan vinculados a la propuesta.",
+) {
+  // [Línea clave]: Si hay una propuesta real seleccionada pero su expediente no cargó, se informa
+  //                el fallo: un error de carga no debe disfrazarse de "expediente sin documentos".
+  if (!d && propuestaRealActiva()) {
+    return notice(
+      "No se pudo cargar el expediente",
+      "Los documentos no pudieron consultarse. Intenta de nuevo o revisa la bandeja de propuestas.",
+      "warning",
+    );
+  }
+  return docPendiente("Sin documentos registrados", nota);
+}
+
 /** Formatear bytes a texto legible (KB / MB). */
 function formatBytes(b) {
   if (!b) return "";
@@ -6224,7 +6249,7 @@ function tracking() {
   const documentosEtapa = `${
     (d?.documentos || []).length
       ? d.documentos.map(docPropuesta).join("")
-      : docPendiente("Sin documentos registrados", "Usa el botón para adjuntar el primer archivo real.")
+      : documentosVacios(d, "Usa el botón para adjuntar el primer archivo real.")
   }<div class="action-row mt">${act("Adjuntar documento", "upload", "secondary", "plus")}</div>`;
   return shell(
     `<div class="two-col"><div class="stack">${card(esc(d?.titulo || trackTitle), `<span class="project-code">${esc(trackCode)} · Versión 1.0</span><div class="action-row mt mb">${badge(stateText, "solid")}${badge(d?.nombre_modalidad || state.mode || "Desarrollo tecnológico")}</div>${action}<div class="stat-strip"><div><strong>${money(trackAmount)}</strong><span>Monto solicitado</span></div><div><strong>${esc(periodo)}</strong><span>Período de ejecución</span></div><div><strong>${trackHours} h</strong><span>Dedicación semanal</span></div></div>`)}${card("Documentos de la etapa", documentosEtapa)}</div>${card("Ruta del expediente", `<div class="timeline">${stageList.map((s, i) => `<div class="event ${s === stage ? "current" : ""}"><h3>${i < ix ? "✓ " : ""}${s}</h3><p>${["Investigador", "Vinculación", "Comité Técnico", "Consejos de Escuela", "Investigador → VIE", "Dirección de Investigación", "CIE", "Equipo investigador", "Investigador", "Dirección de Investigación", "Dirección de Investigación"][i]}</p></div>`).join("")}</div>`)}</div>`,
@@ -6476,7 +6501,7 @@ function dossier() {
     const docs = d?.documentos || [];
     body = docs.length
       ? docs.map(docPropuesta).join("")
-      : docPendiente("Sin documentos registrados", "Los archivos se adjuntan desde el expediente y quedan vinculados a la propuesta.");
+      : documentosVacios(d);
   } else if (dossierTab === "Evaluaciones") {
     const puntajeIA = evaluacionPreliminarIA ? `${Number(evaluacionPreliminarIA.puntaje_preliminar).toFixed(1)}/100 · ${evaluacionPreliminarIA.recomendacion_global}` : "87.8/100 · Recomendada (Preliminar)";
     const vin = d?.vinculacion_evaluaciones || [];
@@ -7112,7 +7137,7 @@ const events = [
  * Construir el marcado visual de la línea de tiempo de auditoría histórica.
  * Mapea la colección events a nodos de timeline con marca temporal, título, actor y resumen.
  * parametros:
- *     (ninguno)
+ *     - Object|null : d Expediente consolidado (null cuando la carga del expediente falló).
  * return:
  *     + string : timelineHtml Marcado HTML de los hitos del expediente.
  */
@@ -7130,6 +7155,22 @@ function historyContent(d = null) {
         (item) => `<div class="event"><small>${esc(fechaCorta(item.fecha_cambio))}</small><h3>${esc(item.estado_nuevo || "Cambio de estado")}</h3><p>${esc(item.responsable_nombre || "Sistema")}</p><p>${esc(item.observaciones || (item.estado_anterior ? `Estado anterior: ${item.estado_anterior}` : ""))}</p></div>`,
       )
       .join("")}</div>`;
+  }
+  // [Línea clave]: Con una propuesta real seleccionada el historial nunca se inventa: si el
+  //                expediente cargó pero no tiene hitos se informa el estado vacío, y si la carga
+  //                falló se informa el error. La línea de tiempo demostrativa queda reservada
+  //                para el contexto de prototipo sin expediente real.
+  if (propuestaRealActiva()) {
+    return d
+      ? notice(
+          "Sin actuaciones registradas",
+          "El expediente todavía no tiene cambios de estado registrados.",
+        )
+      : notice(
+          "No se pudo cargar el historial",
+          "El expediente no está disponible en este momento. Intenta de nuevo o revisa la bandeja de propuestas.",
+          "warning",
+        );
   }
   return `<div class="timeline">${events.map(([d, t, a, b]) => `<div class="event"><small>${d}</small><h3>${t}</h3><p>${a}</p><p>${b}</p></div>`).join("")}</div>`;
 }

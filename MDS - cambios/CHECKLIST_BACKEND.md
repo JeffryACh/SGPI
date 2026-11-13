@@ -494,7 +494,8 @@ Pantallas principales: `02`, `21`, `22`, `27`, `28`, `29`, `30`.
 - [x] CIE no puede resolver una propuesta que no esté en `7 · Dictaminada por Dirección` (409 validado en `test_endpoints.ps1`, FASE 10).
 - [ ] Crear propuesta completa y consultarla por ID.
 - [ ] Reenviar el mismo `client_uuid` no duplica.
-- [ ] Consultar expediente con todas sus tablas hijas.
+- [x] Consultar expediente con todas sus tablas hijas (`GET /propuestas/{id}`): devuelve equipo con ORCID, documentos, historial, evaluaciones y dictámenes. Verificado de punta a punta en navegador sobre la propuesta recién creada (documento visible y un solo hito de historial).
+- [x] El expediente nunca se sustituye por datos de demostración: sin historial real se informa el estado vacío y si la carga falla se informa el error.
 - [x] Cada transición de estado deja historial y notificación.
 - [x] Un estado no permitido devuelve error (409 validado en `test_endpoints.ps1`, FASE 11).
 - [x] Un rol sin facultad sobre la etapa devuelve error (409 validado en `test_endpoints.ps1`, FASE 11).

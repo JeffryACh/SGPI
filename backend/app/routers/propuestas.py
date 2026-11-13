@@ -67,6 +67,10 @@ from .auth import (
 from .dictamen_vie import parsear_dictamen
 from .ia import generar_y_guardar_evaluacion_ia, obtener_evaluacion_ia_guardada
 
+# [Línea clave]: Logger del módulo para registrar incidencias no fatales (por ejemplo, una
+#                evaluación preliminar IA que no se puede generar).
+logger = logging.getLogger(__name__)
+
 # [Línea clave]: Declara el router bajo el prefijo /propuestas para agrupar las operaciones centrales de expedientes.
 router = APIRouter(prefix="/propuestas", tags=["propuestas"])
 
@@ -1257,7 +1261,12 @@ def obtener_dossier_propuesta(
             raise HTTPException(status_code=404, detail="Propuesta no encontrada")
 
         equipo = [
-            {**dict(m), "orcid": generar_orcid_usuario(m["id_usuario"])}
+            # [Línea clave]: El ORCID de cada integrante se toma de su perfil institucional
+            #                (columna 'usuarios.identificacion_orcid' de la migración V18).
+            #                Si el investigador no lo tiene registrado, queda vacío: nunca se inventa.
+            {**dict(m), "orcid": obtener_orcid_usuario(
+                id_usuario=m["id_usuario"], correo=m["correo"], conn=conn
+            )}
             for m in equipo_cur.fetchall()
         ]
         objetivos = objetivos_cur.fetchall()
