@@ -1,8 +1,24 @@
 # Script de verificación integral de endpoints y servicios de SGPI Backend (FastAPI) y Frontend
 # Ejecutar en PowerShell: .\test_endpoints.ps1
 
-$BaseUrl = "http://localhost:3001"
-$FrontendUrl = "http://localhost:8080"
+[CmdletBinding()]
+param(
+    [string]$BaseUrl = "http://localhost:3001",
+    [string]$FrontendUrl = "http://localhost:8080"
+)
+
+# Asegurar codificación UTF-8 en la consola de PowerShell para evitar mojibake
+try {
+    [Console]::InputEncoding = [System.Text.Encoding]::UTF8
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+} catch {}
+
+$ProgressPreference = 'SilentlyContinue'
+
+# Reinicializar catálogos en memoria del script para evitar estados residuales
+$script:CatalogoEstados = @()
+$script:CatalogoRoles = @()
 
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "       VERIFICACION INTEGRAL DE ENDPOINTS SGPI            " -ForegroundColor Cyan
@@ -77,6 +93,83 @@ function Test-Endpoint {
 }
 
 # -------------------------------------------------------------
+# Fix-Mojibake: sanear cadenas UTF-8 interpretadas como Latin-1
+# -------------------------------------------------------------
+# [Línea clave]: Corrige la doble interpretación de bytes UTF-8 en consolas Windows PowerShell 5.1.
+function Fix-Mojibake {
+    param([string]$Texto)
+    if (-not $Texto -or $Texto -notmatch '[ÃÂ]') { return $Texto }
+    try {
+        $bytes = [System.Text.Encoding]::GetEncoding("ISO-8859-1").GetBytes($Texto)
+        return [System.Text.Encoding]::UTF8.GetString($bytes)
+    } catch {
+        return $Texto
+    }
+}
+
+# -------------------------------------------------------------
+# Get-NombreEstado: resolver el NOMBRE canónico oficial de un estado
+# -------------------------------------------------------------
+# [Línea clave]: Obtiene el nombre exacto con la codificación devuelta por el servidor,
+# evitando discrepancias de codificación (mojibake) entre Windows PowerShell y UTF-8.
+function Get-NombreEstado {
+    param([string]$NombreOClave)
+
+    if (-not $script:CatalogoEstados) {
+        return $NombreOClave
+    }
+    $buscado = Fix-Mojibake $NombreOClave
+
+    # 1. Búsqueda exacta directa
+    $fila = $script:CatalogoEstados | Where-Object { (Fix-Mojibake $_.nombre_estado) -eq $buscado } | Select-Object -First 1
+    if ($fila) { return (Fix-Mojibake $fila.nombre_estado) }
+
+    # 2. Diccionario de alias canónicos institucionales
+    $mapa = @{
+        "formulacion"                      = "En formulación"
+        "en formulacion"                   = "En formulación"
+        "vinculacion"                      = "En revisión de Vinculación"
+        "en revision de vinculacion"        = "En revisión de Vinculación"
+        "comite"                           = "En evaluación del Comité Técnico"
+        "comite tecnico"                   = "En evaluación del Comité Técnico"
+        "en evaluacion del comite tecnico" = "En evaluación del Comité Técnico"
+        "consejo"                          = "Pendiente de aval del Consejo"
+        "pendiente aval"                   = "Pendiente de aval del Consejo"
+        "pendiente de aval del consejo"    = "Pendiente de aval del Consejo"
+        "avalada"                          = "Avalada"
+        "sometida"                         = "Sometida ante VIE"
+        "sometida ante vie"                = "Sometida ante VIE"
+        "direccion"                        = "Dictaminada por Dirección"
+        "dictaminada"                      = "Dictaminada por Dirección"
+        "dictaminada por direccion"        = "Dictaminada por Dirección"
+        "cie"                              = "Aprobada por CIE"
+        "aprobada por cie"                 = "Aprobada por CIE"
+        "observaciones"                    = "Con observaciones"
+        "con observaciones"                = "Con observaciones"
+        "rechazada"                        = "Rechazada"
+        "ejecucion"                        = "En ejecución"
+        "en ejecucion"                     = "En ejecución"
+        "cerrada"                          = "Cerrada"
+    }
+    $claveMinuscula = ($buscado -replace '[áàäâ]', 'a' -replace '[éèëê]', 'e' -replace '[íìïî]', 'i' -replace '[óòöô]', 'o' -replace '[úùüû]', 'u' -replace '[^a-zA-Z0-9\s]', '').Trim().ToLower()
+    if ($mapa.ContainsKey($claveMinuscula)) {
+        $nombreOficial = $mapa[$claveMinuscula]
+        $fila = $script:CatalogoEstados | Where-Object { (Fix-Mojibake $_.nombre_estado) -eq $nombreOficial } | Select-Object -First 1
+        if ($fila) { return (Fix-Mojibake $fila.nombre_estado) }
+        return $nombreOficial
+    }
+
+    # 3. Búsqueda por coincidencia
+    $fila = $script:CatalogoEstados | Where-Object {
+        $nombreLimpio = ((Fix-Mojibake $_.nombre_estado) -replace '[áàäâ]', 'a' -replace '[éèëê]', 'e' -replace '[íìïî]', 'i' -replace '[óòöô]', 'o' -replace '[úùüû]', 'u' -replace '[^a-zA-Z0-9\s]', '').Trim().ToLower()
+        $nombreLimpio.Contains($claveMinuscula) -or $claveMinuscula.Contains($nombreLimpio)
+    } | Select-Object -First 1
+
+    if ($fila) { return (Fix-Mojibake $fila.nombre_estado) }
+    return $buscado
+}
+
+# -------------------------------------------------------------
 # Get-IdEstado: resolver el identificador de un estado por su NOMBRE
 # -------------------------------------------------------------
 # [Línea clave]: El identificador de la tabla «estados» no es parte del contrato: su
@@ -89,7 +182,12 @@ function Get-IdEstado {
         Write-Host "  [AVISO] El catálogo de estados no está cargado; no se puede resolver «$Nombre»." -ForegroundColor Yellow
         return $null
     }
-    $fila = $script:CatalogoEstados | Where-Object { $_.nombre_estado -eq $Nombre } | Select-Object -First 1
+    $nombreCanonico = Get-NombreEstado $Nombre
+    $fila = $script:CatalogoEstados | Where-Object {
+        $nom = Fix-Mojibake $_.nombre_estado
+        $nom -eq $nombreCanonico -or $_.nombre_estado -eq $nombreCanonico -or $_.nombre_estado -eq $Nombre
+    } | Select-Object -First 1
+
     if (-not $fila) {
         Write-Host "  [AVISO] El estado «$Nombre» no existe en el catálogo institucional." -ForegroundColor Yellow
         return $null
@@ -109,7 +207,18 @@ function Get-IdRol {
         Write-Host "  [AVISO] El catálogo de roles no está cargado; no se puede resolver «$Nombre»." -ForegroundColor Yellow
         return $null
     }
-    $fila = $script:CatalogoRoles | Where-Object { $_.nombre_rol -eq $Nombre } | Select-Object -First 1
+    $buscado = Fix-Mojibake $Nombre
+    $fila = $script:CatalogoRoles | Where-Object {
+        $nom = Fix-Mojibake $_.nombre_rol
+        $nom -eq $buscado -or $_.nombre_rol -eq $Nombre
+    } | Select-Object -First 1
+    if (-not $fila) {
+        $claveLimpia = ($buscado -replace '[áàäâ]', 'a' -replace '[éèëê]', 'e' -replace '[íìïî]', 'i' -replace '[óòöô]', 'o' -replace '[úùüû]', 'u' -replace '[^a-zA-Z0-9]', '').ToLower()
+        $fila = $script:CatalogoRoles | Where-Object {
+            $candLimpio = ((Fix-Mojibake $_.nombre_rol) -replace '[áàäâ]', 'a' -replace '[éèëê]', 'e' -replace '[íìïî]', 'i' -replace '[óòöô]', 'o' -replace '[úùüû]', 'u' -replace '[^a-zA-Z0-9]', '').ToLower()
+            $candLimpio.Contains($claveLimpia) -or $claveLimpia.Contains($candLimpio)
+        } | Select-Object -First 1
+    }
     if (-not $fila) {
         Write-Host "  [AVISO] El rol «$Nombre» no existe en el catálogo institucional." -ForegroundColor Yellow
         return $null
@@ -190,7 +299,10 @@ if ($loginDireccionInicial) {
 }
 $rolesCatalogo = Test-Endpoint -Name "Catálogo de roles institucionales" -Endpoint "/admin/catalogos/roles?id_usuario=$idUsuarioDireccion"
 if ($rolesCatalogo) {
-    $script:CatalogoRoles = @($rolesCatalogo)
+    $script:CatalogoRoles = @($rolesCatalogo) | ForEach-Object {
+        $_.nombre_rol = Fix-Mojibake $_.nombre_rol
+        $_
+    }
     Write-Host "  -> Roles del catálogo: $(@($script:CatalogoRoles).Count) ($((@($script:CatalogoRoles) | ForEach-Object { $_.nombre_rol }) -join ', '))" -ForegroundColor Gray
 }
 
@@ -205,7 +317,10 @@ if ($catalogos) {
     Write-Host "  -> Escuelas: $(@($catalogos.escuelas).Count), Modalidades: $(@($catalogos.modalidades).Count), Tipos de Hora: $(@($catalogos.tipos_hora).Count)" -ForegroundColor Gray
     # [Línea clave]: El catálogo de estados se carga una sola vez para resolver los
     # identificadores por nombre en todas las fases siguientes.
-    $script:CatalogoEstados = @($catalogos.estados)
+    $script:CatalogoEstados = @($catalogos.estados) | ForEach-Object {
+        $_.nombre_estado = Fix-Mojibake $_.nombre_estado
+        $_
+    }
     Write-Host "  -> Estados del catálogo: $(@($script:CatalogoEstados).Count) ($((@($script:CatalogoEstados) | ForEach-Object { $_.nombre_estado }) -join ', '))" -ForegroundColor Gray
 }
 
@@ -259,7 +374,7 @@ $nuevaPropuesta = @{
     fecha_inicio = "2027-01-01"
     fecha_fin = "2028-12-31"
     # [Línea clave]: La etapa inicial viaja por su nombre oficial, nunca por un número.
-    estado_inicial_nombre = "En formulación"
+    estado_inicial_nombre = Get-NombreEstado "formulacion"
     equipo = @(
         @{ id_usuario = 1; id_tipo_hora = 1; horas_asignadas = 12 },
         @{ id_usuario = 2; id_tipo_hora = 2; horas_asignadas = 4 }
@@ -300,7 +415,7 @@ if ($creacion -and $creacion.propuesta) {
 
     # 12. Transición de Estado (Envío a Revisión -> Disparo automático de IA)
     # [Línea clave]: El estado destino se resuelve por su nombre oficial en el catálogo.
-    $estadoRevisionVinculacion = Get-IdEstado -Nombre "En revisión de Vinculación"
+    $estadoRevisionVinculacion = Get-IdEstado -Nombre (Get-NombreEstado "Vinculacion")
     $cambioEstado = @{
         id_nuevo_estado = $estadoRevisionVinculacion
         id_usuario_responsable = 1
@@ -315,7 +430,7 @@ if ($creacion -and $creacion.propuesta) {
     }
 
     # 12b. Transición no permitida por la máquina de estados (409 esperado)
-    $estadoCerrada = Get-IdEstado -Nombre "Cerrada"
+    $estadoCerrada = Get-IdEstado -Nombre (Get-NombreEstado "Cerrada")
     $saltoInvalido = @{
         id_nuevo_estado = $estadoCerrada
         id_usuario_responsable = 1
@@ -329,7 +444,7 @@ if ($creacion -and $creacion.propuesta) {
     }
 
     # 12c. Transición permitida pero ejecutada por un rol sin facultad (409 esperado)
-    $estadoComiteTecnico = Get-IdEstado -Nombre "En evaluación del Comité Técnico"
+    $estadoComiteTecnico = Get-IdEstado -Nombre (Get-NombreEstado "Comite Tecnico")
     $saltoSinFacultad = @{
         id_nuevo_estado = $estadoComiteTecnico
         id_usuario_responsable = 1
@@ -475,7 +590,7 @@ if ($bandejaProhibida) {
 # C4. Propuesta de prueba creada directamente en «En evaluación del Comité Técnico»
 $propuestaComite = $nuevaPropuesta.Clone()
 $propuestaComite.titulo = "Test Comité Técnico - Rúbrica ponderada $marcaHora"
-$propuestaComite.estado_inicial_nombre = "En evaluación del Comité Técnico"
+$propuestaComite.estado_inicial_nombre = Get-NombreEstado "Comite Tecnico"
 $propuestaComite.Remove("estado_inicial")
 $creacionComite = Test-Endpoint -Name "Creación de propuesta para el Comité Técnico" -Method "POST" -Endpoint "/propuestas" -Body $propuestaComite
 $idPropuestaComite = if ($creacionComite -and $creacionComite.propuesta) { $creacionComite.propuesta.id_propuesta } else { $null }
@@ -802,7 +917,7 @@ if ($loginCie) {
     Write-Host "  -> Usuario: $($loginCie.nombre) | ID: $idUsuarioCie | Roles: $($loginCie.roles -join ', ')" -ForegroundColor Gray
 }
 
-$loginCieEvaluador = Test-Endpoint -Name "Autenticación Evaluador Comité de Ética" -Method "POST" -Endpoint "/auth/login" -Body @{ correo = "patricia.solano@universidad.edu"; password = "demostracion" }
+$loginCieEvaluador = Test-Endpoint -Name "Autenticación Evaluador Comité de Ética" -Method "POST" -Endpoint "/auth/login" -Body @{ correo = "patricia.solano@universidad.edu"; password = "demostracion" } -ExpectedStatus @(200, 401)
 $idUsuarioCieEvaluador = if ($loginCieEvaluador) { $loginCieEvaluador.id_usuario } else { $null }
 if ($loginCieEvaluador) {
     Write-Host "  -> Evaluadora: $($loginCieEvaluador.nombre) | ID: $idUsuarioCieEvaluador | Roles: $($loginCieEvaluador.roles -join ', ')" -ForegroundColor Gray
@@ -843,7 +958,7 @@ $idPropuestaCie = $null
 $propuestaCie = $nuevaPropuesta.Clone()
 $propuestaCie.titulo = "Test Comité de Ética en Investigación - Resolución $marcaHora"
 $propuestaCie.resumen = "Propuesta automatizada para validar la resolución colegiado del Comité de Ética en Investigación."
-$propuestaCie.estado_inicial_nombre = "Dictaminada por Dirección"
+$propuestaCie.estado_inicial_nombre = Get-NombreEstado "Dictaminada por Direccion"
 $creacionCie = Test-Endpoint -Name "Creación de propuesta dictaminada para el CIE (Dictaminada por Dirección)" -Method "POST" -Endpoint "/propuestas" -Body $propuestaCie
 if ($creacionCie -and $creacionCie.propuesta) {
     $idPropuestaCie = $creacionCie.propuesta.id_propuesta
@@ -929,7 +1044,7 @@ if ($loginVinculacion) {
 # M2. Expediente en revisión de Vinculación para la devolución con observaciones
 $propuestaDevolucion = $nuevaPropuesta.Clone()
 $propuestaDevolucion.titulo = "Test Maquina de Estados - Devolucion $marcaHora"
-$propuestaDevolucion.estado_inicial_nombre = "En revisión de Vinculación"
+$propuestaDevolucion.estado_inicial_nombre = Get-NombreEstado "Vinculacion"
 $creacionDevolucion = Test-Endpoint -Name "Creación de expediente para la devolución" -Method "POST" -Endpoint "/propuestas" -Body $propuestaDevolucion
 $idPropuestaDevolucion = if ($creacionDevolucion -and $creacionDevolucion.propuesta) { $creacionDevolucion.propuesta.id_propuesta } else { $null }
 
@@ -975,7 +1090,7 @@ if ($idPropuestaDevolucion) {
 # M6. Rechazo terminal: «Rechazada» no admite ninguna transición posterior
 $propuestaRechazo = $nuevaPropuesta.Clone()
 $propuestaRechazo.titulo = "Test Maquina de Estados - Rechazo $marcaHora"
-$propuestaRechazo.estado_inicial_nombre = "En revisión de Vinculación"
+$propuestaRechazo.estado_inicial_nombre = Get-NombreEstado "Vinculacion"
 $creacionRechazo = Test-Endpoint -Name "Creación de expediente para el rechazo terminal" -Method "POST" -Endpoint "/propuestas" -Body $propuestaRechazo
 $idPropuestaRechazo = if ($creacionRechazo -and $creacionRechazo.propuesta) { $creacionRechazo.propuesta.id_propuesta } else { $null }
 
@@ -998,7 +1113,7 @@ if ($idPropuestaRechazo) {
     }
 
     # M7. Un expediente rechazado es terminal (409 esperado)
-    $estadoRevisionParaRechazo = Get-IdEstado -Nombre "En revisión de Vinculación"
+    $estadoRevisionParaRechazo = Get-IdEstado -Nombre (Get-NombreEstado "Vinculacion")
     $resReabrirRechazo = Test-Endpoint -Name "Reapertura de un expediente rechazado (409 esperado)" -Method "PATCH" -Endpoint "/propuestas/$idPropuestaRechazo/estado" -Body @{
         id_nuevo_estado = $estadoRevisionParaRechazo
         id_usuario_responsable = $idUsuarioVinculacion
@@ -1014,7 +1129,7 @@ if ($idPropuestaRechazo) {
 # M8. Aceptación de la carta: «Aprobada por CIE» -> «En ejecución»
 $propuestaAceptacion = $nuevaPropuesta.Clone()
 $propuestaAceptacion.titulo = "Test Maquina de Estados - Aceptacion $marcaHora"
-$propuestaAceptacion.estado_inicial_nombre = "Aprobada por CIE"
+$propuestaAceptacion.estado_inicial_nombre = Get-NombreEstado "Aprobada por CIE"
 $creacionAceptacion = Test-Endpoint -Name "Creación de expediente aprobado por el CIE" -Method "POST" -Endpoint "/propuestas" -Body $propuestaAceptacion
 $idPropuestaAceptacion = if ($creacionAceptacion -and $creacionAceptacion.propuesta) { $creacionAceptacion.propuesta.id_propuesta } else { $null }
 
@@ -1067,7 +1182,7 @@ if ($idPropuestaAceptacion) {
         }
 
         # M13. Un expediente cerrado es terminal (409 esperado)
-        $estadoEjecucion = Get-IdEstado -Nombre "En ejecución"
+        $estadoEjecucion = Get-IdEstado -Nombre (Get-NombreEstado "En ejecucion")
         $resReabrirCerrada = Test-Endpoint -Name "Reapertura de un expediente cerrado (409 esperado)" -Method "PATCH" -Endpoint "/propuestas/$idPropuestaAceptacion/estado" -Body @{
             id_nuevo_estado = $estadoEjecucion
             id_usuario_responsable = $idUsuarioDireccion
