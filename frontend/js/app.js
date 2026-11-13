@@ -4203,6 +4203,30 @@ function documentosVacios(
   return docPendiente("Sin documentos registrados", nota);
 }
 
+/**
+ * Construir la tabla interna de criterios de una sección de la rúbrica.
+ * Cada criterio ocupa una fila con columnas propias (nombre, peso, obligatoriedad) y sus
+ * acciones van en una columna aparte, de modo que los botones quedan alineados entre sí
+ * aunque los nombres de los criterios tengan longitudes distintas.
+ * parametros:
+ *     - Array<Object> : criterios Criterios de la sección de la rúbrica.
+ * return:
+ *     + string : tablaHtml Marcado HTML de la tabla interna de criterios.
+ */
+function tablaCriterios(criterios = []) {
+  const filas = criterios
+    .map(
+      (c) => `<tr>
+        <td>${esc(c.nombre_criterio)}</td>
+        <td class="col-corta">${c.peso_relativo}%</td>
+        <td class="col-corta">${c.es_obligatorio ? "Sí" : "—"}</td>
+        <td class="col-acciones"><div class="row-actions">${act("Editar", "admin-rubrica-criterion-edit", "text compact", "edit", `data-id="${c.id_criterio_rubrica}"`)}${act("Eliminar", "admin-rubrica-criterion-delete", "text compact", "trash", `data-id="${c.id_criterio_rubrica}"`)}</div></td>
+      </tr>`,
+    )
+    .join("");
+  return `<table class="tabla-criterios"><thead><tr><th>Criterio</th><th>Peso</th><th>Oblig.</th><th></th></tr></thead><tbody>${filas}</tbody></table>`;
+}
+
 /** Formatear bytes a texto legible (KB / MB). */
 function formatBytes(b) {
   if (!b) return "";
@@ -7503,23 +7527,20 @@ function adminCatalogs() {
   };
 
   const rúbricaHtml = rubrica.secciones?.length
-    ? `<div class="section-head"><span class="result-count">${rubrica.secciones.length} secciones · peso total ${rubrica.peso_total}% · versión activa ${esc(rubrica.version_activa || "2027")}</span><div class="row-actions">${act("Nueva sección", "admin-rubrica-section-add", "secondary compact", "plus")}${act("Nueva versión", "admin-rubrica-version-add", "secondary compact", "plus")}</div></div>${table(
-        ["Sección", "Peso", "Criterios", "", ""],
+    ? `<div class="section-head"><span class="result-count">${rubrica.secciones.length} secciones · peso total ${rubrica.peso_total}% · versión activa ${esc(rubrica.version_activa || "2027")}</span><div class="row-actions">${act("Nueva sección", "admin-rubrica-section-add", "secondary compact", "plus")}${act("Nueva versión", "admin-rubrica-version-add", "secondary compact", "plus")}</div></div><div class="tabla-rubrica">${table(
+        ["Sección", "Peso", "Criterios", ""],
         rubrica.secciones.map((s) => [
           `<strong>${esc(s.nombre_seccion)}</strong><br><span class="micro muted">${esc(s.version)}</span>`,
           `${s.peso_porcentual}%`,
+          // [Línea clave]: Los criterios de la sección se muestran como una tabla interna con
+          //                columnas propias: así el nombre no queda pegado a los botones y las
+          //                acciones mantienen la misma alineación en todas las filas.
           s.criterios.length
-            ? s.criterios
-                .map(
-                  (c) =>
-                    `<div><span class="micro">${esc(c.nombre_criterio)} · ${c.peso_relativo}%${c.es_obligatorio ? " · obligatorio" : ""}</span> ${act("Editar", "admin-rubrica-criterion-edit", "text compact", "edit", `data-id="${c.id_criterio_rubrica}"`)}${act("Eliminar", "admin-rubrica-criterion-delete", "text compact", "trash", `data-id="${c.id_criterio_rubrica}"`)}</div>`,
-                )
-                .join("")
+            ? tablaCriterios(s.criterios)
             : `<span class="muted">Sin criterios</span>`,
-          `<div class="row-actions">${act("Agregar criterio", "admin-rubrica-criterion-add", "text compact", "plus", `data-id="${s.id_seccion}"`)}${act("Editar", "admin-rubrica-section-edit", "text compact", "edit", `data-id="${s.id_seccion}"`)}${act("Eliminar", "admin-rubrica-section-delete", "text compact", "trash", `data-id="${s.id_seccion}"`)}</div>`,
-          "",
+          `<div class="row-actions acciones-seccion">${act("Agregar criterio", "admin-rubrica-criterion-add", "text compact", "plus", `data-id="${s.id_seccion}"`)}${act("Editar", "admin-rubrica-section-edit", "text compact", "edit", `data-id="${s.id_seccion}"`)}${act("Eliminar", "admin-rubrica-section-delete", "text compact", "trash", `data-id="${s.id_seccion}"`)}</div>`,
         ]),
-      )}`
+      )}</div>`
     : `<div class="card empty">${icon("settings")}<h2>Sin rúbrica configurada</h2><p>Crea la primera sección de la rúbrica institucional para que el Comité Técnico pueda evaluar.</p></div>`;
 
   const versiones = (rubrica.versiones ?? [])
