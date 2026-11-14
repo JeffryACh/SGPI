@@ -233,3 +233,19 @@ Este documento registra la evolución del modelo de base de datos relacional par
 - **Compatibilidad:** el frontend elige la cuenta del rol por correo en `CUENTA_DEMO_PREFERIDA` (`frontend/js/app.js`); se actualizó `direccion` a `diego.alonso@example.com` y `vie` se mantiene en `elena.chacon@example.com`. El backend no requiere cambios: `GET /auth/cuentas-demo` filtra por `nombre_rol` y devuelve la cuenta activa que corresponda a cada rol.
 - **Verificación:** consultas de control sobre `usuarios` y `user_roles` de ambas cuentas, inicio de sesión con `diego.alonso@example.com` / `demostracion` y recorrido del botón «Cambiar rol» de la pantalla 33.
 - **Aplicación:** aplicada a la base desplegada el 2026-11-13. Es idempotente: puede reejecutarse sin efectos adicionales.
+
+---
+
+## 12. Migración V21 — Reversión de la separación de cuentas de Dirección
+
+### Script: `Base de datos/Scripts/V21__revierte_cuenta_direccion_investigacion_demo.sql`
+- **Propósito:** deshacer la V20. La cuenta `elena.chacon@example.com` recupera los dos roles que tenía antes («Dirección de Investigación» y «Funcionario VIE») y se elimina la cuenta `diego.alonso@example.com` que la V20 había creado.
+- **Naturaleza:** script idempotente y aditivo en cuanto a la estructura; no modifica el estado de ninguna propuesta ni el contenido de los expedientes.
+- **Contenido:**
+  - Reasigna a Elena Chacón la auditoría que dejó la cuenta eliminada: `evaluations.id_usuario_eval`, `proposal_state_history.id_usuario_responsable` y `notificaciones.id_usuario`. Esas columnas tienen clave foránea hacia `usuarios`, así que sin este paso el borrado de la cuenta dejaría dictámenes, transiciones y avisos apuntando a un usuario inexistente.
+  - `DELETE FROM public.user_roles ...` retira el rol `Dirección de Investigación` de la cuenta que se elimina.
+  - `DELETE FROM public.usuarios` elimina la cuenta `diego.alonso@example.com`.
+  - `INSERT INTO public.user_roles` restituye a Elena Chacón el rol `Dirección de Investigación`.
+- **Compatibilidad:** el frontend vuelve a apuntar a `elena.chacon@example.com` en `CUENTA_DEMO_PREFERIDA.direccion` y el smoke test (`test_endpoints.ps1`) recupera las credenciales y el identificador original de la cuenta de Dirección.
+- **Verificación:** consultas de control sobre `usuarios`, `user_roles` y los recuentos de auditoría de ambas cuentas.
+- **Aplicación:** aplicada a la base desplegada el 2026-11-13. Es idempotente: puede reejecutarse sin efectos adicionales.
