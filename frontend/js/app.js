@@ -407,13 +407,15 @@ const ROLES_BACKEND = Object.entries(ROLE_KEYS).reduce((acumulado, [nombre, clav
 /**
  * Cuenta institucional preferida para cada rol en los recorridos de demostración.
  * Si la cuenta preferida no está disponible se usa la primera que tenga el rol.
+ * «Dirección de Investigación» y «Funcionario VIE» son cuentas distintas: la primera
+ * dictamina expedientes (pantallas 26 y 20) y la segunda administra convocatorias.
  */
 const CUENTA_DEMO_PREFERIDA = {
   investigador: "laura.mendez@example.com",
   vinculacion: "mariana.solis@example.com",
   comite: "gabriel.sanchez@example.com",
   consejo: "patricia.vargas@example.com",
-  direccion: "elena.chacon@example.com",
+  direccion: "diego.alonso@example.com",
   cie: "carlos.morales@example.com",
   vie: "elena.chacon@example.com",
   administracion: "administrador@example.com",

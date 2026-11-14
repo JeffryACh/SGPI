@@ -290,10 +290,10 @@ if ($auth) {
 # 2b. Sesión administrativa para resolver el catálogo de roles por nombre
 $script:CatalogoRoles = @()
 $loginDireccionInicial = Test-Endpoint -Name "Autenticación Dirección de Investigación" -Method "POST" -Endpoint "/auth/login" -Body @{
-    correo = "elena.chacon@example.com"
+    correo = "diego.alonso@example.com"
     password = "demostracion"
 }
-$idUsuarioDireccion = if ($loginDireccionInicial) { $loginDireccionInicial.id_usuario } else { 7 }
+$idUsuarioDireccion = if ($loginDireccionInicial) { $loginDireccionInicial.id_usuario } else { 34 }
 if ($loginDireccionInicial) {
     Write-Host "  -> Dirección: $($loginDireccionInicial.nombre) | ID: $idUsuarioDireccion | Roles: $($loginDireccionInicial.roles -join ', ')" -ForegroundColor Gray
 }
@@ -669,12 +669,12 @@ if ($idPropuestaComite) {
 }
 
 # -------------------------------------------------------------
-# FASE 7: DIRECCIÓN DE INVESTIGACIÓN (Elena Chacón)
+# FASE 7: DIRECCIÓN DE INVESTIGACIÓN (Diego Alonso)
 # -------------------------------------------------------------
 
 # D1. Login como Dirección de Investigación
-$loginDireccion = Test-Endpoint -Name "Autenticación Dirección de Investigación" -Method "POST" -Endpoint "/auth/login" -Body @{ correo = "elena.chacon@example.com"; password = "demostracion" }
-$idUsuarioDireccion = if ($loginDireccion) { $loginDireccion.id_usuario } else { 7 }
+$loginDireccion = Test-Endpoint -Name "Autenticación Dirección de Investigación" -Method "POST" -Endpoint "/auth/login" -Body @{ correo = "diego.alonso@example.com"; password = "demostracion" }
+$idUsuarioDireccion = if ($loginDireccion) { $loginDireccion.id_usuario } else { 34 }
 if ($loginDireccion) {
     Write-Host "  -> Usuario: $($loginDireccion.nombre) | ID: $idUsuarioDireccion | Roles: $($loginDireccion.roles -join ', ')" -ForegroundColor Gray
 }

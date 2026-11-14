@@ -217,3 +217,19 @@ Este documento registra la evolución del modelo de base de datos relacional par
 - **Nota sobre los archivos:** los 25 registros de `proposal_documents` reescritos apuntaban a archivos que ya no existen en el bucket (se fueron con el bucket `propuestas` que se eliminó). La migración actualiza la ruta registrada, no el contenido: esos documentos hay que volver a subirlos.
 - **Verificación:** consultas de control sobre `convocatorias.carpeta_storage`, `convocatoria_documentos.storage_path`/`file_url` y `proposal_documents.file_path`.
 - **Aplicación:** lo ejecuta el administrador en el SQL Editor de Supabase. Los archivos físicos se reorganizan con `backend/scripts/migrar_storage_estructura.py`.
+
+---
+
+## 11. Migración V20 — Cuentas separadas de Dirección de Investigación y Funcionario VIE
+
+### Script: `Base de datos/Scripts/V20__direccion_investigacion_cuenta_demo.sql`
+- **Propósito:** separar en dos cuentas institucionales distintas las dos funciones que compartía una sola cuenta de demostración. `elena.chacon@example.com` conserva únicamente el rol **Funcionario VIE** (administración de convocatorias, cronogramas, catálogos y rúbricas, pantallas 31 y 32) y la función de dictaminar expedientes pasa a la cuenta nueva `diego.alonso@example.com` con el rol **Dirección de Investigación** (pantalla 26, dictamen institucional y cierre administrativo del proyecto).
+- **Naturaleza:** script idempotente y aditivo; no modifica, mueve ni elimina filas de auditoría (`notificaciones`, `proposal_state_history`, `evaluations`). Los dictámenes ya registrados siguen atribuidos a la persona que los emitió.
+- **Contenido:**
+  - `DELETE FROM public.user_roles ...` retira el rol `Dirección de Investigación` a la cuenta de Elena Chacón (`id_usuario = 7`).
+  - `INSERT INTO public.usuarios` crea la cuenta `Diego / Alonso` (`diego.alonso@example.com`) con `id_escuela = NULL` (la función es de alcance institucional), `estado_activo = true` y la huella `encode(sha256('demostracion'::bytea), 'hex')`, igual que el resto de cuentas de demostración.
+  - `INSERT INTO public.user_roles` asigna el rol `Dirección de Investigación` a la cuenta nueva.
+- **Nota de esquema:** la columna `usuarios.second_lastname` es `NOT NULL`, por eso la cuenta nueva se registra con cadena vacía en ese campo. `GET /auth/cuentas-demo` concatena nombre y apellidos con `TRIM`, así que el nombre visible es «Diego Alonso».
+- **Compatibilidad:** el frontend elige la cuenta del rol por correo en `CUENTA_DEMO_PREFERIDA` (`frontend/js/app.js`); se actualizó `direccion` a `diego.alonso@example.com` y `vie` se mantiene en `elena.chacon@example.com`. El backend no requiere cambios: `GET /auth/cuentas-demo` filtra por `nombre_rol` y devuelve la cuenta activa que corresponda a cada rol.
+- **Verificación:** consultas de control sobre `usuarios` y `user_roles` de ambas cuentas, inicio de sesión con `diego.alonso@example.com` / `demostracion` y recorrido del botón «Cambiar rol» de la pantalla 33.
+- **Aplicación:** aplicada a la base desplegada el 2026-11-13. Es idempotente: puede reejecutarse sin efectos adicionales.
